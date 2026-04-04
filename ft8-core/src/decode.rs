@@ -3,7 +3,7 @@
 /// Chains: downsample → coarse_sync → fine_sync → LLR → BP decode
 use crate::{
     downsample::downsample,
-    ldpc::bp::bp_decode,
+    ldpc::{bp::bp_decode, osd::{osd_decode, osd_decode_deep}},
     llr::{compute_llr, symbol_spectra, sync_quality},
     params::BP_MAX_ITER,
     sync::{coarse_sync, refine_candidate},
@@ -19,6 +19,8 @@ pub enum DecodeDepth {
     Bp,
     /// BP with all four metric variants (a, b, c, d).
     BpAll,
+    /// BP (all four variants) then OSD order-1 fallback when BP fails.
+    BpAllOsd,
 }
 
 /// One successfully decoded FT8 message.
@@ -95,7 +97,7 @@ pub fn decode_frame(
         // ── BP decode — try multiple LLR variants ───────────────────────────
         let llr_variants: &[(&[f32; 174], u8)] = match depth {
             DecodeDepth::Bp => &[(&llr_set.llra, 0)],
-            DecodeDepth::BpAll => &[
+            DecodeDepth::BpAll | DecodeDepth::BpAllOsd => &[
                 (&llr_set.llra, 0),
                 (&llr_set.llrb, 1),
                 (&llr_set.llrc, 2),
@@ -103,6 +105,7 @@ pub fn decode_frame(
             ],
         };
 
+        let mut decoded_this_cand = false;
         for &(llr, pass_id) in llr_variants {
             if let Some(bp) = bp_decode(llr, None, BP_MAX_ITER) {
                 let result = DecodeResult {
@@ -117,7 +120,54 @@ pub fn decode_frame(
                 if !results.iter().any(|r| r.message77 == result.message77) {
                     results.push(result);
                 }
+                decoded_this_cand = true;
                 break; // first successful pass wins for this candidate
+            }
+        }
+
+        // ── OSD fallback when all BP variants failed ─────────────────────
+        // Use higher ndeep for very reliable sync; require minimum sync quality
+        // to suppress false positives from OSD's large candidate set.
+        //   nsync >= 12 → order-2 (~4,187 candidates)
+        //   nsync >= 18 → order-3 (~121,667 candidates, slow but catches -14 dB)
+        // Coarse sync score threshold: real signals have score ≥ 2.5; low-score
+        // candidates produce too many CRC collisions at OSD order ≥ 2.
+        if !decoded_this_cand && depth == DecodeDepth::BpAllOsd
+            && nsync >= 12 && cand.score >= 2.5
+        {
+            // Skip if an existing decode already covers this frequency (±20 Hz).
+            let freq_dup = results
+                .iter()
+                .any(|r| (r.freq_hz - cand.freq_hz).abs() < 20.0);
+            if !freq_dup {
+                let osd_depth: u8 = if nsync >= 18 { 3 } else { 2 };
+                // Try all four LLR variants with OSD.
+                for llr_osd in [&llr_set.llra, &llr_set.llrb, &llr_set.llrc, &llr_set.llrd] {
+                    let osd_result = if osd_depth == 3 {
+                        osd_decode_deep(llr_osd, 3)
+                    } else {
+                        osd_decode(llr_osd)
+                    };
+                    if let Some(osd) = osd_result {
+                        // Reject extremely high-error results (likely false positives).
+                        // At −15 dB SNR, ~48 hard errors is expected for a genuine signal.
+                        if osd.hard_errors >= 56 {
+                            continue;
+                        }
+                        let result = DecodeResult {
+                            message77: osd.message77,
+                            freq_hz: cand.freq_hz,
+                            dt_sec: refined.dt_sec,
+                            hard_errors: osd.hard_errors,
+                            sync_score: refined.score,
+                            pass: 4, // OSD
+                        };
+                        if !results.iter().any(|r| r.message77 == result.message77) {
+                            results.push(result);
+                        }
+                        break; // first successful OSD variant wins
+                    }
+                }
             }
         }
     }

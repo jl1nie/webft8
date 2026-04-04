@@ -37,7 +37,7 @@ fn crc14(data: &[u8]) -> u16 {
 /// Verify CRC-14 for a 91-bit decoded word (77 msg + 14 CRC).
 /// Packs bits into 12 bytes (big-endian, MSB first), zeros the CRC field,
 /// computes CRC-14, then compares with the stored CRC bits.
-fn check_crc14(decoded: &[u8; LDPC_K]) -> bool {
+pub(super) fn check_crc14(decoded: &[u8; LDPC_K]) -> bool {
     // Pack 91 bits into 12 bytes; CRC field (bits 77..91) stays zero.
     let mut bytes = [0u8; 12];
     for (i, &bit) in decoded[..77].iter().enumerate() {

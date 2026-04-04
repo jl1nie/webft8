@@ -93,7 +93,7 @@ pub fn evaluate_real_data(wav_path: &Path) -> Result<RealDataReport, String> {
         2800.0,  // freq_max
         1.5,     // sync_min — standard WSJT-X threshold
         None,    // no frequency hint
-        DecodeDepth::BpAll,
+        DecodeDepth::BpAllOsd,
         200,     // max_cand — generous for full-band scan
     );
 

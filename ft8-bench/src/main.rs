@@ -1,4 +1,5 @@
 mod real_data;
+mod diag;
 
 use std::path::PathBuf;
 use real_data::evaluate_real_data;
@@ -32,5 +33,19 @@ fn main() {
 
     if any_found {
         println!("Total decoded across all files: {total_decoded}");
+    }
+
+    // Diagnose missing signals in 110200
+    let wav200 = testdata.join("191111_110200.wav");
+    if wav200.exists() {
+        println!();
+        let _ = diag::trace_missing(&wav200);
+    }
+
+    // Diagnose OSD-only signals in 110130 (are they real or spurious?)
+    let wav130 = testdata.join("191111_110130.wav");
+    if wav130.exists() {
+        println!();
+        let _ = diag::trace_spurious(&wav130);
     }
 }
