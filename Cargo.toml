@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "ft8-core",
+    "ft8-bench",
+]
+resolver = "2"

@@ -1,0 +1,8 @@
+[package]
+name = "ft8-bench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ft8-core = { path = "../ft8-core" }
+hound = "3"
