@@ -105,7 +105,7 @@ pub fn bp_decode(
     for iter in 0..=max_iter {
         // --- Update extrinsic LLRs ---
         for i in 0..LDPC_N {
-            let ap = ap_mask.map_or(false, |m| m[i]);
+            let ap = ap_mask.is_some_and(|m| m[i]);
             if !ap {
                 let sum_tov: f32 = tov[i].iter().sum();
                 zn[i] = llr[i] + sum_tov;

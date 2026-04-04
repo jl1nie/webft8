@@ -78,7 +78,7 @@ pub fn decode_frame(
         // ── Fine sync (refine time offset at downsampled rate) ───────────────
         let refined = refine_candidate(&cd0, cand, 10);
 
-        let i_start = (refined.dt_sec * 200.0).round() as usize;
+        let i_start = ((refined.dt_sec + 0.5) * 200.0).round() as usize;
 
         // ── Symbol spectra (79 × 8 complex bins) ────────────────────────────
         let cs = symbol_spectra(&cd0, i_start);

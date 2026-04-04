@@ -112,12 +112,12 @@ pub fn coarse_sync(
             let mut t0b = 0.0f32;
             let mut t0c = 0.0f32;
 
-            for n in 0usize..7 {
+            for (n, &costas_n) in COSTAS.iter().enumerate() {
                 let m = lag + JSTRT + (NSSY * n) as i32;
                 let m36 = m + (NSSY * 36) as i32;
                 let m72 = m + (NSSY * 72) as i32;
 
-                let tone_bin = i + NFOS * COSTAS[n];
+                let tone_bin = i + NFOS * costas_n;
 
                 // First Costas array
                 if m >= 0 && (m as usize) < NHSYM {
@@ -349,8 +349,8 @@ pub fn refine_candidate(
     candidate: &SyncCandidate,
     search_steps: i32,
 ) -> SyncCandidate {
-    const SPB: usize = 32;
-    let nominal_i0 = (candidate.dt_sec * 200.0).round() as i32;
+    // dt_sec is deviation from nominal 0.5 s start; convert to absolute sample index.
+    let nominal_i0 = ((candidate.dt_sec + 0.5) * 200.0).round() as i32;
 
     let (best_i0, best_score) = (-search_steps..=search_steps)
         .map(|delta| {
@@ -363,7 +363,8 @@ pub fn refine_candidate(
 
     SyncCandidate {
         freq_hz: candidate.freq_hz,
-        dt_sec: best_i0 as f32 / 200.0,
+        // Store back as deviation from nominal 0.5 s start.
+        dt_sec: best_i0 as f32 / 200.0 - 0.5,
         score: best_score,
     }
 }

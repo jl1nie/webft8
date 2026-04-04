@@ -1,4 +1,4 @@
-/// FT8 protocol parameters (derived from WSJT-X ft8_params.f90)
+//! FT8 protocol parameters (derived from WSJT-X ft8_params.f90)
 
 /// LDPC (174,91): information bits = 77 msg + 14 CRC
 pub const KK: usize = 91;

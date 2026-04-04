@@ -105,11 +105,11 @@ pub fn compute_llr(cs: &[[Complex<f32>; 8]; 79]) -> LlrSet {
                 let ks = k + if ihalf == 0 { 7 } else { 43 };
 
                 // Compute metrics for all nt combinations
-                for i in 0..nt {
+                for (i, s2_i) in s2.iter_mut().take(nt).enumerate() {
                     let i1 = i / 64;
                     let i2 = (i & 63) / 8;
                     let i3 = i & 7;
-                    s2[i] = match nsym {
+                    *s2_i = match nsym {
                         1 => cs[ks][GRAYMAP[i3]].norm(),
                         2 => (cs[ks][GRAYMAP[i2]] + cs[ks + 1][GRAYMAP[i3]]).norm(),
                         3 => (cs[ks][GRAYMAP[i1]]
@@ -194,9 +194,8 @@ pub fn sync_quality(cs: &[[Complex<f32>; 8]; 79]) -> u32 {
 
     // Costas positions: symbols 0..7, 36..43, 72..79 (0-based)
     for (offset_idx, &sym_offset) in [0usize, 36, 72].iter().enumerate() {
-        for t in 0..7 {
+        for (t, &expected_tone) in COSTAS.iter().enumerate() {
             let sym = sym_offset + t;
-            let expected_tone = COSTAS[t];
             // Find tone with maximum amplitude
             let best_tone = cs[sym]
                 .iter()

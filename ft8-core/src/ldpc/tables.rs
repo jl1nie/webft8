@@ -1,6 +1,6 @@
-/// LDPC (174, 91) parity-check matrix tables.
-/// Ported from WSJT-X ldpc_174_91_c_parity.f90.
-/// All indices are 0-based (Fortran source uses 1-based).
+//! LDPC (174, 91) parity-check matrix tables.
+//! Ported from WSJT-X ldpc_174_91_c_parity.f90.
+//! All indices are 0-based (Fortran source uses 1-based).
 
 /// MN[bit][0..3] — check-node indices (0-based, range 0..82) for each of the 174 bits.
 /// Every bit participates in exactly 3 check equations.
