@@ -6,8 +6,8 @@ use crate::{
     ldpc::{bp::bp_decode, osd::{osd_decode, osd_decode_deep}},
     llr::{compute_llr, symbol_spectra, sync_quality},
     params::BP_MAX_ITER,
-    subtract::subtract_signal,
-    sync::{coarse_sync, refine_candidate, refine_candidate_double},
+    subtract::subtract_signal_weighted,
+    sync::{coarse_sync, fine_sync_power_split, refine_candidate},
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -39,6 +39,12 @@ pub struct DecodeResult {
     pub sync_score: f32,
     /// Which LLR variant decoded successfully (0=llra, 1=llrb, 2=llrc, 3=llrd)
     pub pass: u8,
+    /// Coefficient of variation of the three Costas-array powers (score_a/b/c).
+    ///
+    /// Near zero for a stable channel; elevated (> 0.3) when QSB or strong
+    /// time-varying fading is present.  Used by `decode_frame_subtract` to
+    /// apply partial subtraction gain when the amplitude estimate is unreliable.
+    pub sync_cv: f32,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -100,6 +106,18 @@ fn decode_frame_inner(
             continue;
         }
 
+        // Costas-array power CV: near-zero for stable channel; > 0.3 implies QSB.
+        let sync_cv = {
+            let (sa, sb, sc) = fine_sync_power_split(&cd0, i_start);
+            let mean = (sa + sb + sc) / 3.0;
+            if mean > f32::EPSILON {
+                let sq = (sa - mean).powi(2) + (sb - mean).powi(2) + (sc - mean).powi(2);
+                sq.sqrt() / mean
+            } else {
+                0.0
+            }
+        };
+
         let llr_set = compute_llr(&cs);
 
         let llr_variants: &[(&[f32; 174], u8)] = match depth {
@@ -129,6 +147,7 @@ fn decode_frame_inner(
                         hard_errors: bp.hard_errors,
                         sync_score: refined.score,
                         pass: pass_id,
+                        sync_cv,
                     });
                 }
                 decoded_this_cand = true;
@@ -163,6 +182,7 @@ fn decode_frame_inner(
                                 hard_errors: osd.hard_errors,
                                 sync_score: refined.score,
                                 pass: 4,
+                                sync_cv,
                             });
                         }
                         break;
@@ -220,7 +240,11 @@ pub fn decode_frame_subtract(
         );
 
         for r in &new {
-            subtract_signal(&mut residual, r);
+            // QSB gate: if Costas-array power CV > 0.3 the channel is time-varying
+            // and the amplitude estimate is less accurate — use half gain to avoid
+            // over-subtraction artefacts that would corrupt later passes.
+            let sub_gain = if r.sync_cv > 0.3 { 0.5 } else { 1.0 };
+            subtract_signal_weighted(&mut residual, r, sub_gain);
         }
         all_results.extend(new);
     }
@@ -233,12 +257,14 @@ pub fn decode_frame_subtract(
 
 /// Sniper-mode decode: search only within ±250 Hz of `target_freq`.
 ///
-/// Uses Double Sync (independent Array-1 / Array-3 peak search) for ghost
-/// suppression.  Candidates whose timing drifts more than 40 ms between the
-/// two outer Costas arrays are rejected as spurious correlations.
+/// Intended for use after a 500 Hz hardware BPF.  The search band is
+/// narrowed to `target_freq ± 250 Hz` and `sync_min` is lowered to 0.8
+/// because the BPF removes strong adjacent signals that would otherwise
+/// raise the noise floor.
 ///
-/// Lower `sync_min` is used because the 500 Hz filter removes strong
-/// adjacent signals and reduces the noise floor.
+/// `sync_cv` (Costas-array power coefficient of variation) is computed for
+/// each decoded result and can be used downstream as a channel-quality
+/// indicator for the Phase 3 adaptive equaliser.
 pub fn decode_sniper(
     audio: &[i16],
     target_freq: f32,
@@ -258,21 +284,24 @@ pub fn decode_sniper(
         let (cd0, new_cache) = downsample(audio, cand.freq_hz, fft_cache.as_deref());
         fft_cache = Some(new_cache);
 
-        // Double Sync: independently maximise Array 1 and Array 3.
-        let detail = refine_candidate_double(&cd0, cand, 10);
-
-        // Ghost filter: real signals have |drift| < 40 ms across 11.52 s.
-        if detail.drift_dt_sec.abs() > 0.040 {
-            continue;
-        }
-
-        let refined = detail.candidate;
+        let refined = refine_candidate(&cd0, cand, 10);
         let i_start = ((refined.dt_sec + 0.5) * 200.0).round() as usize;
         let cs = symbol_spectra(&cd0, i_start);
         let nsync = sync_quality(&cs);
         if nsync <= 6 {
             continue;
         }
+
+        let sync_cv = {
+            let (sa, sb, sc) = fine_sync_power_split(&cd0, i_start);
+            let mean = (sa + sb + sc) / 3.0;
+            if mean > f32::EPSILON {
+                let sq = (sa - mean).powi(2) + (sb - mean).powi(2) + (sc - mean).powi(2);
+                sq.sqrt() / mean
+            } else {
+                0.0
+            }
+        };
 
         let llr_set = compute_llr(&cs);
         let llr_variants: &[(&[f32; 174], u8)] = match depth {
@@ -295,6 +324,7 @@ pub fn decode_sniper(
                     hard_errors: bp.hard_errors,
                     sync_score: refined.score,
                     pass: pass_id,
+                    sync_cv,
                 };
                 if !results.iter().any(|r| r.message77 == result.message77) {
                     results.push(result);
@@ -329,6 +359,7 @@ pub fn decode_sniper(
                             hard_errors: osd.hard_errors,
                             sync_score: refined.score,
                             pass: 4,
+                            sync_cv,
                         };
                         if !results.iter().any(|r| r.message77 == result.message77) {
                             results.push(result);

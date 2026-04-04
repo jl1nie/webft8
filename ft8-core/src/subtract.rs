@@ -51,14 +51,26 @@ fn generate_iq(message77: &[u8; 77], freq_hz: f32) -> (Vec<f32>, Vec<f32>) {
 // ────────────────────────────────────────────────────────────────────────────
 // Public API
 
-/// Subtract a decoded FT8 signal from `audio` in-place.
+/// Subtract a decoded FT8 signal from `audio` in-place (full amplitude).
+///
+/// Convenience wrapper around [`subtract_signal_weighted`] with `gain = 1.0`.
+pub fn subtract_signal(audio: &mut Vec<i16>, result: &DecodeResult) {
+    subtract_signal_weighted(audio, result, 1.0);
+}
+
+/// Subtract a decoded FT8 signal from `audio` in-place with a fractional gain.
 ///
 /// Reconstructs the ideal I/Q waveform from the decoded message, estimates
 /// the complex amplitude (scale_cos · cos + scale_sin · sin) by least-squares
-/// projection onto the received signal, and subtracts the result.
+/// projection onto the received signal, and subtracts `gain` times the result.
+///
+/// `gain = 1.0` is full subtraction (normal case).
+/// `gain < 1.0` is partial subtraction — useful when the channel is time-varying
+/// (detected QSB) and the amplitude estimate may be inaccurate; over-subtraction
+/// would create a negative residual artefact that disrupts later passes.
 ///
 /// Works in f32 internally; final values are clamped to i16 range.
-pub fn subtract_signal(audio: &mut Vec<i16>, result: &DecodeResult) {
+pub fn subtract_signal_weighted(audio: &mut Vec<i16>, result: &DecodeResult, gain: f32) {
     const FS: f32 = 12_000.0;
 
     let (w_cos, w_sin) = generate_iq(&result.message77, result.freq_hz);
@@ -90,9 +102,9 @@ pub fn subtract_signal(audio: &mut Vec<i16>, result: &DecodeResult) {
     let a = if den_a > f32::EPSILON { num_a / den_a } else { 0.0 };
     let b = if den_b > f32::EPSILON { num_b / den_b } else { 0.0 };
 
-    // Subtract reconstructed signal
+    // Subtract gain × reconstructed signal
     for i in 0..len {
-        let sub = a * w_cos[i] + b * w_sin[i];
+        let sub = gain * (a * w_cos[i] + b * w_sin[i]);
         let new_val = audio[start + i] as f32 - sub;
         audio[start + i] = new_val.clamp(-32_768.0, 32_767.0) as i16;
     }
@@ -134,6 +146,7 @@ mod tests {
             hard_errors: 0,
             sync_score: 10.0,
             pass: 0,
+            sync_cv: 0.0,
         };
 
         let mut audio = audio;
@@ -175,6 +188,7 @@ mod tests {
             hard_errors: 0,
             sync_score: 10.0,
             pass: 0,
+            sync_cv: 0.0,
         };
         subtract_signal(&mut audio, &result);
 
