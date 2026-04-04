@@ -186,6 +186,80 @@ pub fn make_interference_scenario(
     }
 }
 
+/// Build a "busy band" scenario: many strong stations across the full FT8 band
+/// with a single weak target buried among them.
+///
+/// This replicates the ADC dynamic-range problem: with 10+ strong signals
+/// present, the AGC/ADC gain is set by the strong crowd, and the weak target
+/// falls near the quantisation noise floor.  WSJT-X typically fails to decode
+/// the target; the sniper-mode (narrow 500 Hz BPF) succeeds because the
+/// hardware filter removes the crowd before the ADC.
+///
+/// # Arguments
+/// * `target_msg`         — 77-bit message for the target station
+/// * `target_freq`        — Hz, carrier of the lowest target tone
+/// * `target_snr_db`      — SNR of the target (typically −10 to −15 dB)
+/// * `num_interferers`    — how many crowd stations to add (≥ 1)
+/// * `interferer_snr_db`  — SNR of each crowd station (typically 0 to +10 dB)
+/// * `noise_seed`         — optional RNG seed
+pub fn make_busy_band_scenario(
+    target_msg: [u8; MSG_BITS],
+    target_freq: f32,
+    target_snr_db: f32,
+    num_interferers: usize,
+    interferer_snr_db: f32,
+    noise_seed: Option<u64>,
+) -> SimConfig {
+    let mut rng = LcgRng::new(noise_seed.unwrap_or(42));
+
+    // Spread interferers across 200–2800 Hz, keeping ≥ 75 Hz away from target.
+    const BAND_LO: f32 = 200.0;
+    const BAND_HI: f32 = 2800.0;
+    const GUARD: f32 = 75.0;
+
+    let mut signals = vec![SimSignal {
+        message77: target_msg,
+        freq_hz: target_freq,
+        snr_db: target_snr_db,
+        dt_sec: 0.0,
+    }];
+
+    let mut placed = 0usize;
+    let mut attempts = 0usize;
+    while placed < num_interferers && attempts < 10_000 {
+        attempts += 1;
+        // Random freq in band (uniform float via LCG)
+        let u = rng.uniform();
+        let freq = BAND_LO + u * (BAND_HI - BAND_LO);
+        // Reject if too close to target or any already-placed interferer
+        if (freq - target_freq).abs() < GUARD {
+            continue;
+        }
+        if signals.iter().skip(1).any(|s| (s.freq_hz - freq).abs() < GUARD) {
+            continue;
+        }
+        // Unique message per interferer: encode index into the first 8 bits
+        let mut msg = [0u8; MSG_BITS];
+        let idx = placed + 1;
+        for b in 0..8usize {
+            msg[b] = ((idx >> (7 - b)) & 1) as u8;
+        }
+        // Flip a few more bits to avoid all-same message collisions
+        msg[8] = (placed & 1) as u8;
+        msg[9] = ((placed >> 1) & 1) as u8;
+
+        signals.push(SimSignal {
+            message77: msg,
+            freq_hz: freq,
+            snr_db: interferer_snr_db,
+            dt_sec: 0.0,
+        });
+        placed += 1;
+    }
+
+    SimConfig { signals, noise_seed }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

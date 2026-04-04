@@ -24,8 +24,8 @@ fn format_result(i: usize, r: &DecodeResult) -> String {
     let text = unpack77(&r.message77)
         .unwrap_or_else(|| "<undecodable>".to_string());
     format!(
-        "  [{i:2}] freq={:7.1} Hz  dt={:+.2} s  errors={:2}  pass={}  \"{}\"",
-        r.freq_hz, r.dt_sec, r.hard_errors, r.pass, text
+        "  [{i:2}] freq={:7.1} Hz  dt={:+.2} s  snr={:+5.1} dB  errors={:2}  pass={}  \"{}\"",
+        r.freq_hz, r.dt_sec, r.snr_db, r.hard_errors, r.pass, text
     )
 }
 

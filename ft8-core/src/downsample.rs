@@ -98,6 +98,24 @@ pub fn downsample(
     (c1, cx) // return both result and FFT cache
 }
 
+/// Compute only the forward FFT cache (192 000-point) for a given audio block.
+///
+/// This is the expensive step shared by all subsequent [`downsample`] calls
+/// for the same audio.  Pre-compute once and pass the result as `fft_cache`
+/// to allow parallel processing of multiple candidates.
+pub fn build_fft_cache(audio: &[i16]) -> Vec<Complex<f32>> {
+    let mut planner = FftPlanner::<f32>::new();
+    let mut x: Vec<Complex<f32>> = audio
+        .iter()
+        .map(|&s| Complex::new(s as f32, 0.0))
+        .chain(std::iter::repeat(Complex::new(0.0, 0.0)))
+        .take(NFFT1)
+        .collect();
+    let fft1 = planner.plan_fft_forward(NFFT1);
+    fft1.process(&mut x);
+    x
+}
+
 /// Convenience wrapper: no cache, returns only the 3200-sample baseband signal.
 pub fn downsample_simple(audio: &[i16], f0: f32) -> Vec<Complex<f32>> {
     downsample(audio, f0, None).0

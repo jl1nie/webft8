@@ -147,6 +147,7 @@ mod tests {
             sync_score: 10.0,
             pass: 0,
             sync_cv: 0.0,
+            snr_db: 0.0,
         };
 
         let mut audio = audio;
@@ -189,6 +190,7 @@ mod tests {
             sync_score: 10.0,
             pass: 0,
             sync_cv: 0.0,
+            snr_db: 0.0,
         };
         subtract_signal(&mut audio, &result);
 

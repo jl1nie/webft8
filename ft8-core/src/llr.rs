@@ -186,6 +186,38 @@ pub fn compute_llr(cs: &[[Complex<f32>; 8]; 79]) -> LlrSet {
     }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// SNR estimation
+
+/// Compute WSJT-X compatible SNR (dB) from symbol spectra and decoded tones.
+///
+/// Mirrors WSJT-X `ft8b.f90` lines 438-460:
+///   xsig = Σ |cs[k][itone[k]]|²   (signal power at decoded tones)
+///   xnoi = Σ |cs[k][(itone[k]+4)%8]|²  (noise estimate at opposite tones)
+///   SNR  = 10 log10(xsig/xnoi − 1) − 27 dB
+///
+/// The −27 dB constant converts from per-tone bandwidth to the WSJT-X
+/// reference bandwidth of 2500 Hz.  Result is clamped to −24 dB (WSJT-X floor).
+pub fn compute_snr_db(cs: &[[Complex<f32>; 8]; 79], itone: &[u8; 79]) -> f32 {
+    let mut xsig = 0.0f32;
+    let mut xnoi = 0.0f32;
+    for (k, row) in cs.iter().enumerate() {
+        let t = itone[k] as usize;
+        xsig += row[t].norm_sqr();
+        xnoi += row[(t + 4) % 8].norm_sqr();
+    }
+    if xnoi < f32::EPSILON {
+        return -24.0;
+    }
+    let ratio = xsig / xnoi - 1.0;
+    if ratio <= 0.001 {
+        return -24.0;
+    }
+    (10.0 * ratio.log10() - 27.0_f32).max(-24.0)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 /// Hard-decision sync quality check: count how many of the 21 Costas tones
 /// are correctly decoded. Returns 0..21 (WSJT-X bails out if ≤ 6).
 pub fn sync_quality(cs: &[[Complex<f32>; 8]; 79]) -> u32 {
