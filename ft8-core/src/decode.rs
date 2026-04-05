@@ -358,13 +358,14 @@ fn process_candidate(
                         let (ap_mask, ap_llr_override) = ap_cfg.build_ap(apmag);
                         // Adaptive hard_errors threshold: more locked bits → stricter
                         let locked_bits = ap_mask.iter().filter(|&&m| m).count();
+                        // AP false-positive filter:
+                        // hard_errors adapts to locked bit count
+                        // Callsign verification below catches remaining FPs
                         let max_errors: u32 = if locked_bits >= 55 {
-                            24  // 61+ bit lock: fewer free bits = tighter
+                            30  // 61+ bit lock: callsign verify is the main filter
                         } else {
-                            30  // 33-bit lock: more free bits = relaxed
+                            36  // 33-bit lock: close to WSJT-X default (36)
                         };
-                        // AP sync quality gate
-                        if nsync < 8 { continue; }
 
                         for &(base_llr, _) in llr_variants {
                             let mut llr_ap = *base_llr;
