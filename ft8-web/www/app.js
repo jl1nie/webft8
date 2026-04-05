@@ -26,14 +26,11 @@ const snipeDxInfo = document.getElementById('snipe-dx-info');
 const snipeTxLine = document.getElementById('snipe-tx-line');
 const snipeBand = document.getElementById('snipe-band');
 const qsoLabel = document.getElementById('qso-label');
-const btnCq = document.getElementById('btn-cq');
-const btnTx = document.getElementById('btn-tx');
+const txActionsEl = document.getElementById('tx-actions');
 const btnHalt = document.getElementById('btn-halt');
 const autoCheck = document.getElementById('auto-qso');
 const statusEl = document.getElementById('status');
-const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
-const fileLink = document.getElementById('file-link');
 const myCallInput = document.getElementById('my-call');
 const myGridInput = document.getElementById('my-grid');
 const deviceSelect = document.getElementById('audio-device');
@@ -233,20 +230,15 @@ function addChatMsg(type, time, text, snr, actionCb) {
 }
 
 // ── QSO display update ─────────────────────────────────────────────────────
-const txSelectEl = document.getElementById('tx-select');
 const snipeRxList = document.getElementById('snipe-rx-list');
 
 function updateQsoDisplay() {
   const state = qso.state;
-  const tx = qso.getNextTx();
-
-  // TX button state
-  btnTx.disabled = !tx;
-  btnTx.classList.toggle('tx-ready', !!tx);
 
   // Snipe view
   qsoLabel.textContent = state;
   snipeDxCall.textContent = qso.dxCall || 'No target';
+  const tx = qso.getNextTx();
   snipeTxLine.textContent = tx ? `Next: ${qso.formatTx(tx)}` : '';
 
   // Progress dots
@@ -266,53 +258,75 @@ function updateQsoDisplay() {
     dots.forEach(d => d.classList.add('done'));
   }
 
-  // TX message selector (manual mode — when Auto is off and QSO is active)
-  updateTxSelector();
+  // Unified TX actions
+  updateTxActions();
 }
 
-function updateTxSelector() {
-  if (autoCheck.checked || qso.state === QSO_STATE.IDLE || !qso.dxCall) {
-    txSelectEl.classList.remove('show');
-    return;
-  }
-  txSelectEl.classList.add('show');
-  txSelectEl.innerHTML = '';
-
+function updateTxActions() {
+  txActionsEl.innerHTML = '';
   const myCall = myCallInput.value.toUpperCase();
   const myGrid = myGridInput.value.toUpperCase();
   const dx = qso.dxCall;
+  const state = qso.state;
 
-  // Build TX message options based on current state
+  if (state === QSO_STATE.IDLE || !dx) {
+    // IDLE — show CQ button only
+    const btn = document.createElement('button');
+    btn.className = 'cq';
+    btn.textContent = 'CQ';
+    btn.addEventListener('click', () => {
+      qso.setMyInfo(myCallInput.value, myGridInput.value);
+      const tx = qso.callCq();
+      addChatMsg('tx', '', qso.formatTx(tx), undefined);
+      statusEl.textContent = 'Calling CQ';
+    });
+    txActionsEl.appendChild(btn);
+    return;
+  }
+
+  if (autoCheck.checked) {
+    // Auto ON — show single next-TX button
+    const tx = qso.getNextTx();
+    if (tx) {
+      const btn = document.createElement('button');
+      btn.className = 'tx-next';
+      btn.textContent = qso.formatTx(tx);
+      btn.addEventListener('click', () => transmit(tx.call1, tx.call2, tx.report));
+      txActionsEl.appendChild(btn);
+    }
+    return;
+  }
+
+  // Auto OFF — show all TX options
   const options = [];
-  if (qso.state === QSO_STATE.CALLING) {
+  if (state === QSO_STATE.CALLING) {
     options.push({ label: `${dx} ${myCall} ${myGrid}`, c1: dx, c2: myCall, rpt: myGrid });
   }
-  if (qso.state === QSO_STATE.REPORT) {
+  if (state === QSO_STATE.REPORT) {
     const rpt = qso._autoReport();
     options.push({ label: `${dx} ${myCall} ${rpt}`, c1: dx, c2: myCall, rpt });
     options.push({ label: `${dx} ${myCall} R${rpt}`, c1: dx, c2: myCall, rpt: `R${rpt}` });
   }
-  if (qso.state === QSO_STATE.FINAL) {
+  if (state === QSO_STATE.FINAL) {
     options.push({ label: `${dx} ${myCall} RR73`, c1: dx, c2: myCall, rpt: 'RR73' });
     options.push({ label: `${dx} ${myCall} 73`, c1: dx, c2: myCall, rpt: '73' });
   }
-  // Always offer these
   options.push({ label: `${dx} ${myCall} ${myGrid}`, c1: dx, c2: myCall, rpt: myGrid });
   options.push({ label: `CQ ${myCall} ${myGrid}`, c1: 'CQ', c2: myCall, rpt: myGrid });
 
-  // Deduplicate
   const seen = new Set();
   for (const o of options) {
     if (seen.has(o.label)) continue;
     seen.add(o.label);
     const btn = document.createElement('button');
+    btn.className = 'tx-msg';
     btn.textContent = o.label;
     btn.addEventListener('click', () => transmit(o.c1, o.c2, o.rpt));
-    txSelectEl.appendChild(btn);
+    txActionsEl.appendChild(btn);
   }
 }
 
-autoCheck.addEventListener('change', updateTxSelector);
+autoCheck.addEventListener('change', updateTxActions);
 
 // ── Decode ──────────────────────────────────────────────────────────────────
 function runDecode(samples) {
@@ -342,7 +356,9 @@ async function transmit(call1, call2, report, freq) {
   freq = freq || (currentMode === 'snipe' ? snipeFreq : scoutDf);
   try {
     statusEl.textContent = `TX: ${call1} ${call2} ${report}`;
-    btnTx.classList.add('tx-active');
+    // Mark active button
+    const activeBtn = txActionsEl.querySelector('button');
+    if (activeBtn) activeBtn.classList.add('tx-active');
 
     const utc = new Date().toISOString().substr(11, 5);
     addChatMsg('tx sending', utc, `${call1} ${call2} ${report}`, undefined);
@@ -352,10 +368,10 @@ async function transmit(call1, call2, report, freq) {
     await audioOut.play(samples, outputDeviceSelect.value || undefined);
     if (cat.connected) await cat.ptt(false);
 
-    btnTx.classList.remove('tx-active');
+    if (activeBtn) activeBtn.classList.remove('tx-active');
     statusEl.textContent = 'TX complete';
   } catch (e) {
-    btnTx.classList.remove('tx-active');
+    txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
     statusEl.textContent = `TX error: ${e.message || e}`;
     if (cat.connected) try { await cat.ptt(false); } catch (_) {}
   }
@@ -556,24 +572,11 @@ periodMgr.callbacks.onTxFire = async (tx) => {
 };
 
 // ── Buttons ─────────────────────────────────────────────────────────────────
-btnCq.addEventListener('click', () => {
-  qso.setMyInfo(myCallInput.value, myGridInput.value);
-  const tx = qso.callCq();
-  addChatMsg('tx', '', qso.formatTx(tx), undefined);
-  statusEl.textContent = 'Calling CQ';
-});
-
-btnTx.addEventListener('click', async () => {
-  const tx = qso.getNextTx();
-  if (!tx) { statusEl.textContent = 'Nothing to send'; return; }
-  await transmit(tx.call1, tx.call2, tx.report);
-});
-
 btnHalt.addEventListener('click', () => {
   periodMgr.cancelTx();
   audioOut.stop();
   if (cat.connected) cat.ptt(false).catch(() => {});
-  btnTx.classList.remove('tx-active');
+  txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
   statusEl.textContent = 'Halted';
 });
 
@@ -581,7 +584,7 @@ btnReset.addEventListener('click', () => {
   periodMgr.cancelTx();
   audioOut.stop();
   if (cat.connected) cat.ptt(false).catch(() => {});
-  btnTx.classList.remove('tx-active');
+  txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
   // Save incomplete QSO before reset
   if (qso.state !== QSO_STATE.IDLE && qso.dxCall) {
     qsoLog.add({
@@ -670,16 +673,15 @@ function refreshQsoList() {
 // Refresh QSO list when settings panel opens
 btnSettings.addEventListener('click', refreshQsoList);
 
-// ── File drop ───────────────────────────────────────────────────────────────
-fileLink.addEventListener('click', (e) => { e.preventDefault(); fileInput.click(); });
-dropZone.addEventListener('click', () => fileInput.click());
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
-dropZone.addEventListener('drop', e => {
-  e.preventDefault(); dropZone.classList.remove('over');
+// ── File drop (on waterfall) ────────────────────────────────────────────────
+wfWrap.addEventListener('dragover', e => { e.preventDefault(); wfWrap.classList.add('drop-over'); });
+wfWrap.addEventListener('dragleave', () => wfWrap.classList.remove('drop-over'));
+wfWrap.addEventListener('drop', e => {
+  e.preventDefault(); wfWrap.classList.remove('drop-over');
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
 fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+document.getElementById('btn-open-wav').addEventListener('click', () => fileInput.click());
 
 function parseWav(buf) {
   const view = new DataView(buf);
@@ -701,7 +703,14 @@ function parseWav(buf) {
 
 async function handleFile(file) {
   if (!wasmReady) return;
-  if (liveMode) { statusEl.textContent = 'Stop audio first'; return; }
+  // Auto-stop live audio if active
+  if (liveMode) {
+    periodMgr.stop();
+    capture.stop();
+    liveMode = false;
+    btnStart.textContent = 'Start Audio';
+    timerEl.textContent = '--';
+  }
   try {
     const buf = await file.arrayBuffer();
     const samples = parseWav(buf);
@@ -754,4 +763,5 @@ init().then(async () => {
       outputDeviceSelect.appendChild(opt);
     }
   } catch (e) { console.warn('Audio devices:', e); }
+  updateTxActions();
 }).catch(e => { statusEl.textContent = `Load failed: ${e}`; });
