@@ -182,6 +182,15 @@ function openSettings() {
   settingsOverlay.classList.add('open');
 }
 function closeSettings() {
+  // Require callsign and grid before allowing close
+  if (!myCallInput.value.trim() || !myGridInput.value.trim()) {
+    myCallInput.style.borderColor = myCallInput.value.trim() ? '' : '#f44336';
+    myGridInput.style.borderColor = myGridInput.value.trim() ? '' : '#f44336';
+    setStatus('Enter callsign and grid');
+    return;
+  }
+  myCallInput.style.borderColor = '';
+  myGridInput.style.borderColor = '';
   settingsPanel.classList.remove('open');
   settingsOverlay.classList.remove('open');
 }
