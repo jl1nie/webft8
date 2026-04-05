@@ -18,6 +18,7 @@ const btnStart = document.getElementById('btn-start');
 const timerEl = document.getElementById('period-timer');
 const btnSnipe = document.getElementById('btn-snipe');
 const snipeCallInput = document.getElementById('snipe-call');
+const btnAp = document.getElementById('btn-ap');
 const snipeStatusEl = document.getElementById('snipe-status');
 const snipeOverlay = document.getElementById('snipe-overlay');
 const snipeFreqLabel = document.getElementById('snipe-freq-label');
@@ -36,6 +37,7 @@ const FREQ_MIN = 200, FREQ_MAX = 2800;
 // ── Snipe mode state ────────────────────────────────────────────────────────
 let snipeMode = false;
 let snipeFreq = 1000; // center frequency of 500 Hz window
+let apCall = ''; // confirmed AP callsign (empty = AP off)
 
 function updateSnipeOverlay() {
   if (!snipeMode) {
@@ -62,16 +64,30 @@ function updateSnipeOverlay() {
 function updateSnipeStatus() {
   if (!snipeMode) {
     snipeStatusEl.textContent = '';
+    btnAp.classList.remove('ap-on');
     return;
   }
-  const call = snipeCallInput.value.trim().toUpperCase();
-  if (call) {
-    snipeStatusEl.textContent = `EQ + AP: ${call}`;
+  if (apCall) {
+    snipeStatusEl.textContent = `EQ + AP: ${apCall}`;
     snipeStatusEl.style.color = '#76ff03';
   } else {
-    snipeStatusEl.textContent = 'EQ only (no AP)';
+    snipeStatusEl.textContent = 'EQ only';
     snipeStatusEl.style.color = '#ff9800';
   }
+}
+
+function confirmAp() {
+  const call = snipeCallInput.value.trim().toUpperCase();
+  if (call && snipeMode) {
+    apCall = call;
+    btnAp.classList.add('ap-on');
+    btnAp.textContent = `AP: ${apCall}`;
+  } else {
+    apCall = '';
+    btnAp.classList.remove('ap-on');
+    btnAp.textContent = 'AP';
+  }
+  updateSnipeStatus();
 }
 
 btnSnipe.addEventListener('click', () => {
@@ -79,11 +95,14 @@ btnSnipe.addEventListener('click', () => {
   btnSnipe.classList.toggle('snipe-on', snipeMode);
   btnSnipe.textContent = snipeMode ? 'Snipe ON' : 'Snipe';
   snipeCallInput.disabled = !snipeMode;
+  btnAp.disabled = !snipeMode;
+  if (!snipeMode) { apCall = ''; btnAp.textContent = 'AP'; btnAp.classList.remove('ap-on'); }
   updateSnipeOverlay();
   updateSnipeStatus();
 });
 
-snipeCallInput.addEventListener('input', updateSnipeStatus);
+btnAp.addEventListener('click', confirmAp);
+snipeCallInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmAp(); });
 
 // Click/drag on waterfall to set snipe frequency
 wfWrap.addEventListener('click', (e) => {
@@ -121,23 +140,19 @@ init().then(async () => {
 // ── Decode helper ───────────────────────────────────────────────────────────
 function runDecode(samples) {
   if (snipeMode) {
-    const call = snipeCallInput.value.trim().toUpperCase();
-    return decode_sniper(samples, snipeFreq, call);
+    return decode_sniper(samples, snipeFreq, apCall);
   }
   return subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
 }
 
 function isTargetMessage(msg) {
-  if (!snipeMode) return false;
-  const call = snipeCallInput.value.trim().toUpperCase();
-  if (!call) return false;
-  return msg.toUpperCase().includes(call);
+  if (!apCall) return false;
+  return msg.toUpperCase().includes(apCall);
 }
 
 function decodeModeName() {
   if (snipeMode) {
-    const call = snipeCallInput.value.trim().toUpperCase();
-    return call ? `snipe ${snipeFreq}Hz AP:${call}` : `snipe ${snipeFreq}Hz`;
+    return apCall ? `snipe ${snipeFreq}Hz AP:${apCall}` : `snipe ${snipeFreq}Hz`;
   }
   return subtractCheck.checked ? 'subtract' : 'single-pass';
 }

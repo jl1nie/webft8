@@ -30,6 +30,7 @@
   .controls button { cursor: pointer; }
   .controls button.active { background: #0d47a1; border-color: #4fc3f7; }
   .controls button.snipe-on { background: #b71c1c; border-color: #f44336; }
+  .controls button.ap-on { background: #1b5e20; border-color: #76ff03; color: #76ff03; }
   .controls .timer { font-variant-numeric: tabular-nums; color: #81c784; min-width: 3.5em; }
   .controls label { display: flex; align-items: center; gap: .3rem; }
   #snipe-call { width: 7em; text-transform: uppercase; }
@@ -75,6 +76,7 @@
   <span style="color:#444">|</span>
   <button id="btn-snipe">Snipe</button>
   <input type="text" id="snipe-call" placeholder="DX Call" disabled>
+  <button id="btn-ap" disabled>AP</button>
   <span id="snipe-status" style="font-size:.75rem;color:#666"></span>
 </div>
 
