@@ -60,7 +60,8 @@
     border: 1px solid var(--c-border); border-radius: var(--radius-sm);
     padding: var(--sp-xs); margin-left: auto; min-width: 5em; }
   .timer { font-size: var(--fs-base); color: var(--c-snr); font-variant-numeric: tabular-nums;
-    min-width: 2.5em; text-align: right; flex-shrink: 0; }
+    min-width: 2.5em; text-align: right; flex-shrink: 0; transition: color .2s; }
+  .timer.tx-on { color: var(--c-danger); font-weight: bold; }
   .header .gear { font-size: var(--fs-lg); color: var(--c-text2); cursor: pointer;
     padding: var(--sp-xs); border: 1px solid var(--c-border); border-radius: var(--radius-sm);
     line-height: 1; flex-shrink: 0; }
@@ -112,6 +113,9 @@
   .chat-msg .col-dt { color: var(--c-text2); font-size: var(--fs-sm); min-width: 2.5em; text-align: right; }
   .chat-msg .col-snr { color: var(--c-snr); font-size: var(--fs-sm); min-width: 2em; text-align: right; }
   .chat-msg .text { flex: 1; }
+  .empty-state { color: var(--c-text2); font-size: var(--fs-sm); text-align: center;
+    padding: var(--sp-md); line-height: 1.8; }
+  .empty-state b { color: var(--c-accent); }
   .chat-msg .text .call { color: var(--c-warn); font-weight: bold; }
   .chat-msg .text .target { color: var(--c-success); font-weight: bold; }
 
@@ -147,6 +151,14 @@
   .bottom-bar button.halt { border-color: var(--c-danger); color: var(--c-danger); }
   .bottom-bar button:disabled { opacity: 0.3; cursor: default; }
   .bottom-bar label { font-size: var(--fs-base); display: flex; align-items: center; gap: var(--sp-xs); }
+  .toggle { cursor: pointer; user-select: none; }
+  .toggle input { display: none; }
+  .toggle-track { display: inline-block; width: 36px; height: 20px; background: var(--c-border);
+    border-radius: 10px; position: relative; vertical-align: middle; transition: background .2s; }
+  .toggle-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    background: var(--c-text2); border-radius: 50%; transition: transform .2s, background .2s; }
+  .toggle input:checked + .toggle-track { background: var(--c-accent); }
+  .toggle input:checked + .toggle-track::after { transform: translateX(16px); background: #fff; }
   @keyframes pulse { to { opacity: 0.6; } }
   #tx-actions { display: flex; gap: var(--sp-xs); flex-wrap: wrap; flex: 1; }
   #tx-actions button.cq { background: var(--c-accent-bg); border-color: var(--c-accent); color: #fff;
@@ -162,6 +174,17 @@
     padding: var(--sp-md); z-index: 100; overflow-y: auto; }
   #settings-panel.open { display: block; }
   #settings-panel h2 { font-size: var(--fs-base); color: var(--c-accent); margin-bottom: var(--sp-sm); }
+  .accordion { margin-bottom: var(--sp-xs); border: 1px solid var(--c-border);
+    border-radius: var(--radius-md); overflow: hidden; }
+  .accordion summary { font-size: var(--fs-base); font-weight: bold; color: var(--c-accent);
+    padding: var(--sp-sm); cursor: pointer; background: var(--c-surface2);
+    list-style: none; display: flex; align-items: center; gap: var(--sp-xs); }
+  .accordion summary::before { content: '\25b6'; font-size: var(--fs-xs); transition: transform .2s; }
+  .accordion[open] summary::before { transform: rotate(90deg); }
+  .accordion summary::-webkit-details-marker { display: none; }
+  .accordion > :not(summary) { padding: 0 var(--sp-sm); }
+  .accordion > .field:first-of-type { padding-top: var(--sp-sm); }
+  .accordion > :last-child { padding-bottom: var(--sp-sm); }
   #settings-panel .field { margin-bottom: var(--sp-sm); }
   #settings-panel label { font-size: var(--fs-sm); color: var(--c-text2); display: block;
     margin-bottom: var(--sp-xs); }
@@ -174,6 +197,13 @@
   .settings-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0,0,0,0.5); z-index: 99; }
   .settings-overlay.open { display: block; }
+
+  /* ── Toast notification ──────────────────────────────────────────── */
+  .toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.9);
+    background: var(--c-success); color: var(--c-bg); font-size: var(--fs-base); font-weight: bold;
+    padding: var(--sp-sm) var(--sp-md); border-radius: var(--radius-md);
+    opacity: 0; transition: opacity .3s, transform .3s; z-index: 200; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 
   /* ── Waterfall drop highlight ──────────────────────────────────────── */
   #waterfall-wrap.drop-over { outline: 2px dashed var(--c-accent); outline-offset: -2px; }
@@ -227,7 +257,13 @@
 
 <!-- Scout view: chat-style message flow -->
 <div id="scout-view">
-  <div class="chat-list" id="chat-list"></div>
+  <div class="chat-list" id="chat-list">
+    <div class="empty-state" id="empty-state">
+      Tap <b>rs-ft8n</b> logo to start audio<br>
+      Tap waterfall to set TX frequency<br>
+      Tap a decoded message to call
+    </div>
+  </div>
 </div>
 
 <!-- Snipe view: target-focused -->
@@ -260,8 +296,8 @@
 <!-- Bottom bar -->
 <div class="bottom-bar">
   <div id="tx-actions"></div>
-  <button id="btn-halt" class="halt">Halt</button>
-  <label><input type="checkbox" id="auto-qso"> Auto</label>
+  <button id="btn-halt" class="halt" style="display:none">Halt</button>
+  <label class="toggle"><input type="checkbox" id="auto-qso"><span class="toggle-track"></span> Auto</label>
 </div>
 
 <!-- Hidden file input for WAV -->
@@ -274,65 +310,72 @@
     <h2 style="margin:0">Settings</h2>
     <button id="btn-close-settings" style="font-size:1.2rem;background:none;border:none;color:var(--c-text2);cursor:pointer;width:auto;min-height:auto">&times;</button>
   </div>
-  <div class="field">
-    <label>My Callsign</label>
-    <input type="text" id="my-call" placeholder="JA1ABC" style="text-transform:uppercase">
-  </div>
-  <div class="field">
-    <label>My Grid</label>
-    <input type="text" id="my-grid" placeholder="PM95" style="text-transform:uppercase;width:5em">
-  </div>
-  <div class="field">
-    <label>Band (MHz)</label>
-    <select id="band-freq">
-      <option value="1.840">1.840 (160m)</option>
-      <option value="3.531">3.531 (80m JA)</option>
-      <option value="3.573">3.573 (80m DX)</option>
-      <option value="7.041">7.041 (40m JA)</option>
-      <option value="7.074">7.074 (40m DX)</option>
-      <option value="10.136">10.136 (30m)</option>
-      <option value="14.074" selected>14.074 (20m)</option>
-      <option value="18.100">18.100 (17m)</option>
-      <option value="21.074">21.074 (15m)</option>
-      <option value="24.915">24.915 (12m)</option>
-      <option value="28.074">28.074 (10m)</option>
-      <option value="50.313">50.313 (6m)</option>
-      <option value="144.174">144.174 (2m DX)</option>
-      <option value="144.460">144.460 (2m JA)</option>
-      <option value="432.065">432.065 (70cm)</option>
-      <option value="1296.065">1296.065 (23cm)</option>
-    </select>
-  </div>
-  <div class="field">
-    <label>Audio Input</label>
-    <select id="audio-device"><option>-- select --</option></select>
-  </div>
-  <div class="field">
-    <label>Audio Output</label>
-    <select id="audio-output-device"><option value="">-- default --</option></select>
-  </div>
-  <div class="field">
-    <label>CAT Protocol</label>
-    <select id="cat-protocol">
-      <option value="yaesu">Yaesu (FTDX10)</option>
-      <option value="civ">Icom (CI-V)</option>
-    </select>
-  </div>
-  <button id="btn-cat">Connect CAT</button>
-  <span class="cat-status" id="cat-status" style="font-size:var(--fs-xs);color:var(--c-text2);display:block;margin-bottom:var(--sp-sm)">not connected</span>
-  <button id="btn-start">Start Audio</button>
-  <button id="btn-qso-reset">Reset QSO</button>
-  <button id="btn-open-wav">Open WAV File</button>
-  <div style="margin-top:var(--sp-md)">
+  <details class="accordion" open>
+    <summary>Station</summary>
+    <div class="field">
+      <label>My Callsign</label>
+      <input type="text" id="my-call" placeholder="JA1ABC" style="text-transform:uppercase">
+    </div>
+    <div class="field">
+      <label>My Grid</label>
+      <input type="text" id="my-grid" placeholder="PM95" style="text-transform:uppercase;width:5em">
+    </div>
+    <div class="field">
+      <label>Band (MHz)</label>
+      <select id="band-freq">
+        <option value="1.840">1.840 (160m)</option>
+        <option value="3.531">3.531 (80m JA)</option>
+        <option value="3.573">3.573 (80m DX)</option>
+        <option value="7.041">7.041 (40m JA)</option>
+        <option value="7.074">7.074 (40m DX)</option>
+        <option value="10.136">10.136 (30m)</option>
+        <option value="14.074" selected>14.074 (20m)</option>
+        <option value="18.100">18.100 (17m)</option>
+        <option value="21.074">21.074 (15m)</option>
+        <option value="24.915">24.915 (12m)</option>
+        <option value="28.074">28.074 (10m)</option>
+        <option value="50.313">50.313 (6m)</option>
+        <option value="144.174">144.174 (2m DX)</option>
+        <option value="144.460">144.460 (2m JA)</option>
+        <option value="432.065">432.065 (70cm)</option>
+        <option value="1296.065">1296.065 (23cm)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Audio Input</label>
+      <select id="audio-device"><option>-- select --</option></select>
+    </div>
+    <div class="field">
+      <label>Audio Output</label>
+      <select id="audio-output-device"><option value="">-- default --</option></select>
+    </div>
+    <button id="btn-start">Start Audio</button>
+  </details>
+  <details class="accordion">
+    <summary>CAT</summary>
+    <div class="field">
+      <label>CAT Protocol</label>
+      <select id="cat-protocol">
+        <option value="yaesu">Yaesu (FTDX10)</option>
+        <option value="civ">Icom (CI-V)</option>
+      </select>
+    </div>
+    <button id="btn-cat">Connect CAT</button>
+    <span class="cat-status" id="cat-status" style="font-size:var(--fs-xs);color:var(--c-text2);display:block;margin-bottom:var(--sp-sm)">not connected</span>
+  </details>
+  <details class="accordion">
+    <summary>Decode</summary>
     <label><input type="checkbox" id="subtract-mode" checked> Multi-pass subtract</label>
     <label><input type="checkbox" id="ap-mode" checked> A Priori (AP)</label>
-  </div>
-  <div style="margin-top:var(--sp-md);border-top:1px solid var(--c-border);padding-top:var(--sp-sm)">
-    <h2>Log</h2>
+    <button id="btn-qso-reset" style="margin-top:var(--sp-sm)">Reset QSO</button>
+    <button id="btn-open-wav">Open WAV File</button>
+  </details>
+  <details class="accordion">
+    <summary>Log</summary>
     <button id="btn-export-zip">Export ZIP (ADIF + RX)</button>
     <button id="btn-clear-log" style="color:var(--c-danger);border-color:var(--c-danger)">Clear All Logs</button>
     <div id="qso-list" style="margin-top:var(--sp-xs);font-size:var(--fs-xs);color:var(--c-text2);max-height:120px;overflow-y:auto"></div>
-  </div>
+  </details>
 </div>
 
 <script type="module" src="app.js"></script>

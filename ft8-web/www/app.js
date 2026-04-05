@@ -80,6 +80,17 @@ function setStatus(text) {
     if (!periodMgr.hasTxQueued()) scoutTxQueue.textContent = '';
   }
   snipeTxLine.textContent = text;
+  // Show Halt only when TX is queued or active
+  btnHalt.style.display = (periodMgr.hasTxQueued() || isTx) ? '' : 'none';
+}
+
+function showToast(text) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => t.classList.add('show'), 10);
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2000);
 }
 
 function updateScoutStatus() {
@@ -147,7 +158,8 @@ const qso = new QsoManager({
         bandMHz: bandSelect.value,
         state: 'IDLE', // completed
       });
-      addChatMsg('sys', '', `QSO complete: ${qso.dxCall}`, 0);
+      addChatMsg('sys', '', `QSO logged: ${qso.dxCall}`, 0);
+      showToast(`QSO logged: ${qso.dxCall}`);
     }
   },
   onTxReady: () => updateQsoDisplay(),
@@ -267,6 +279,8 @@ wfWrap.addEventListener('click', (e) => {
 
 // ── Chat message helper (Scout mode) ────────────────────────────────────────
 function addChatMsg(type, time, text, snr, actionCb, freq, dt) {
+  const es = document.getElementById('empty-state');
+  if (es) es.remove();
   const div = document.createElement('div');
   div.className = `chat-msg ${type}`;
 
@@ -484,6 +498,7 @@ async function transmit(call1, call2, report, freq) {
     }
     if (!activeBtn && allBtns.length) activeBtn = allBtns[0];
     if (activeBtn) activeBtn.classList.add('tx-active');
+    timerEl.classList.add('tx-on');
 
     const utc = new Date().toISOString().substr(11, 5);
     addChatMsg('tx sending', utc, txText, undefined);
@@ -494,9 +509,11 @@ async function transmit(call1, call2, report, freq) {
     if (cat.connected) await cat.ptt(false);
 
     if (activeBtn) activeBtn.classList.remove('tx-active');
+    timerEl.classList.remove('tx-on');
     setStatus('TX complete');
   } catch (e) {
     txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
+    timerEl.classList.remove('tx-on');
     setStatus(`TX error: ${e.message || e}`);
     if (cat.connected) try { await cat.ptt(false); } catch (_) {}
   }
