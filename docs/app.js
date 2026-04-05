@@ -202,6 +202,10 @@ capture._onDisconnect = () => {
   setStatus('Audio disconnected');
   showToast('Audio disconnected');
 };
+cat.onDisconnect = () => {
+  setStatus('CAT disconnected');
+  showToast('CAT disconnected');
+};
 
 // ── Mode switching ──────────────────────────────────────────────────────────
 tabScout.addEventListener('click', () => setMode('scout'));
@@ -547,7 +551,7 @@ async function transmit(call1, call2, report, freq) {
     txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
     timerEl.classList.remove('tx-on');
     setStatus(`TX error: ${e.message || e}`);
-    if (cat.connected) try { await cat.ptt(false); } catch (_) {}
+    await cat.safePttOff();
   }
 }
 
@@ -824,7 +828,7 @@ btnHalt.addEventListener('click', () => {
     // First tap: cancel TX, stop audio output, but keep QSO state
     periodMgr.cancelTx();
     audioOut.stop();
-    if (cat.connected) cat.ptt(false).catch(() => {});
+    cat.safePttOff();
     txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
     timerEl.classList.remove('tx-on');
     halted = true;
