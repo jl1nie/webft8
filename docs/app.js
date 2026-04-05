@@ -653,10 +653,7 @@ const periodMgr = new FT8PeriodManager({
 
       // QSO state machine (skip CQ responses — handled below after SNR sort)
       const isCqWait = qso.state === QSO_STATE.CALLING && !qso.dxCall;
-      // AP decodes (pass >= 6) in IDLE state are likely false positives — skip
-      const isApResult = r.pass >= 6;
-      const skipAp = isApResult && qso.state === QSO_STATE.IDLE;
-      if (!suspect && !isCqWait && !skipAp) {
+      if (!suspect && !isCqWait) {
         qso.setRxSnr(snr);
         const result = qso.processMessage(msg);
         if (result && !txMsg) txMsg = result;

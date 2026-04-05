@@ -165,7 +165,9 @@ export class QsoManager {
     }
 
     // "MYCALL DXCALL GRID" — someone calling us
+    // If dxCall is already set (AP target), only accept from that station
     if (words[0] === this.myCall && words.length >= 3) {
+      if (this.dxCall && words[1] !== this.dxCall) return null;
       this.dxCall = words[1];
       this.dxGrid = words[2];
       this.txReport = this._autoReport();
