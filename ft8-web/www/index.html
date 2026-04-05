@@ -144,6 +144,23 @@
 
   /* ── Waterfall drop highlight ────────────────────────────────────────── */
   #waterfall-wrap.drop-over { outline: 2px dashed #4fc3f7; outline-offset: -2px; }
+
+  /* ── Responsive: mobile (narrow screens) ───────────────────────────── */
+  @media (max-width: 600px) {
+    .chat-msg { font-size: .9rem; padding: .4rem .5rem; min-height: 36px; }
+    .chat-msg .col-freq { font-size: .8rem; }
+    .chat-msg .col-dt { font-size: .8rem; }
+    .chat-msg .col-snr { font-size: .8rem; }
+    .period-sep { font-size: .7rem; }
+    #scout-status { font-size: .8rem; }
+    .snipe-target .dx-call { font-size: 1.3rem; }
+    .qso-progress { font-size: .85rem; }
+    .qso-progress .dot { width: 12px; height: 12px; }
+    #scout-status .dot { width: 10px; height: 10px; }
+    .header h1 { font-size: 1.1rem; }
+    .mode-tabs button { font-size: .8rem; padding: .3rem .7rem; }
+    #settings-panel { width: 100%; }
+  }
 </style>
 </head>
 <body class="scout-mode">
