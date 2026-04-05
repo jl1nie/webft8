@@ -68,6 +68,25 @@ pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str) -> Vec<D
         .collect()
 }
 
+/// Encode an FT8 message to audio waveform (12 kHz f32 PCM).
+///
+/// `call1` — first callsign (e.g. "CQ", "JA1ABC")
+/// `call2` — second callsign (e.g. "3Y0Z")
+/// `report` — grid, report, or response (e.g. "PM95", "-12", "R-12", "RRR", "RR73", "73")
+/// `freq_hz` — carrier frequency in Hz (e.g. 1000.0)
+///
+/// Returns 151,680 f32 samples (12.64 seconds at 12 kHz).
+#[wasm_bindgen]
+pub fn encode_ft8(call1: &str, call2: &str, report: &str, freq_hz: f32) -> Result<Vec<f32>, JsValue> {
+    use ft8_core::message::pack77;
+    use ft8_core::wave_gen::{message_to_tones, tones_to_f32};
+
+    let msg77 = pack77(call1, call2, report)
+        .ok_or_else(|| JsValue::from_str("Failed to pack message"))?;
+    let tones = message_to_tones(&msg77);
+    Ok(tones_to_f32(&tones, freq_hz, 1.0))
+}
+
 /// Decode FT8 with multi-pass signal subtraction (3-pass).
 #[wasm_bindgen]
 pub fn decode_wav_subtract(samples: &[i16]) -> Vec<DecodedMessage> {

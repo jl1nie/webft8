@@ -512,6 +512,66 @@ pub fn pack77_type1(call1: &str, call2: &str, grid: &str) -> Option<[u8; 77]> {
     Some(msg)
 }
 
+/// Pack a Type 1 standard message with any report/grid field.
+///
+/// `report` can be:
+/// - A 4-char grid locator: `"PM95"`
+/// - A dB signal report: `"-12"`, `"+05"`
+/// - An R-prefixed report: `"R-12"`, `"R+05"`
+/// - A standard response: `"RRR"`, `"RR73"`, `"73"`
+/// - Empty string (no report)
+///
+/// # Examples
+/// ```
+/// # use ft8_core::message::pack77;
+/// let msg = pack77("CQ", "JA1ABC", "PM95").unwrap();
+/// let msg = pack77("JA1ABC", "3Y0Z", "-12").unwrap();
+/// let msg = pack77("3Y0Z", "JA1ABC", "R-12").unwrap();
+/// let msg = pack77("JA1ABC", "3Y0Z", "RR73").unwrap();
+/// ```
+pub fn pack77(call1: &str, call2: &str, report: &str) -> Option<[u8; 77]> {
+    let n28a = pack28(call1)?;
+    let n28b = pack28(call2)?;
+
+    let report = report.trim();
+
+    // Determine igrid and ir flag
+    let (igrid, ir): (u32, u8) = if report.is_empty() {
+        (MAX_GRID4 + 1, 0)
+    } else if report == "RRR" {
+        (MAX_GRID4 + 2, 0)
+    } else if report == "RR73" {
+        (MAX_GRID4 + 3, 0)
+    } else if report == "73" {
+        (MAX_GRID4 + 4, 0)
+    } else if report.len() == 4 && pack_grid4(report).is_some() {
+        // Grid locator (e.g. "PM95")
+        (pack_grid4(report).unwrap(), 0)
+    } else {
+        // dB report: "-12", "+05", "R-12", "R+05"
+        let (r_prefix, num_str) = if let Some(s) = report.strip_prefix('R') {
+            (1u8, s)
+        } else {
+            (0u8, report)
+        };
+        let snr: i32 = num_str.parse().ok()?;
+        if snr < -50 || snr > 49 { return None; }
+        let mut isnr = snr + 35;
+        if isnr < 0 { isnr += 101; }
+        (MAX_GRID4 + isnr as u32, r_prefix)
+    };
+
+    let mut msg = [0u8; 77];
+    write_bits(&mut msg, 0, 28, n28a);
+    // ipa = 0 (bit 28)
+    write_bits(&mut msg, 29, 28, n28b);
+    // ipb = 0 (bit 57)
+    msg[58] = ir;                               // ir (bit 58)
+    write_bits(&mut msg, 59, 15, igrid);
+    write_bits(&mut msg, 74, 3, 1);             // i3=1
+    Some(msg)
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -623,5 +683,37 @@ mod tests {
 
         // False positives from noise
         assert!(!is_plausible_message("NFW/0811 73"));
+    }
+
+    #[test]
+    fn pack77_report_roundtrip() {
+        // Grid
+        let msg = pack77("CQ", "JA1ABC", "PM95").unwrap();
+        assert_eq!(unpack77(&msg).unwrap(), "CQ JA1ABC PM95");
+
+        // dB report
+        let msg = pack77("JA1ABC", "3Y0Z", "-12").unwrap();
+        assert_eq!(unpack77(&msg).unwrap(), "JA1ABC 3Y0Z -12");
+
+        let msg = pack77("JA1ABC", "3Y0Z", "+05").unwrap();
+        assert_eq!(unpack77(&msg).unwrap(), "JA1ABC 3Y0Z +05");
+
+        // R-report
+        let msg = pack77("3Y0Z", "JA1ABC", "R-12").unwrap();
+        assert_eq!(unpack77(&msg).unwrap(), "3Y0Z JA1ABC R-12");
+
+        // RRR / RR73 / 73
+        let msg = pack77("JA1ABC", "3Y0Z", "RRR").unwrap();
+        assert_eq!(unpack77(&msg).unwrap(), "JA1ABC 3Y0Z RRR");
+
+        let msg = pack77("JA1ABC", "3Y0Z", "RR73").unwrap();
+        assert_eq!(unpack77(&msg).unwrap(), "JA1ABC 3Y0Z RR73");
+
+        let msg = pack77("3Y0Z", "JA1ABC", "73").unwrap();
+        assert_eq!(unpack77(&msg).unwrap(), "3Y0Z JA1ABC 73");
+
+        // Empty report
+        let msg = pack77("JA1ABC", "3Y0Z", "").unwrap();
+        assert_eq!(unpack77(&msg).unwrap(), "JA1ABC 3Y0Z");
     }
 }

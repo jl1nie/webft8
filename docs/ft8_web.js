@@ -153,6 +153,37 @@ export function decode_wav_subtract(samples) {
     return v2;
 }
 
+/**
+ * Encode an FT8 message to audio waveform (12 kHz f32 PCM).
+ *
+ * `call1` — first callsign (e.g. "CQ", "JA1ABC")
+ * `call2` — second callsign (e.g. "3Y0Z")
+ * `report` — grid, report, or response (e.g. "PM95", "-12", "R-12", "RRR", "RR73", "73")
+ * `freq_hz` — carrier frequency in Hz (e.g. 1000.0)
+ *
+ * Returns 151,680 f32 samples (12.64 seconds at 12 kHz).
+ * @param {string} call1
+ * @param {string} call2
+ * @param {string} report
+ * @param {number} freq_hz
+ * @returns {Float32Array}
+ */
+export function encode_ft8(call1, call2, report, freq_hz) {
+    const ptr0 = passStringToWasm0(call1, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(call2, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(report, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.encode_ft8(ptr0, len0, ptr1, len1, ptr2, len2, freq_hz);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v4;
+}
+
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -161,6 +192,11 @@ function __wbg_get_imports() {
         },
         __wbg_decodedmessage_new: function(arg0) {
             const ret = DecodedMessage.__wrap(arg0);
+            return ret;
+        },
+        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(String) -> Externref`.
+            const ret = getStringFromWasm0(arg0, arg1);
             return ret;
         },
         __wbindgen_init_externref_table: function() {
@@ -183,6 +219,11 @@ const DecodedMessageFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decodedmessage_free(ptr >>> 0, 1));
 
+function getArrayF32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
 function getArrayJsValueFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     const mem = getDataViewMemory0();
@@ -200,6 +241,14 @@ function getDataViewMemory0() {
         cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
     }
     return cachedDataViewMemory0;
+}
+
+let cachedFloat32ArrayMemory0 = null;
+function getFloat32ArrayMemory0() {
+    if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
+        cachedFloat32ArrayMemory0 = new Float32Array(wasm.memory.buffer);
+    }
+    return cachedFloat32ArrayMemory0;
 }
 
 function getStringFromWasm0(ptr, len) {
@@ -267,6 +316,12 @@ function passStringToWasm0(arg, malloc, realloc) {
     return ptr;
 }
 
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_externrefs.get(idx);
+    wasm.__externref_table_dealloc(idx);
+    return value;
+}
+
 let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
 cachedTextDecoder.decode();
 const MAX_SAFARI_DECODE_BYTES = 2146435072;
@@ -301,6 +356,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;
+    cachedFloat32ArrayMemory0 = null;
     cachedUint16ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
