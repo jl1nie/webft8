@@ -61,6 +61,7 @@ let scoutDf = 1500;   // Scout TX frequency
 let apCall = '';
 let snipePhase = 'watch'; // 'watch' | 'call'
 let snipeAltCall = ''; // call2 (sender) from last tapped Snipe message
+let rxSlotEven = null; // even/odd of the period where DX was last heard
 let lastDecodeMs = 0; // last decode duration for timer display
 let lastPeriodIndex = -1; // track period changes for separator
 let apDisabledAuto = false; // true if AP was auto-disabled due to timeout
@@ -339,10 +340,7 @@ function updateTxActions() {
     btn.addEventListener('click', () => {
       qso.setMyInfo(myCallInput.value, myGridInput.value);
       const tx = qso.callCq();
-      const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
-      const period = periodMgr.getCurrentPeriod();
-      periodMgr.queueTx({ ...tx, freq }, !period.isEven);
-      setStatus(`CQ queued (${freq} Hz)`);
+      queueTxMsg(tx.call1, tx.call2, tx.report);
     });
     txActionsEl.appendChild(btn);
 
@@ -379,10 +377,7 @@ function updateTxActions() {
   cqBtn.addEventListener('click', () => {
     qso.setMyInfo(myCallInput.value, myGridInput.value);
     const cqTx = qso.callCq();
-    const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
-    const period = periodMgr.getCurrentPeriod();
-    periodMgr.queueTx({ ...cqTx, freq }, !period.isEven);
-    setStatus(`CQ queued`);
+    queueTxMsg(cqTx.call1, cqTx.call2, cqTx.report);
   });
   txActionsEl.appendChild(cqBtn);
 }
@@ -450,8 +445,9 @@ function runDecode(samples) {
 // ── TX queue helper (all manual TX goes through period manager) ─────────────
 function queueTxMsg(call1, call2, report) {
   const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
-  const period = periodMgr.getCurrentPeriod();
-  periodMgr.queueTx({ call1, call2, report, freq }, !period.isEven);
+  // TX on opposite slot from DX; if unknown, use opposite of current period
+  const txSlot = rxSlotEven !== null ? !rxSlotEven : !periodMgr.getCurrentPeriod().isEven;
+  periodMgr.queueTx({ call1, call2, report, freq }, txSlot);
   setStatus(`TX queued: ${call1} ${call2} ${report}`);
 }
 
@@ -584,20 +580,20 @@ const periodMgr = new FT8PeriodManager({
       r.free();
     }
 
-    // Auto TX / retry (retry runs regardless of Auto setting)
-    const period = periodMgr.getCurrentPeriod();
+    // Auto TX / retry — TX on opposite slot from RX (DX transmits on isEven, we TX on !isEven)
+    const txSlot = !isEven; // opposite of the period we just decoded
     if (txMsg && autoCheck.checked) {
       const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
-      periodMgr.queueTx({ ...txMsg, freq }, !period.isEven);
+      rxSlotEven = isEven; // remember DX's slot
+      periodMgr.queueTx({ ...txMsg, freq }, txSlot);
       setStatus(`TX queued: ${qso.formatTx(txMsg)}`);
     } else if (!txMsg && qso.state !== QSO_STATE.IDLE && autoCheck.checked) {
-      // Save state before retry (retry may reset on max retries)
       const prevState = qso.state;
       const prevDx = qso.dxCall;
       const retryTx = qso.retry();
       if (retryTx) {
         const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
-        periodMgr.queueTx({ ...retryTx, freq }, !period.isEven);
+        periodMgr.queueTx({ ...retryTx, freq }, txSlot);
         setStatus(`Retry ${qso.retryInfo()}: ${qso.formatTx(retryTx)}`);
       } else if (prevDx) {
         // Max retries exceeded — log incomplete QSO
@@ -737,6 +733,7 @@ btnReset.addEventListener('click', () => {
     });
   }
   qso.reset();
+  rxSlotEven = null;
   chatList.innerHTML = '';
   updateQsoDisplay();
   setStatus('Reset');
