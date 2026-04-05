@@ -106,7 +106,35 @@ pub fn message_to_tones(message77: &[u8; MSG_BITS]) -> [u8; NN] {
     codeword_to_itone(&cw)
 }
 
+/// GFSK pulse shape (matches WSJT-X `gfsk_pulse.f90`).
+///
+/// `bt` — bandwidth-time product (2.0 for FT8)
+/// `t`  — time in symbol periods, centered at 0
+fn gfsk_pulse(bt: f32, t: f32) -> f32 {
+    let c = PI * (2.0_f32 / 2.0_f32.ln()).sqrt();
+    0.5 * (erf(c * bt * (t + 0.5)) - erf(c * bt * (t - 0.5)))
+}
+
+/// Approximate erf(x) — accurate to ~1e-5 (Abramowitz & Stegun 7.1.26).
+fn erf(x: f32) -> f32 {
+    let sign = if x >= 0.0 { 1.0 } else { -1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let poly = t * (0.254829592
+        + t * (-0.284496736
+        + t * (1.421413741
+        + t * (-1.453152027
+        + t * 1.061405429))));
+    sign * (1.0 - poly * (-x * x).exp())
+}
+
 /// Synthesise a 12 000 Hz f32 PCM waveform from an FT8 tone sequence.
+///
+/// Uses GFSK (Gaussian Frequency Shift Keying) with BT=2.0, matching
+/// WSJT-X `gen_ft8wave.f90`.  Includes:
+/// - Gaussian-smoothed frequency transitions (3-symbol pulse)
+/// - Dummy symbols at start/end for smooth ramp-in/ramp-out
+/// - Cosine envelope shaping on first/last nsps/8 samples
 ///
 /// # Arguments
 /// * `itone`     — 79-element tone array (0–7), e.g. from [`message_to_tones`]
@@ -115,23 +143,78 @@ pub fn message_to_tones(message77: &[u8; MSG_BITS]) -> [u8; NN] {
 ///
 /// Returns a `Vec<f32>` of length `79 × 1920 = 151 680`.
 pub fn tones_to_f32(itone: &[u8; NN], f0: f32, amplitude: f32) -> Vec<f32> {
-    let mut samples = vec![0.0f32; NN * NSPS];
+    let nsps = NSPS;
+    let nsym = NN;
+    let bt = 2.0_f32;
     let dt = 1.0_f32 / 12000.0;
-    let mut phase = 0.0f32;
+    let twopi = 2.0 * PI;
+    let hmod = 1.0_f32;
 
-    for (sym, &tone) in itone.iter().enumerate() {
-        let freq = f0 + tone as f32 * 6.25;
-        let dphi = 2.0 * PI * freq * dt;
-        for j in 0..NSPS {
-            samples[sym * NSPS + j] = amplitude * phase.cos();
-            phase += dphi;
-            // Prevent phase from growing without bound.
-            if phase > PI {
-                phase -= 2.0 * PI;
+    // Precompute GFSK pulse (3 symbols wide)
+    let pulse_len = 3 * nsps;
+    let mut pulse = vec![0.0f32; pulse_len];
+    for i in 0..pulse_len {
+        let tt = (i as f32 - 1.5 * nsps as f32) / nsps as f32;
+        pulse[i] = gfsk_pulse(bt, tt);
+    }
+
+    // Build smoothed dphi array: (nsym+2)*nsps samples
+    // Extra symbols at start and end for GFSK pulse overlap
+    let total = (nsym + 2) * nsps;
+    let mut dphi = vec![0.0f32; total];
+    let dphi_peak = twopi * hmod / nsps as f32;
+
+    // Main symbols
+    for j in 0..nsym {
+        let ib = j * nsps;
+        for i in 0..pulse_len {
+            if ib + i < total {
+                dphi[ib + i] += dphi_peak * pulse[i] * itone[j] as f32;
             }
         }
     }
-    samples
+
+    // Dummy symbol at beginning (extend first tone)
+    for i in 0..(2 * nsps) {
+        dphi[i] += dphi_peak * itone[0] as f32 * pulse[nsps + i];
+    }
+
+    // Dummy symbol at end (extend last tone)
+    let ofs = nsym * nsps;
+    for i in 0..(2 * nsps) {
+        if ofs + i < total {
+            dphi[ofs + i] += dphi_peak * itone[nsym - 1] as f32 * pulse[i];
+        }
+    }
+
+    // Add carrier frequency offset
+    for d in dphi.iter_mut() {
+        *d += twopi * f0 * dt;
+    }
+
+    // Generate waveform (skip first dummy symbol = start at nsps)
+    let nwave = nsym * nsps;
+    let mut wave = vec![0.0f32; nwave];
+    let mut phi = 0.0f32;
+    for k in 0..nwave {
+        wave[k] = amplitude * phi.sin();
+        phi += dphi[nsps + k];
+        if phi > twopi { phi -= twopi; }
+    }
+
+    // Cosine envelope ramp (first and last nsps/8 samples)
+    let nramp = nsps / 8;
+    for i in 0..nramp {
+        let env = (1.0 - (twopi * i as f32 / (2.0 * nramp as f32)).cos()) / 2.0;
+        wave[i] *= env;
+    }
+    let k1 = nwave - nramp;
+    for i in 0..nramp {
+        let env = (1.0 + (twopi * i as f32 / (2.0 * nramp as f32)).cos()) / 2.0;
+        wave[k1 + i] *= env;
+    }
+
+    wave
 }
 
 /// Synthesise and return a 16-bit PCM waveform.
