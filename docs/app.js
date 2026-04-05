@@ -1,5 +1,7 @@
 import init, { decode_wav, decode_wav_subtract } from './ft8_web.js';
 import { Waterfall } from './waterfall.js';
+import { AudioCapture } from './audio-capture.js';
+import { FT8PeriodManager } from './ft8-period.js';
 
 // ── Elements ────────────────────────────────────────────────────────────────
 const dropZone = document.getElementById('drop-zone');
@@ -10,6 +12,9 @@ const resultsTable = document.getElementById('results');
 const tbody = resultsTable.querySelector('tbody');
 const subtractCheck = document.getElementById('subtract-mode');
 const wfCanvas = document.getElementById('waterfall');
+const deviceSelect = document.getElementById('audio-device');
+const btnStart = document.getElementById('btn-start');
+const timerEl = document.getElementById('period-timer');
 
 // ── Waterfall setup ─────────────────────────────────────────────────────────
 function resizeCanvas() {
@@ -24,14 +29,138 @@ const waterfall = new Waterfall(wfCanvas);
 // ── WASM init ───────────────────────────────────────────────────────────────
 let wasmReady = false;
 statusEl.textContent = 'Loading WASM module...';
-init().then(() => {
+init().then(async () => {
   wasmReady = true;
-  statusEl.textContent = 'Ready. Drop a WAV file.';
+  statusEl.textContent = 'Ready. Drop a WAV file or select an audio device.';
+  // Enumerate audio devices
+  await populateDevices();
 }).catch(e => {
   statusEl.textContent = `WASM load failed: ${e}`;
 });
 
-// ── File handling ───────────────────────────────────────────────────────────
+// ── Audio capture ───────────────────────────────────────────────────────────
+const capture = new AudioCapture({
+  onWaterfall: (samples) => {
+    waterfall.pushSamples(samples);
+  },
+  onBufferFull: () => {
+    // Buffer full — period manager will handle snapshot
+  },
+});
+
+async function populateDevices() {
+  try {
+    const devices = await capture.enumerateDevices();
+    deviceSelect.innerHTML = '<option value="">-- select device --</option>';
+    for (const d of devices) {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = d.label;
+      deviceSelect.appendChild(opt);
+    }
+    deviceSelect.disabled = false;
+    btnStart.disabled = false;
+  } catch (e) {
+    deviceSelect.innerHTML = '<option>No audio devices</option>';
+  }
+}
+
+// ── Period manager ──────────────────────────────────────────────────────────
+const periodMgr = new FT8PeriodManager({
+  onTick: (remaining) => {
+    timerEl.textContent = remaining.toFixed(1) + 's';
+  },
+  onPeriodEnd: async (periodIndex, isEven) => {
+    if (!capture.running || !wasmReady) return;
+
+    statusEl.textContent = 'Decoding...';
+    const float32 = await capture.snapshot();
+
+    if (float32.length < 12000) {
+      statusEl.textContent = `Period ${periodIndex}: too few samples (${float32.length})`;
+      return;
+    }
+
+    // Convert Float32 → Int16
+    const samples = new Int16Array(float32.length);
+    for (let i = 0; i < float32.length; i++) {
+      samples[i] = Math.round(Math.max(-32768, Math.min(32767, float32[i] * 32767)));
+    }
+
+    // Decode
+    const useSubtract = subtractCheck.checked;
+    const t0 = performance.now();
+    const results = useSubtract ? decode_wav_subtract(samples) : decode_wav(samples);
+    const elapsed = performance.now() - t0;
+
+    const n = results.length;
+    const utc = new Date(periodIndex * 15000).toISOString().substr(11, 5);
+    const mode = useSubtract ? 'subtract' : 'single';
+    statusEl.textContent = `Period ${utc} UTC: ${float32.length} samples`;
+    timingEl.textContent = `Decoded ${n} message(s) in ${elapsed.toFixed(1)} ms (${mode})`;
+
+    // Add results to table (newest first)
+    const msgs = [];
+    if (n > 0) {
+      resultsTable.hidden = false;
+      for (let i = 0; i < n; i++) {
+        const r = results[i];
+        msgs.push({ freq_hz: r.freq_hz, message: r.message });
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="num">${utc}</td>
+          <td class="num">${r.freq_hz.toFixed(1)}</td>
+          <td class="num">${r.dt_sec >= 0 ? '+' : ''}${r.dt_sec.toFixed(2)}</td>
+          <td class="num">${r.snr_db >= 0 ? '+' : ''}${r.snr_db.toFixed(0)}</td>
+          <td class="num">${r.hard_errors}</td>
+          <td>${r.pass}</td>
+          <td class="msg">${r.message}</td>
+        `;
+        tbody.insertBefore(tr, tbody.firstChild);
+        r.free();
+      }
+    }
+    waterfall.drawLabels(msgs);
+    waterfall.drawFreqAxis();
+  },
+});
+
+// ── Start / Stop button ─────────────────────────────────────────────────────
+let liveMode = false;
+
+btnStart.addEventListener('click', async () => {
+  if (!liveMode) {
+    // Start
+    const deviceId = deviceSelect.value;
+    if (!deviceId) {
+      statusEl.textContent = 'Select an audio device first.';
+      return;
+    }
+    try {
+      await capture.start(deviceId);
+      periodMgr.start();
+      liveMode = true;
+      btnStart.textContent = 'Stop';
+      btnStart.classList.add('active');
+      statusEl.textContent = `Listening (${capture.getSampleRate()} Hz)...`;
+      waterfall.clear();
+    } catch (e) {
+      statusEl.textContent = `Audio error: ${e.message || e}`;
+    }
+  } else {
+    // Stop
+    periodMgr.stop();
+    capture.stop();
+    liveMode = false;
+    btnStart.textContent = 'Start';
+    btnStart.classList.remove('active');
+    timerEl.textContent = '--';
+    statusEl.textContent = 'Stopped.';
+  }
+});
+
+// ── File handling (WAV drop, kept as fallback) ──────────────────────────────
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
@@ -44,7 +173,6 @@ fileInput.addEventListener('change', () => {
   if (fileInput.files.length) handleFile(fileInput.files[0]);
 });
 
-// ── WAV parse ───────────────────────────────────────────────────────────────
 function parseWav(buf) {
   const view = new DataView(buf);
   const riff = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
@@ -58,7 +186,6 @@ function parseWav(buf) {
   if (bitsPerSample !== 16) throw new Error(`${bitsPerSample}-bit (expected 16)`);
   if (numChannels !== 1) throw new Error(`${numChannels} channels (expected mono)`);
 
-  // Find "data" chunk
   let offset = 12;
   while (offset < buf.byteLength - 8) {
     const id = String.fromCharCode(
@@ -73,9 +200,10 @@ function parseWav(buf) {
   throw new Error('No "data" chunk found');
 }
 
-// ── Decode + Waterfall ──────────────────────────────────────────────────────
 async function handleFile(file) {
   if (!wasmReady) { statusEl.textContent = 'WASM not ready yet'; return; }
+  if (liveMode) { statusEl.textContent = 'Stop live mode first.'; return; }
+
   statusEl.textContent = `Parsing ${file.name}...`;
   timingEl.textContent = '';
   tbody.innerHTML = '';
@@ -87,14 +215,11 @@ async function handleFile(file) {
     const nSamples = samples.length;
     const duration = (nSamples / 12000).toFixed(1);
 
-    // Draw waterfall from WAV data
     waterfall.clear();
     waterfall.pushSamples(samples);
     waterfall.drawFreqAxis();
 
     statusEl.textContent = `Decoding ${nSamples} samples (${duration} s)...`;
-
-    // Yield to UI
     await new Promise(r => setTimeout(r, 0));
 
     const useSubtract = subtractCheck.checked;
@@ -107,14 +232,12 @@ async function handleFile(file) {
     statusEl.textContent = `${file.name}: ${nSamples} samples (${duration} s)`;
     timingEl.textContent = `Decoded ${n} message(s) in ${elapsed.toFixed(1)} ms (${mode})`;
 
-    // Draw labels on waterfall
     const msgs = [];
     if (n > 0) {
       resultsTable.hidden = false;
       for (let i = 0; i < n; i++) {
         const r = results[i];
         msgs.push({ freq_hz: r.freq_hz, message: r.message });
-
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td class="num">${i + 1}</td>
@@ -130,7 +253,6 @@ async function handleFile(file) {
       }
     }
     waterfall.drawLabels(msgs);
-
   } catch (e) {
     statusEl.textContent = `Error: ${e.message || e}`;
   }
