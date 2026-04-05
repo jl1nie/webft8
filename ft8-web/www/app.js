@@ -473,7 +473,8 @@ function runDecode(samples) {
     const found = results.some(r => r.message.toUpperCase().includes(apTarget));
     if (!found) {
       const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
-      const ap = decode_sniper(samples, freq, apTarget);
+      const myCall = myCallInput.value.trim().toUpperCase();
+      const ap = decode_sniper(samples, freq, apTarget, myCall);
       for (const r of ap) {
         if (!results.some(x => Math.abs(x.freq_hz - r.freq_hz) < 10)) {
           results.push(r);

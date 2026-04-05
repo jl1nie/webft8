@@ -277,36 +277,58 @@ fn process_candidate(
             }
         }
 
-        // AP-assisted BP (when AP hint available and normal decode failed)
+        // Multi-pass AP (similar to WSJT-X a1..a7)
+        // Try progressively deeper AP configurations:
+        //   pass 6: call2 only (original)
+        //   pass 7: CQ + call2 (locks ~61 bits for CQ messages)
+        //   pass 8: call1 + call2 (locks ~61 bits for directed messages)
         if use_ap {
             if let Some(ap) = ap_hint {
                 if ap.has_info() {
                     let apmag = llr_set.llra.iter()
                         .map(|v| v.abs())
                         .fold(0.0f32, f32::max) * 1.01;
-                    let (ap_mask, ap_llr_override) = ap.build_ap(apmag);
 
-                    for &(base_llr, _) in llr_variants {
-                        // Overlay AP values onto channel LLR
-                        let mut llr_ap = *base_llr;
-                        for i in 0..LDPC_N {
-                            if ap_mask[i] {
-                                llr_ap[i] = ap_llr_override[i];
+                    // Build multiple AP configurations
+                    let mut ap_passes: Vec<(ApHint, u8)> = Vec::new();
+                    // Pass 6: original (call2 only, or whatever was provided)
+                    ap_passes.push((ap.clone(), 6));
+                    // Pass 7: CQ + call2 (expect "CQ DXCALL GRID")
+                    if ap.call2.is_some() && ap.call1.is_none() {
+                        let mut ap7 = ap.clone();
+                        ap7.call1 = Some("CQ".to_string());
+                        ap_passes.push((ap7, 7));
+                    }
+                    // Pass 8: mycall + call2 (expect "MYCALL DXCALL REPORT")
+                    // mycall is encoded in call1 position of the response
+                    // We don't know mycall here, but if call1 was provided, use it
+                    if ap.call1.is_some() && ap.call2.is_some() {
+                        ap_passes.push((ap.clone(), 8));
+                    }
+
+                    for (ap_cfg, pass_id) in &ap_passes {
+                        let (ap_mask, ap_llr_override) = ap_cfg.build_ap(apmag);
+                        for &(base_llr, _) in llr_variants {
+                            let mut llr_ap = *base_llr;
+                            for i in 0..LDPC_N {
+                                if ap_mask[i] {
+                                    llr_ap[i] = ap_llr_override[i];
+                                }
                             }
-                        }
-                        if let Some(bp) = bp_decode(&llr_ap, Some(&ap_mask), BP_MAX_ITER) {
-                            let itone = message_to_tones(&bp.message77);
-                            let snr_db = compute_snr_db(cs, &itone);
-                            return Some(DecodeResult {
-                                message77: bp.message77,
-                                freq_hz: cand.freq_hz,
-                                dt_sec: refined.dt_sec,
-                                hard_errors: bp.hard_errors,
-                                sync_score: refined.score,
-                                pass: 6, // AP pass indicator
-                                sync_cv,
-                                snr_db,
-                            });
+                            if let Some(bp) = bp_decode(&llr_ap, Some(&ap_mask), BP_MAX_ITER) {
+                                let itone = message_to_tones(&bp.message77);
+                                let snr_db = compute_snr_db(cs, &itone);
+                                return Some(DecodeResult {
+                                    message77: bp.message77,
+                                    freq_hz: cand.freq_hz,
+                                    dt_sec: refined.dt_sec,
+                                    hard_errors: bp.hard_errors,
+                                    sync_score: refined.score,
+                                    pass: *pass_id,
+                                    sync_cv,
+                                    snr_db,
+                                });
+                            }
                         }
                     }
                 }

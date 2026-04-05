@@ -93,25 +93,43 @@ pub fn decode_wav(samples: &[i16]) -> Vec<DecodedMessage> {
     )
 }
 
-/// Sniper-mode decode: ±250 Hz around target_freq, with optional EQ + AP.
+/// Sniper-mode decode: ±250 Hz around target_freq, with optional EQ + multi-pass AP.
 ///
 /// `target_freq` — center frequency in Hz (e.g. 1000.0)
 /// `callsign` — target callsign for AP (empty string = no AP)
+/// `mycall` — own callsign for deeper AP (empty string = skip)
+///
+/// Runs up to 3 AP passes:
+///   pass 6: call2 only (~33 bit lock)
+///   pass 7: CQ + call2 (~61 bit lock, for "CQ DXCALL GRID")
+///   pass 8: mycall + call2 (~61 bit lock, for "MYCALL DXCALL REPORT")
 #[wasm_bindgen]
-pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str) -> Vec<DecodedMessage> {
+pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str, mycall: &str) -> Vec<DecodedMessage> {
     use ft8_core::decode::{decode_sniper_ap, EqMode, ApHint};
 
-    let ap = if callsign.is_empty() {
-        None
-    } else {
-        Some(ApHint::new().with_call2(callsign))
-    };
+    if callsign.is_empty() {
+        return decode_and_register(
+            decode_sniper_ap(samples, target_freq, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, None)
+        );
+    }
 
+    // Try multiple AP configurations (deepest first for best chance)
+    // Pass 7: CQ + call2 (for "CQ 3Y0Z JD34")
+    let ap_cq = ApHint::new().with_call1("CQ").with_call2(callsign);
+    let r = decode_sniper_ap(samples, target_freq, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap_cq));
+    if !r.is_empty() { return decode_and_register(r); }
+
+    // Pass 8: mycall + call2 (for "MYCALL 3Y0Z R-12")
+    if !mycall.is_empty() {
+        let ap_my = ApHint::new().with_call1(mycall).with_call2(callsign);
+        let r = decode_sniper_ap(samples, target_freq, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap_my));
+        if !r.is_empty() { return decode_and_register(r); }
+    }
+
+    // Pass 6: call2 only (fallback)
+    let ap = ApHint::new().with_call2(callsign);
     decode_and_register(
-        decode_sniper_ap(
-            samples, target_freq, DecodeDepth::BpAllOsd, 20,
-            EqMode::Adaptive, ap.as_ref(),
-        )
+        decode_sniper_ap(samples, target_freq, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap))
     )
 }
 

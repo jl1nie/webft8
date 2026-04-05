@@ -105,24 +105,33 @@ export class DecodedMessage {
 if (Symbol.dispose) DecodedMessage.prototype[Symbol.dispose] = DecodedMessage.prototype.free;
 
 /**
- * Sniper-mode decode: ±250 Hz around target_freq, with optional EQ + AP.
+ * Sniper-mode decode: ±250 Hz around target_freq, with optional EQ + multi-pass AP.
  *
  * `target_freq` — center frequency in Hz (e.g. 1000.0)
  * `callsign` — target callsign for AP (empty string = no AP)
+ * `mycall` — own callsign for deeper AP (empty string = skip)
+ *
+ * Runs up to 3 AP passes:
+ *   pass 6: call2 only (~33 bit lock)
+ *   pass 7: CQ + call2 (~61 bit lock, for "CQ DXCALL GRID")
+ *   pass 8: mycall + call2 (~61 bit lock, for "MYCALL DXCALL REPORT")
  * @param {Int16Array} samples
  * @param {number} target_freq
  * @param {string} callsign
+ * @param {string} mycall
  * @returns {DecodedMessage[]}
  */
-export function decode_sniper(samples, target_freq, callsign) {
+export function decode_sniper(samples, target_freq, callsign, mycall) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(callsign, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_sniper(ptr0, len0, target_freq, ptr1, len1);
-    var v3 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    const ptr2 = passStringToWasm0(mycall, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_sniper(ptr0, len0, target_freq, ptr1, len1, ptr2, len2);
+    var v4 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-    return v3;
+    return v4;
 }
 
 /**
