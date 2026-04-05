@@ -7,183 +7,182 @@
 <link rel="manifest" href="manifest.json">
 <title>rs-ft8n</title>
 <style>
+  /* ── Design tokens ─────────────────────────────────────────────────── */
+  :root {
+    --fs-lg: 1.1rem;   /* titles, prominent calls */
+    --fs-base: 0.85rem; /* body, buttons, messages */
+    --fs-sm: 0.75rem;   /* columns, labels, secondary */
+    --fs-xs: 0.65rem;   /* hints, separators */
+    --c-bg: #0a0a0a;
+    --c-surface: #111;
+    --c-surface2: #1a1a2e;
+    --c-border: #333;
+    --c-text: #e0e0e0;
+    --c-text2: #888;
+    --c-accent: #4fc3f7;
+    --c-accent-bg: #0d47a1;
+    --c-success: #76ff03;
+    --c-warn: #ffeb3b;
+    --c-danger: #f44336;
+    --c-snr: #81c784;
+    --sp-xs: 0.25rem;
+    --sp-sm: 0.5rem;
+    --sp-md: 1rem;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-         background: #0a0a0a; color: #e0e0e0; max-width: 960px; margin: 0 auto;
-         display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+         background: var(--c-bg); color: var(--c-text); max-width: 960px; margin: 0 auto;
+         display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+         font-size: var(--fs-base); }
 
   /* ── Header ─────────────────────────────────────────────────────────── */
-  .header { display: flex; align-items: center; gap: .4rem; padding: .4rem .5rem;
-            background: #111; border-bottom: 1px solid #222; flex-shrink: 0; }
-  .header h1 { font-size: 1rem; color: #555; cursor: pointer; transition: color .2s;
+  .header { display: flex; align-items: center; gap: var(--sp-sm); padding: var(--sp-xs) var(--sp-sm);
+            background: var(--c-surface); border-bottom: 1px solid var(--c-border); flex-shrink: 0; }
+  .header h1 { font-size: var(--fs-lg); color: var(--c-text2); cursor: pointer; transition: color .2s;
     user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
-  .header h1.live { color: #4fc3f7; }
-  .mode-tabs { display: flex; gap: 0; margin-left: .5rem; }
-  .mode-tabs button { font-size: .75rem; padding: .2rem .6rem; border: 1px solid #333;
-    background: #1a1a2e; color: #888; cursor: pointer; }
-  .mode-tabs button:first-child { border-radius: 4px 0 0 4px; }
-  .mode-tabs button:last-child { border-radius: 0 4px 4px 0; }
-  .mode-tabs button.active { background: #0d47a1; color: #4fc3f7; border-color: #4fc3f7; }
-  .band-sel { font-size: .7rem; background: #1a1a2e; color: #81c784; border: 1px solid #333;
-    border-radius: 4px; padding: .1rem .2rem; margin-left: auto; }
-  .timer { font-size: .8rem; color: #81c784; font-variant-numeric: tabular-nums; }
-  .header .gear { font-size: 1.3rem; color: #aaa; cursor: pointer; padding: .1rem .4rem;
-    border: 1px solid #444; border-radius: 4px; line-height: 1; }
-  .header .gear:hover { color: #4fc3f7; border-color: #4fc3f7; }
+  .header h1.live { color: var(--c-accent); }
+  .mode-tabs { display: flex; gap: 0; }
+  .mode-tabs button { font-size: var(--fs-sm); padding: var(--sp-xs) 0.6rem; border: 1px solid var(--c-border);
+    background: var(--c-surface2); color: var(--c-text2); cursor: pointer; min-height: 32px; }
+  .mode-tabs button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+  .mode-tabs button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+  .mode-tabs button.active { background: var(--c-accent-bg); color: var(--c-accent); border-color: var(--c-accent); }
+  .band-sel { font-size: var(--fs-sm); background: var(--c-surface2); color: var(--c-snr);
+    border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+    padding: var(--sp-xs); margin-left: auto; min-width: 5em; }
+  .timer { font-size: var(--fs-base); color: var(--c-snr); font-variant-numeric: tabular-nums;
+    min-width: 2.5em; text-align: right; flex-shrink: 0; }
+  .header .gear { font-size: var(--fs-lg); color: var(--c-text2); cursor: pointer;
+    padding: var(--sp-xs); border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+    line-height: 1; flex-shrink: 0; }
+  .header .gear:hover { color: var(--c-accent); border-color: var(--c-accent); }
 
   /* ── Waterfall ──────────────────────────────────────────────────────── */
   #waterfall-wrap { position: relative; flex-shrink: 0; cursor: crosshair; }
-  #waterfall { width: 100%; display: block; background: #000; border-bottom: 1px solid #222; }
+  #waterfall { width: 100%; display: block; background: #000; border-bottom: 1px solid var(--c-border); }
   .scout-mode #waterfall { height: min(25vh, 220px); }
   .snipe-mode #waterfall { height: 280px; }
   #snipe-overlay { position: absolute; top: 0; bottom: 0; background: rgba(79,195,247,0.12);
     border-left: 1px solid rgba(79,195,247,0.5); border-right: 1px solid rgba(79,195,247,0.5);
     pointer-events: none; display: none; }
-  #snipe-freq-label { position: absolute; top: 18px; color: #4fc3f7; font-size: .7rem;
+  #snipe-freq-label { position: absolute; top: 18px; color: var(--c-accent); font-size: var(--fs-sm);
     pointer-events: none; display: none; }
 
-  /* ── Scout status bar ────────────────────────────────────────────────── */
+  /* ── Scout status bar ──────────────────────────────────────────────── */
   #scout-status { display: none; flex-shrink: 0; }
-  .scout-mode #scout-status { display: flex; align-items: center; gap: .4rem;
-    padding: .25rem .5rem; background: #111; border-bottom: 1px solid #222;
-    font-size: .75rem; }
-  #scout-status .dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid #555;
-    display: inline-block; }
-  #scout-status .dot.done { background: #76ff03; border-color: #76ff03; }
-  #scout-status .dot.current { background: #4fc3f7; border-color: #4fc3f7; }
-  #scout-status .state { color: #4fc3f7; font-weight: bold; }
-  #scout-status .dx { color: #76ff03; font-weight: bold; }
-  #scout-status .decode-info { color: #666; margin-left: auto; font-size: .7rem; }
-  #scout-status .tx-queue { color: #f44336; font-weight: bold; font-size: .75rem;
-    margin-left: .3rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scout-mode #scout-status { display: flex; align-items: center; gap: var(--sp-xs);
+    padding: var(--sp-xs) var(--sp-sm); background: var(--c-surface);
+    border-bottom: 1px solid var(--c-border); font-size: var(--fs-sm); }
+  #scout-status .dot, .qso-progress .dot { width: 10px; height: 10px; border-radius: 50%;
+    border: 1px solid var(--c-text2); display: inline-block; flex-shrink: 0; }
+  .dot.done { background: var(--c-success); border-color: var(--c-success); }
+  .dot.current { background: var(--c-accent); border-color: var(--c-accent); }
+  #scout-status .state, .qso-progress .label { color: var(--c-accent); font-weight: bold; }
+  #scout-status .dx { color: var(--c-success); font-weight: bold; }
+  #scout-status .decode-info { color: var(--c-text2); margin-left: auto; font-size: var(--fs-xs);
+    flex-shrink: 0; }
+  #scout-status .tx-queue { color: var(--c-danger); font-weight: bold; font-size: var(--fs-sm);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* ── Scout chat ─────────────────────────────────────────────────────── */
+  /* ── Message list (shared Scout & Snipe) ────────────────────────────── */
   #scout-view { flex: 1; overflow-y: auto; display: none; }
   .scout-mode #scout-view { display: flex; flex-direction: column; }
-  .chat-list { flex: 1; overflow-y: auto; padding: .3rem .5rem; }
-  .chat-msg { padding: .3rem .5rem; margin-bottom: .15rem; border-radius: 6px; font-size: .8rem;
-    display: flex; align-items: baseline; gap: .4rem; }
-  .chat-msg.rx { background: #111; border-left: 3px solid #4fc3f7; }
-  .chat-msg.tx { background: #1a1a1a; border-left: 3px solid #666; color: #888; }
-  .chat-msg.tx.sending { border-left-color: #f44336; color: #f44336; }
-  .chat-msg.qso-active { border-left-color: #4fc3f7; background: #0a1929; }
-  .chat-msg.qso-done { border-left-color: #76ff03; }
-  .period-sep { display: flex; align-items: center; gap: .4rem; margin: .15rem 0;
-    font-size: .6rem; color: #555; }
-  .period-sep::before, .period-sep::after { content: ''; flex: 1; border-top: 1px solid #333; }
-  .period-sep::before { max-width: .5rem; }
-  .chat-msg .col-freq { color: #888; font-size: .7rem; min-width: 2.8em; text-align: right; }
-  .chat-msg .col-dt { color: #666; font-size: .7rem; min-width: 2.5em; text-align: right; }
-  .chat-msg .col-snr { color: #81c784; font-size: .7rem; min-width: 2em; text-align: right; }
+  .chat-list { flex: 1; overflow-y: auto; padding: var(--sp-xs) var(--sp-sm); }
+  .chat-msg { padding: var(--sp-xs) var(--sp-sm); margin-bottom: 2px; border-radius: var(--radius-md);
+    font-size: var(--fs-base); display: flex; align-items: baseline; gap: var(--sp-xs); }
+  .chat-msg.rx { background: var(--c-surface); border-left: 3px solid var(--c-accent); }
+  .chat-msg.tx { background: #1a1a1a; border-left: 3px solid var(--c-text2); color: var(--c-text2); }
+  .chat-msg.tx.sending { border-left-color: var(--c-danger); color: var(--c-danger); }
+  .chat-msg.qso-active { border-left-color: var(--c-accent); background: #0a1929; }
+  .chat-msg.qso-done { border-left-color: var(--c-success); }
+  .period-sep { display: flex; align-items: center; gap: var(--sp-xs); margin: var(--sp-xs) 0;
+    font-size: var(--fs-xs); color: var(--c-text2); }
+  .period-sep::before, .period-sep::after { content: ''; flex: 1; border-top: 1px solid var(--c-border); }
+  .period-sep::before { max-width: var(--sp-sm); }
+  .chat-msg .col-freq { color: var(--c-text2); font-size: var(--fs-sm); min-width: 2.8em; text-align: right; }
+  .chat-msg .col-dt { color: var(--c-text2); font-size: var(--fs-sm); min-width: 2.5em; text-align: right; }
+  .chat-msg .col-snr { color: var(--c-snr); font-size: var(--fs-sm); min-width: 2em; text-align: right; }
   .chat-msg .text { flex: 1; }
-  .chat-msg .text .call { color: #ffeb3b; font-weight: bold; }
-  .chat-msg .text .target { color: #76ff03; font-weight: bold; }
-  .chat-actions { display: flex; gap: .3rem; padding: .2rem .5rem; }
-  .chat-actions button { font-size: .75rem; padding: .2rem .5rem; border-radius: 4px;
-    border: 1px solid #333; background: #1a1a2e; color: #e0e0e0; cursor: pointer; }
-  .chat-actions button.primary { background: #0d47a1; border-color: #4fc3f7; color: #4fc3f7; }
+  .chat-msg .text .call { color: var(--c-warn); font-weight: bold; }
+  .chat-msg .text .target { color: var(--c-success); font-weight: bold; }
 
   /* ── Snipe view ─────────────────────────────────────────────────────── */
-  #snipe-view { flex: 1; overflow-y: auto; display: none; padding: .3rem .5rem; }
+  #snipe-view { flex: 1; overflow-y: auto; display: none; padding: var(--sp-xs) var(--sp-sm); }
   .snipe-mode #snipe-view { display: flex; flex-direction: column; }
-  .snipe-target { background: #111; border: 1px solid #333; border-radius: 6px;
-    padding: .5rem; margin-bottom: .4rem; }
-  .snipe-target .dx-call { font-size: 1.2rem; color: #76ff03; font-weight: bold; }
-  .snipe-target .dx-msg { font-size: .9rem; color: #ffeb3b; margin-top: .3rem; }
-  .snipe-target .dx-info { font-size: .75rem; color: #888; }
-  .qso-progress { display: flex; align-items: center; gap: .3rem; margin: .4rem 0;
-    font-size: .8rem; }
-  .qso-progress .dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #555; }
-  .qso-progress .dot.done { background: #76ff03; border-color: #76ff03; }
-  .qso-progress .dot.current { background: #4fc3f7; border-color: #4fc3f7; }
-  .qso-progress .label { color: #4fc3f7; font-weight: bold; margin-left: .3rem; }
-  .snipe-band { font-size: .75rem; color: #666; margin-top: .3rem; }
-  .snipe-band span { margin-right: .8rem; }
+  .snipe-target { background: var(--c-surface); border: 1px solid var(--c-border);
+    border-radius: var(--radius-md); padding: var(--sp-sm); margin-bottom: var(--sp-xs); }
+  .snipe-target .dx-call { font-size: var(--fs-lg); color: var(--c-success); font-weight: bold; }
+  .snipe-target .dx-msg { font-size: var(--fs-base); color: var(--c-warn); margin-top: var(--sp-xs); }
+  .snipe-target .dx-info { font-size: var(--fs-sm); color: var(--c-text2); }
+  .qso-progress { display: flex; align-items: center; gap: var(--sp-xs); margin: var(--sp-xs) 0;
+    font-size: var(--fs-base); }
+  .qso-progress .label { margin-left: var(--sp-xs); }
+  .snipe-band { font-size: var(--fs-sm); color: var(--c-text2); margin-top: var(--sp-xs); }
+  .snipe-band span { margin-right: var(--sp-sm); }
   .snipe-phase-tabs { display: flex; gap: 0; }
-  .snipe-phase-tabs button { font-size: .75rem; padding: .2rem .6rem; border: 1px solid #333;
-    background: #1a1a2e; color: #888; cursor: pointer; }
-  .snipe-phase-tabs button:first-child { border-radius: 4px 0 0 4px; }
-  .snipe-phase-tabs button:last-child { border-radius: 0 4px 4px 0; }
-  .snipe-phase-tabs button.active { background: #1b5e20; color: #76ff03; border-color: #76ff03; }
+  .snipe-phase-tabs button { font-size: var(--fs-sm); padding: var(--sp-xs) 0.6rem;
+    border: 1px solid var(--c-border); background: var(--c-surface2); color: var(--c-text2);
+    cursor: pointer; min-height: 32px; }
+  .snipe-phase-tabs button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+  .snipe-phase-tabs button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+  .snipe-phase-tabs button.active { background: #1b5e20; color: var(--c-success); border-color: var(--c-success); }
   .snipe-call-phase #snipe-callers { display: none; }
   .snipe-call-phase #snipe-band { display: none; }
 
   /* ── Bottom bar ─────────────────────────────────────────────────────── */
-  .bottom-bar { display: flex; align-items: center; gap: .4rem; padding: .4rem .5rem;
-    background: #111; border-top: 1px solid #222; flex-shrink: 0; flex-wrap: wrap; }
-  .bottom-bar button { font-size: .9rem; padding: .5rem .9rem; border-radius: 6px;
-    border: 1px solid #333; background: #1a1a2e; color: #e0e0e0; cursor: pointer;
-    font-weight: bold; min-height: 44px; }
-  .bottom-bar button.halt { border-color: #f44336; color: #f44336; }
+  .bottom-bar { display: flex; align-items: center; gap: var(--sp-sm); padding: var(--sp-xs) var(--sp-sm);
+    background: var(--c-surface); border-top: 1px solid var(--c-border); flex-shrink: 0; }
+  .bottom-bar button, #tx-actions button { font-size: var(--fs-base); padding: var(--sp-sm) 0.8rem;
+    border-radius: var(--radius-md); border: 1px solid var(--c-border); background: var(--c-surface2);
+    color: var(--c-text); cursor: pointer; font-weight: bold; min-height: 44px; }
+  .bottom-bar button.halt { border-color: var(--c-danger); color: var(--c-danger); }
   .bottom-bar button:disabled { opacity: 0.3; cursor: default; }
-  .bottom-bar label { font-size: .85rem; display: flex; align-items: center; gap: .3rem; }
+  .bottom-bar label { font-size: var(--fs-base); display: flex; align-items: center; gap: var(--sp-xs); }
   @keyframes pulse { to { opacity: 0.6; } }
-  #tx-actions { display: flex; gap: .4rem; flex-wrap: wrap; flex: 1; }
-  #tx-actions button { font-size: .9rem; padding: .5rem .9rem; border-radius: 6px;
-    border: 1px solid #333; background: #1a1a2e; color: #e0e0e0; cursor: pointer;
-    font-weight: bold; min-height: 44px; }
-  #tx-actions button.cq { background: #0d47a1; border-color: #4fc3f7; color: #fff;
-    padding: .5rem 1.5rem; font-size: 1rem; }
-  #tx-actions button.tx-msg { background: #1a1a2e; border-color: #ffeb3b; color: #ffeb3b;
-    font-weight: normal; font-size: .85rem; }
-  #tx-actions button.tx-active { background: #b71c1c; border-color: #f44336; color: #fff;
+  #tx-actions { display: flex; gap: var(--sp-xs); flex-wrap: wrap; flex: 1; }
+  #tx-actions button.cq { background: var(--c-accent-bg); border-color: var(--c-accent); color: #fff;
+    padding: var(--sp-sm) 1.2rem; }
+  #tx-actions button.tx-msg { border-color: var(--c-warn); color: var(--c-warn); font-weight: normal; }
+  #tx-actions button.tx-active { background: #b71c1c; border-color: var(--c-danger); color: #fff;
     animation: pulse .5s infinite alternate; }
-  #tx-actions button.tx-next { background: #1b5e20; border-color: #76ff03; color: #76ff03; }
+  #tx-actions button.tx-next { background: #1b5e20; border-color: var(--c-success); color: var(--c-success); }
 
-  /* ── Settings panel (slide-out) ─────────────────────────────────────── */
+  /* ── Settings panel ─────────────────────────────────────────────────── */
   #settings-panel { display: none; position: fixed; top: 0; right: 0; bottom: 0;
-    width: 280px; background: #111; border-left: 1px solid #333; padding: 1rem;
-    z-index: 100; overflow-y: auto; }
+    width: 280px; background: var(--c-surface); border-left: 1px solid var(--c-border);
+    padding: var(--sp-md); z-index: 100; overflow-y: auto; }
   #settings-panel.open { display: block; }
-  #settings-panel h2 { font-size: .9rem; color: #4fc3f7; margin-bottom: .5rem; }
-  #settings-panel .field { margin-bottom: .5rem; }
-  #settings-panel label { font-size: .75rem; color: #888; display: block; margin-bottom: .2rem; }
-  #settings-panel input, #settings-panel select { font-size: .8rem; padding: .3rem .4rem;
-    background: #1a1a2e; color: #e0e0e0; border: 1px solid #333; border-radius: 4px; width: 100%; }
-  #settings-panel button { font-size: .8rem; padding: .3rem .6rem; border-radius: 4px;
-    border: 1px solid #333; background: #1a1a2e; color: #e0e0e0; cursor: pointer; width: 100%;
-    margin-bottom: .3rem; }
+  #settings-panel h2 { font-size: var(--fs-base); color: var(--c-accent); margin-bottom: var(--sp-sm); }
+  #settings-panel .field { margin-bottom: var(--sp-sm); }
+  #settings-panel label { font-size: var(--fs-sm); color: var(--c-text2); display: block;
+    margin-bottom: var(--sp-xs); }
+  #settings-panel input, #settings-panel select { font-size: var(--fs-base); padding: var(--sp-xs) var(--sp-sm);
+    background: var(--c-surface2); color: var(--c-text); border: 1px solid var(--c-border);
+    border-radius: var(--radius-sm); width: 100%; min-height: 36px; }
+  #settings-panel button { font-size: var(--fs-base); padding: var(--sp-xs) var(--sp-sm);
+    border-radius: var(--radius-sm); border: 1px solid var(--c-border); background: var(--c-surface2);
+    color: var(--c-text); cursor: pointer; width: 100%; margin-bottom: var(--sp-xs); min-height: 36px; }
   .settings-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0,0,0,0.5); z-index: 99; }
   .settings-overlay.open { display: block; }
 
-  /* ── Waterfall drop highlight ────────────────────────────────────────── */
-  #waterfall-wrap.drop-over { outline: 2px dashed #4fc3f7; outline-offset: -2px; }
+  /* ── Waterfall drop highlight ──────────────────────────────────────── */
+  #waterfall-wrap.drop-over { outline: 2px dashed var(--c-accent); outline-offset: -2px; }
 
-  /* ── Responsive: mobile (narrow screens) ───────────────────────────── */
+  /* ── Responsive: mobile ────────────────────────────────────────────── */
   @media (max-width: 600px) {
-    /* Header */
-    .header h1 { font-size: 1.1rem; }
-    .mode-tabs button { font-size: .85rem; padding: .3rem .8rem; }
-    .band-sel { font-size: .8rem; }
-    .timer { font-size: .9rem; }
-    .header .gear { font-size: 1.5rem; padding: .2rem .5rem; }
-    /* Scout status bar */
-    .scout-mode #scout-status { font-size: .85rem; padding: .3rem .5rem; }
-    #scout-status .dot { width: 10px; height: 10px; }
-    #scout-status .state { font-size: .85rem; }
-    #scout-status .decode-info { font-size: .75rem; }
-    #scout-status .tx-queue { font-size: .8rem; }
-    /* Snipe status */
-    .snipe-target .dx-call { font-size: 1.3rem; }
-    .qso-progress { font-size: .9rem; }
-    .qso-progress .dot { width: 12px; height: 12px; }
-    .qso-progress .label { font-size: .9rem; }
-    /* Message list */
-    .chat-msg { font-size: .9rem; padding: .4rem .5rem; min-height: 36px; }
-    .chat-msg .col-freq { font-size: .8rem; }
-    .chat-msg .col-dt { font-size: .8rem; }
-    .chat-msg .col-snr { font-size: .8rem; }
-    .period-sep { font-size: .75rem; }
-    /* Bottom bar */
-    .bottom-bar button { font-size: 1rem; padding: .6rem 1rem; }
-    #tx-actions button { font-size: 1rem; padding: .6rem 1rem; }
-    #tx-actions button.cq { font-size: 1.1rem; padding: .6rem 1.5rem; }
-    .bottom-bar label { font-size: .9rem; }
-    /* Settings */
+    :root {
+      --fs-lg: 1.25rem;
+      --fs-base: 1rem;
+      --fs-sm: 0.85rem;
+      --fs-xs: 0.75rem;
+    }
+    .header .gear { font-size: 1.4rem; }
+    #scout-status .dot, .qso-progress .dot { width: 12px; height: 12px; }
     #settings-panel { width: 100%; }
-    #settings-panel input, #settings-panel select { font-size: .9rem; padding: .4rem .5rem; }
-    #settings-panel button { font-size: .9rem; padding: .5rem .7rem; }
   }
 </style>
 </head>
@@ -227,18 +226,18 @@
 
 <!-- Snipe view: target-focused -->
 <div id="snipe-view">
-  <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.3rem">
+  <div style="display:flex;align-items:center;gap:var(--sp-xs);margin-bottom:var(--sp-xs)">
     <div class="snipe-phase-tabs">
       <button id="btn-watch" class="active">Watch</button>
       <button id="btn-call">Call</button>
     </div>
-    <span id="snipe-phase-hint" style="font-size:.7rem;color:#666">full-band — tap WF to set DF</span>
+    <span id="snipe-phase-hint" style="font-size:var(--fs-xs);color:var(--c-text2)">full-band</span>
   </div>
   <div class="snipe-target" id="snipe-target">
     <div class="dx-call" id="snipe-dx-call">No target</div>
     <div class="dx-msg" id="snipe-dx-msg"></div>
     <div class="dx-info" id="snipe-dx-info"></div>
-    <div id="snipe-callers" style="margin-top:.3rem;font-size:.75rem;color:#888"></div>
+    <div id="snipe-callers" style="margin-top:var(--sp-xs);font-size:var(--fs-sm);color:var(--c-text2)"></div>
   </div>
   <div class="qso-progress" id="qso-progress">
     <span class="dot" id="dot-1"></span>
@@ -247,9 +246,9 @@
     <span class="dot" id="dot-4"></span>
     <span class="label" id="qso-label">IDLE</span>
   </div>
-  <div id="snipe-tx-line" style="font-size:.8rem;color:#ffeb3b;margin:.3rem 0"></div>
+  <div id="snipe-tx-line" style="font-size:var(--fs-sm);color:var(--c-warn);margin:var(--sp-xs) 0"></div>
   <div class="snipe-band" id="snipe-band"></div>
-  <div class="chat-list" id="snipe-rx-list" style="flex:1;overflow-y:auto;margin-top:.3rem"></div>
+  <div class="chat-list" id="snipe-rx-list" style="flex:1;overflow-y:auto;margin-top:var(--sp-xs)"></div>
 </div>
 
 <!-- Bottom bar -->
@@ -265,9 +264,9 @@
 <!-- Settings slide-out -->
 <div class="settings-overlay" id="settings-overlay"></div>
 <div id="settings-panel">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-sm)">
     <h2 style="margin:0">Settings</h2>
-    <button id="btn-close-settings" style="font-size:1rem;background:none;border:none;color:#888;cursor:pointer">&times;</button>
+    <button id="btn-close-settings" style="font-size:1.2rem;background:none;border:none;color:var(--c-text2);cursor:pointer;width:auto;min-height:auto">&times;</button>
   </div>
   <div class="field">
     <label>My Callsign</label>
@@ -311,19 +310,19 @@
     </select>
   </div>
   <button id="btn-cat">Connect CAT</button>
-  <span class="cat-status" id="cat-status" style="font-size:.75rem;color:#666;display:block;margin-bottom:.5rem">not connected</span>
+  <span class="cat-status" id="cat-status" style="font-size:var(--fs-xs);color:var(--c-text2);display:block;margin-bottom:var(--sp-sm)">not connected</span>
   <button id="btn-start">Start Audio</button>
   <button id="btn-qso-reset">Reset QSO</button>
   <button id="btn-open-wav">Open WAV File</button>
-  <div style="margin-top:1rem">
+  <div style="margin-top:var(--sp-md)">
     <label><input type="checkbox" id="subtract-mode" checked> Multi-pass subtract</label>
     <label><input type="checkbox" id="ap-mode" checked> A Priori (AP)</label>
   </div>
-  <div style="margin-top:1rem;border-top:1px solid #333;padding-top:.5rem">
-    <h2 style="font-size:.85rem">Log</h2>
+  <div style="margin-top:var(--sp-md);border-top:1px solid var(--c-border);padding-top:var(--sp-sm)">
+    <h2>Log</h2>
     <button id="btn-export-zip">Export ZIP (ADIF + RX)</button>
-    <button id="btn-clear-log" style="color:#f44336;border-color:#f44336">Clear All Logs</button>
-    <div id="qso-list" style="margin-top:.4rem;font-size:.7rem;color:#888;max-height:120px;overflow-y:auto"></div>
+    <button id="btn-clear-log" style="color:var(--c-danger);border-color:var(--c-danger)">Clear All Logs</button>
+    <div id="qso-list" style="margin-top:var(--sp-xs);font-size:var(--fs-xs);color:var(--c-text2);max-height:120px;overflow-y:auto"></div>
   </div>
 </div>
 
