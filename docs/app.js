@@ -253,8 +253,19 @@ init().then(async () => {
 // ── Decode helper ───────────────────────────────────────────────────────────
 function runDecode(samples) {
   if (snipeMode) {
-    // Snipe ±250 Hz with EQ, optional AP
-    return decode_sniper(samples, snipeFreq, apCall);
+    const snipeResults = decode_sniper(samples, snipeFreq, apCall);
+    // Debug: compare with full-band
+    const fullResults = decode_wav_subtract(samples);
+    const fullInRange = fullResults.filter(r =>
+      r.freq_hz >= snipeFreq - 250 && r.freq_hz <= snipeFreq + 250
+    );
+    if (fullInRange.length > snipeResults.length) {
+      console.warn(`Snipe missed signals! snipe=${snipeResults.length} full-in-range=${fullInRange.length}`,
+        fullInRange.map(r => `${r.freq_hz.toFixed(1)}Hz ${r.message}`));
+    }
+    // Free full results we won't return
+    fullResults.forEach(r => { if (!snipeResults.includes(r)) r.free(); });
+    return snipeResults;
   }
   // Full-band decode + optional AP (search entire band)
   if (apCall) {
@@ -276,7 +287,7 @@ function isTargetMessage(msg) {
 
 function decodeModeName() {
   const parts = [];
-  if (snipeMode) parts.push(`snipe ${snipeFreq}Hz`);
+  if (snipeMode) parts.push(`snipe ${snipeFreq}Hz (${snipeFreq-250}-${snipeFreq+250})`);
   else parts.push(subtractCheck.checked ? 'subtract' : 'single-pass');
   if (apCall) parts.push(`AP:${apCall}`);
   return parts.join(' + ');
