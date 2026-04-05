@@ -1006,8 +1006,9 @@ fn run_extreme_sweep() {
     }
 
     // ── (2) BPF edge: target SNR sweep (sniper + EQ + AP) ──────────────────
+    // AP with both CQ+call2 (pass 7, 61-bit) and deep passes (9-11, 77-bit)
     println!("\n--- BPF edge (500 Hz, 4-pole): target SNR sweep ({N_SEEDS} seeds) ---");
-    println!("  {:>6}  {:>10}  {:>10}  {:>10}", "SNR", "EQ OFF", "EQ", "EQ+AP");
+    println!("  {:>6}  {:>10}  {:>10}  {:>10}  {:>10}", "SNR", "EQ OFF", "EQ", "CQ+call2", "full 77bit");
     const FS: f64 = 12000.0;
     const BPF_LO: f64 = 750.0;
     const BPF_HI: f64 = 1250.0;
@@ -1016,6 +1017,11 @@ fn run_extreme_sweep() {
         let mut ok_off = 0usize;
         let mut ok_eq = 0usize;
         let mut ok_ap = 0usize;
+        let mut ok_full = 0usize;
+        // CQ + call2 AP (61-bit, pass 7)
+        let ap_cq = ApHint::new().with_call1("CQ").with_call2("3Y0Z");
+        // Full AP: simulated "JA1ABC" as mycall (77-bit passes 9-11)
+        let ap_full = ApHint::new().with_call1("JA1ABC").with_call2("3Y0Z");
         for seed in 0..N_SEEDS {
             let cfg = simulator::SimConfig {
                 signals: vec![simulator::SimSignal {
@@ -1037,10 +1043,12 @@ fn run_extreme_sweep() {
             if r_off.iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
             let r_eq = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, None);
             if r_eq.iter().any(|r| r.message77 == target_msg) { ok_eq += 1; }
-            let r_ap = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap));
+            let r_ap = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap_cq));
             if r_ap.iter().any(|r| r.message77 == target_msg) { ok_ap += 1; }
+            let r_full = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap_full));
+            if r_full.iter().any(|r| r.message77 == target_msg) { ok_full += 1; }
         }
-        println!("  {:+4} dB  {:>4}/{:<4}  {:>4}/{:<4}  {:>4}/{:<4}", snr, ok_off, N_SEEDS, ok_eq, N_SEEDS, ok_ap, N_SEEDS);
+        println!("  {:+4} dB  {:>4}/{:<4}  {:>4}/{:<4}  {:>4}/{:<4}  {:>4}/{:<4}", snr, ok_off, N_SEEDS, ok_eq, N_SEEDS, ok_ap, N_SEEDS, ok_full, N_SEEDS);
     }
 
     // ── (3) Write extreme WAVs for WSJT-X comparison ────────────────────────
