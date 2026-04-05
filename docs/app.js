@@ -42,8 +42,8 @@ const myCallInput = document.getElementById('my-call');
 const myGridInput = document.getElementById('my-grid');
 const deviceSelect = document.getElementById('audio-device');
 const outputDeviceSelect = document.getElementById('audio-output-device');
-const snipeCallInput = document.getElementById('snipe-call');
 const subtractCheck = document.getElementById('subtract-mode');
+const apCheck = document.getElementById('ap-mode');
 const btnCat = document.getElementById('btn-cat');
 const catStatusEl = document.getElementById('cat-status');
 const btnStart = document.getElementById('btn-start');
@@ -100,10 +100,8 @@ const qsoLog = new QsoLog();
 // Restore settings
 myCallInput.value = localStorage.getItem('rs-ft8n-mycall') || '';
 myGridInput.value = localStorage.getItem('rs-ft8n-mygrid') || '';
-snipeCallInput.value = localStorage.getItem('rs-ft8n-dxcall') || '';
 myCallInput.addEventListener('change', () => localStorage.setItem('rs-ft8n-mycall', myCallInput.value));
 myGridInput.addEventListener('change', () => localStorage.setItem('rs-ft8n-mygrid', myGridInput.value));
-snipeCallInput.addEventListener('change', () => localStorage.setItem('rs-ft8n-dxcall', snipeCallInput.value));
 
 const qso = new QsoManager({
   myCall: myCallInput.value,
@@ -330,7 +328,7 @@ function updateTxActions() {
       altBtn.addEventListener('click', () => {
         qso.setMyInfo(myCallInput.value, myGridInput.value);
         qso.callStation(snipeAltCall);
-        snipeCallInput.value = snipeAltCall;
+        apCall = snipeAltCall;
         apCall = snipeAltCall;
         snipeDxCall.textContent = snipeAltCall;
         snipeAltCall = '';
@@ -399,8 +397,8 @@ function runDecode(samples) {
   const results = useSub ? decode_wav_subtract(samples) : decode_wav(samples);
   const baseMs = performance.now() - t0;
 
-  // AP supplement: Scout uses qso.dxCall, Snipe uses apCall
-  const useAp = !apDisabledAuto;
+  // AP supplement: enabled by checkbox, auto-disabled by budget
+  const useAp = apCheck.checked && !apDisabledAuto;
   const apTarget = useAp
     ? (apCall || (currentMode === 'scout' && qso.dxCall ? qso.dxCall : ''))
     : '';
@@ -503,8 +501,8 @@ const periodMgr = new FT8PeriodManager({
     const shedTag = shed.length ? ` [-${shed.join(',')}]` : '';
     setStatus(`${n} decoded (${lastDecodeMs} ms)${shedTag}`);
 
-    // Update AP from snipe call input
-    apCall = snipeCallInput.value.trim().toUpperCase();
+    // AP target: use QSO dxCall if available, or last Snipe target
+    if (qso.dxCall) apCall = qso.dxCall;
 
     const msgs = [];
     let txMsg = null;
@@ -541,7 +539,7 @@ const periodMgr = new FT8PeriodManager({
         addChatMsg('rx', utc, msg, snr, clickCall ? () => {
           qso.setMyInfo(myCallInput.value, myGridInput.value);
           const tx = qso.callStation(clickCall);
-          snipeCallInput.value = clickCall;
+          apCall = clickCall;
           apCall = clickCall;
           setStatus(`Calling ${clickCall}`);
         } : null, freq, dt, isEven);
@@ -638,7 +636,7 @@ const periodMgr = new FT8PeriodManager({
             if (target) {
               qso.setMyInfo(myCallInput.value, myGridInput.value);
               qso.callStation(target);
-              snipeCallInput.value = target;
+              apCall = target;
               apCall = target;
               snipeDxCall.textContent = target;
               // Store alt call (sender) if different from target
@@ -685,10 +683,8 @@ const periodMgr = new FT8PeriodManager({
     waterfall.drawLabels(msgs);
     waterfall.drawFreqAxis();
 
-    // Fill DX call hint
-    if (qso.dxCall && snipeCallInput.value !== qso.dxCall) {
-      snipeCallInput.value = qso.dxCall;
-    }
+    // Sync AP target from QSO
+    if (qso.dxCall) apCall = qso.dxCall;
   },
 });
 
