@@ -759,8 +759,13 @@ function updateLiveUI() {
 
 async function toggleAudio() {
   if (!liveMode) {
+    if (!myCallInput.value.trim() || !myGridInput.value.trim()) {
+      openSettings();
+      setStatus('Enter callsign and grid');
+      return;
+    }
     const deviceId = deviceSelect.value;
-    if (!deviceId) { setStatus('Select audio device'); return; }
+    if (!deviceId) { openSettings(); setStatus('Select audio device'); return; }
     try {
       await capture.start(deviceId);
       localStorage.setItem('rs-ft8n-audio-in', deviceId);
@@ -769,8 +774,7 @@ async function toggleAudio() {
       updateLiveUI();
       setStatus(`Listening (${capture.getSampleRate()} Hz)`);
       waterfall.clear();
-      settingsPanel.classList.remove('open');
-      settingsOverlay.classList.remove('open');
+      closeSettings();
     } catch (e) {
       setStatus(`Audio error: ${e.message || e}`);
     }
