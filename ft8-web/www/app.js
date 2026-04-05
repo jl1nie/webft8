@@ -103,6 +103,15 @@ btnSnipe.addEventListener('click', () => {
 
 btnAp.addEventListener('click', confirmAp);
 snipeCallInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmAp(); });
+// Typing in the call field clears the confirmed AP (must re-confirm)
+snipeCallInput.addEventListener('input', () => {
+  if (apCall) {
+    apCall = '';
+    btnAp.classList.remove('ap-on');
+    btnAp.textContent = 'AP';
+    updateSnipeStatus();
+  }
+});
 
 // Click/drag on waterfall to set snipe frequency
 wfWrap.addEventListener('click', (e) => {
