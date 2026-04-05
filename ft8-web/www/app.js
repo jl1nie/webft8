@@ -740,6 +740,7 @@ async function toggleAudio() {
     if (!deviceId) { setStatus('Select audio device'); return; }
     try {
       await capture.start(deviceId);
+      localStorage.setItem('rs-ft8n-audio-in', deviceId);
       periodMgr.start();
       liveMode = true;
       updateLiveUI();
@@ -899,13 +900,25 @@ init().then(async () => {
     }
     // Restore saved device selections
     const savedIn = localStorage.getItem('rs-ft8n-audio-in');
-    if (savedIn) deviceSelect.value = savedIn;
+    if (savedIn) {
+      // Try exact match first; fall back to matching by label substring
+      deviceSelect.value = savedIn;
+      if (!deviceSelect.value) {
+        for (const opt of deviceSelect.options) {
+          if (opt.value && opt.value.startsWith(savedIn.slice(0, 16))) {
+            deviceSelect.value = opt.value;
+            break;
+          }
+        }
+      }
+    }
     const savedOut = localStorage.getItem('rs-ft8n-audio-out');
     if (savedOut) outputDeviceSelect.value = savedOut;
 
     // Auto-start if callsign and audio device are configured
     if (myCallInput.value && deviceSelect.value) {
-      await toggleAudio();
+      // Small delay to let browser settle after permission grant
+      setTimeout(() => toggleAudio(), 300);
     }
   } catch (e) { console.warn('Audio devices:', e); }
   updateTxActions();
