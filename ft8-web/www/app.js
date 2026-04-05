@@ -252,37 +252,30 @@ init().then(async () => {
 
 // ── Decode helper ───────────────────────────────────────────────────────────
 function runDecode(samples) {
-  if (snipeMode) {
-    const snipeResults = decode_sniper(samples, snipeFreq, apCall);
-    // Debug: compare with full-band
-    const fullResults = decode_wav_subtract(samples);
-    const fullInRange = fullResults.filter(r =>
-      r.freq_hz >= snipeFreq - 250 && r.freq_hz <= snipeFreq + 250
-    );
-    if (fullInRange.length > snipeResults.length) {
-      console.warn(`Snipe missed signals! snipe=${snipeResults.length} full-in-range=${fullInRange.length}`,
-        fullInRange.map(r => `${r.freq_hz.toFixed(1)}Hz ${r.message}`));
-    }
-    // Free full results we won't return
-    fullResults.forEach(r => { if (!snipeResults.includes(r)) r.free(); });
-    return snipeResults;
-  }
-  // Full-band decode + optional AP (search entire band)
+  // Always run full-band subtract (works with or without hardware BPF)
+  const results = subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
+
+  // If AP is set and target not found, try sniper+AP as supplement
   if (apCall) {
-    // Run full-band subtract first, then sniper+AP scan if target not found
-    const full = subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
-    const found = full.some(r => r.message.toUpperCase().includes(apCall));
-    if (found) return full;
-    // Target not in full-band results — try sniper+AP across wider band
-    const ap = decode_sniper(samples, snipeFreq || 1500, apCall);
-    return [...full, ...ap];
+    const found = results.some(r => r.message.toUpperCase().includes(apCall));
+    if (!found) {
+      const freq = snipeMode ? snipeFreq : 1500;
+      const ap = decode_sniper(samples, freq, apCall);
+      results.push(...ap);
+    }
   }
-  return subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
+
+  return results;
 }
 
 function isTargetMessage(msg) {
   if (!apCall) return false;
   return msg.toUpperCase().includes(apCall);
+}
+
+function isOutOfBand(freqHz) {
+  if (!snipeMode) return false;
+  return freqHz < snipeFreq - 250 || freqHz > snipeFreq + 250;
 }
 
 function decodeModeName() {
@@ -350,6 +343,7 @@ const periodMgr = new FT8PeriodManager({
         const tr = document.createElement('tr');
         if (isTargetMessage(r.message)) tr.classList.add('target');
         if (r.pass >= 4 && r.hard_errors >= 35) tr.classList.add('suspect');
+        if (isOutOfBand(r.freq_hz)) tr.classList.add('out-of-band');
         tr.innerHTML = `
           <td class="num">${utc}</td>
           <td class="num">${r.freq_hz.toFixed(1)}</td>
@@ -489,6 +483,7 @@ async function handleFile(file) {
         const tr = document.createElement('tr');
         if (isTargetMessage(r.message)) tr.classList.add('target');
         if (r.pass >= 4 && r.hard_errors >= 35) tr.classList.add('suspect');
+        if (isOutOfBand(r.freq_hz)) tr.classList.add('out-of-band');
         tr.innerHTML = `
           <td class="num">${i + 1}</td>
           <td class="num">${r.freq_hz.toFixed(1)}</td>
