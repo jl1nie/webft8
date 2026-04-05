@@ -64,13 +64,15 @@ Load the same WAV files into WSJT-X:
 1. Launch WSJT-X → File → Open → select a test WAV
 2. Mode: FT8 → Decode
 
-Each WAV contains 15 strong crowd stations and a weak target station **CQ 3Y0Z JD34**.
+Each WAV contains 15 crowd stations and a weak target station **CQ 3Y0Z JD34**.
 
-| WAV | WSJT-X | rs-ft8n WASM (subtract) | Key point |
-|-----|--------|------------------------|-----------|
-| `sim_busy_band.wav` | 7 stations | **16 stations (incl. 3Y0Z)** | OSD depth difference |
-| `sim_stress_fullband.wav` | 10 (no 3Y0Z) | **15 (no 3Y0Z)** | ADC saturation buries 3Y0Z (both) |
-| **`sim_stress_bpf_edge_clean.wav`** | **decode failure** | **CQ 3Y0Z JD34 (197 ms)** | **BPF + EQ + AP effect** ※ |
+| WAV | Scenario | WSJT-X | rs-ft8n WASM (subtract) |
+|-----|----------|--------|------------------------|
+| `sim_busy_band.wav` | crowd +5 dB / target -12 dB / normalized quantization | 7 stations | **16 stations (incl. 3Y0Z)** |
+| `sim_stress_fullband.wav` | crowd +20 dB / target -18 dB / **AGC locked to crowd → ADC saturation** | 10 (no 3Y0Z) | **15 (no 3Y0Z)** |
+| **`sim_stress_bpf_edge_clean.wav`** | target -18 dB / BPF edge -3 dB / target + noise only | **decode failure** | **CQ 3Y0Z JD34 (197 ms)** ※ |
+
+`sim_busy_band` normalizes all signals to fit within 16 bits, so 3Y0Z is decodable. `sim_stress_fullband` locks the AGC to the +20 dB crowd, burying the -18 dB 3Y0Z in quantization noise — this is the ADC dynamic-range problem that the 500 Hz BPF solves.
 
 > ※ The WASM demo's subtract mode uses EQ + AP (target callsign 3Y0Z pre-specified). WSJT-X cannot use AP on a standalone WAV file (no QSO context). Under equal conditions (EQ only, no AP), rs-ft8n still achieves 30% decode rate at -18 dB BPF edge ([detail](#bpf-edge-snr-sweep--cumulative-effect-of-bpf--eq--ap)).
 
