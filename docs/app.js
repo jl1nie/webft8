@@ -37,6 +37,7 @@ const deviceSelect = document.getElementById('audio-device');
 const outputDeviceSelect = document.getElementById('audio-output-device');
 const snipeCallInput = document.getElementById('snipe-call');
 const subtractCheck = document.getElementById('subtract-mode');
+const apCheck = document.getElementById('ap-mode');
 const btnCat = document.getElementById('btn-cat');
 const catStatusEl = document.getElementById('cat-status');
 const btnStart = document.getElementById('btn-start');
@@ -51,6 +52,8 @@ let scoutDf = 1500; // Scout mode TX frequency (Hz)
 let apCall = '';
 let snipePhase = 'watch'; // 'watch' | 'call'
 let snipeAltCall = ''; // call2 (sender) from last tapped Snipe message
+let lastDecodeMs = 0; // last decode duration for timer display
+let apDisabledAuto = false; // true if AP was auto-disabled due to timeout
 const FREQ_MIN = 200, FREQ_MAX = 2800;
 
 // ── Waterfall ───────────────────────────────────────────────────────────────
@@ -284,8 +287,10 @@ function updateTxActions() {
     btn.addEventListener('click', () => {
       qso.setMyInfo(myCallInput.value, myGridInput.value);
       const tx = qso.callCq();
-      addChatMsg('tx', '', qso.formatTx(tx), undefined);
-      statusEl.textContent = 'Calling CQ';
+      const freq = currentMode === 'snipe' ? snipeFreq : scoutDf;
+      const period = periodMgr.getCurrentPeriod();
+      periodMgr.queueTx({ ...tx, freq }, !period.isEven);
+      statusEl.textContent = `CQ queued (${freq} Hz)`;
     });
     txActionsEl.appendChild(btn);
 
@@ -354,15 +359,29 @@ function updateTxActions() {
 autoCheck.addEventListener('change', updateTxActions);
 
 // ── Decode ──────────────────────────────────────────────────────────────────
-function runDecode(samples) {
-  const results = subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
+const AP_BUDGET_MS = 2400;
 
-  // AP supplement if target not found
-  if (apCall) {
-    const found = results.some(r => r.message.toUpperCase().includes(apCall));
+function runDecode(samples) {
+  const t0 = performance.now();
+  const results = subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
+  const baseMs = performance.now() - t0;
+
+  // Re-enable AP when base decode is well within budget
+  if (apDisabledAuto && baseMs < AP_BUDGET_MS * 0.7) {
+    apDisabledAuto = false;
+  }
+
+  // AP supplement: Scout uses qso.dxCall, Snipe uses apCall
+  const useAp = apCheck.checked && !apDisabledAuto;
+  const apTarget = useAp
+    ? (apCall || (currentMode === 'scout' && qso.dxCall ? qso.dxCall : ''))
+    : '';
+
+  if (apTarget) {
+    const found = results.some(r => r.message.toUpperCase().includes(apTarget));
     if (!found) {
       const freq = currentMode === 'snipe' ? snipeFreq : scoutDf;
-      const ap = decode_sniper(samples, freq, apCall);
+      const ap = decode_sniper(samples, freq, apTarget);
       for (const r of ap) {
         if (!results.some(x => Math.abs(x.freq_hz - r.freq_hz) < 10)) {
           results.push(r);
@@ -372,6 +391,15 @@ function runDecode(samples) {
       }
     }
   }
+
+  const totalMs = performance.now() - t0;
+  lastDecodeMs = Math.round(totalMs);
+
+  // Scout: auto-disable AP if decode exceeded budget
+  if (currentMode === 'scout' && apTarget && totalMs > AP_BUDGET_MS) {
+    apDisabledAuto = true;
+  }
+
   return results;
 }
 
@@ -404,7 +432,10 @@ async function transmit(call1, call2, report, freq) {
 
 // ── Period manager ──────────────────────────────────────────────────────────
 const periodMgr = new FT8PeriodManager({
-  onTick: (rem) => timerEl.textContent = rem.toFixed(1) + 's',
+  onTick: (rem) => {
+    const secs = Math.ceil(rem);
+    timerEl.textContent = lastDecodeMs > 0 ? `${secs}s (${lastDecodeMs}ms)` : `${secs}s`;
+  },
   onPeriodEnd: async (periodIndex, isEven) => {
     if (!capture.running || !wasmReady) return;
 
@@ -418,13 +449,11 @@ const periodMgr = new FT8PeriodManager({
       samples[i] = Math.round(Math.max(-32768, Math.min(32767, float32[i] * 32767)));
     }
 
-    const t0 = performance.now();
     const results = runDecode(samples);
-    const elapsed = performance.now() - t0;
     const n = results.length;
     const utc = new Date(periodIndex * 15000).toISOString().substr(11, 5);
 
-    statusEl.textContent = `${n} decoded (${elapsed.toFixed(0)} ms)`;
+    statusEl.textContent = `${n} decoded (${lastDecodeMs} ms)${apDisabledAuto ? ' [AP paused]' : ''}`;
 
     // Update AP from snipe call input
     apCall = snipeCallInput.value.trim().toUpperCase();
