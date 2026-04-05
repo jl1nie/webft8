@@ -37,7 +37,7 @@ This "hardware shields, software polishes" approach exceeds the limits of WSJT-X
 | Fine sync | Integer sample + fixed offset | **Parabolic interpolation in main sync** (sub-sample) |
 | Signal subtraction | 4-pass subtract-coupled | **3-pass + QSB gate** (Costas CV > 0.3 → half gain) |
 | OSD fallback | ndeep parameter | **sync_q adaptive** (≥18 → order-3, else order-2) |
-| OSD false positive | None | **hard_errors ≥ 56 reject + score ≥ 2.5 gate** |
+| OSD false positive | None | **Order-dependent hard_errors threshold** (order-2: <40, order-3: <30) + score ≥ 2.5 gate |
 | FFT cache | `save` variable (serial reuse) | **Explicit cache + Rayon parallel sharing** |
 | Parallelism | Serial candidate loop | **Rayon par_iter** parallel candidate decode |
 | SNR estimation | Built-in | **WSJT-X compatible** (`10log10(xsig/xnoi-1) - 27 dB`) |
@@ -206,8 +206,8 @@ PCM 16-bit 12 kHz
   ↓ [equalizer] (Wiener pilot correction from Costas arrays)
   ↓ compute_llr (Gray-coded soft metrics, 4 variants a/b/c/d)
   ├→ BP decode (log-domain, 30 iter, CRC-14)
-  ├→ OSD fallback (order 2-3, when BP fails + sync_q ≥ 12)
-  └→ [AP pass] (lock known bits, retry BP, pass=5)
+  ├→ OSD fallback (order-2: pass=4, order-3: pass=5, sync_q ≥ 12)
+  └→ [AP pass] (lock known bits, retry BP, pass=6)
 ```
 
 ### Adaptive Equalizer (`equalizer.rs`)
@@ -224,7 +224,16 @@ When the target callsign is known, locks 32 of 77 message bits at high-confidenc
 
 - **AP magnitude:** `apmag = max(|llr|) × 1.01`
 - **Locked bits (call2 only):** bits 29–57 (28-bit call + 1-bit flag) + bits 74–76 (i3=1) = 32 bits
-- **Activation:** AP pass runs only after BP + OSD fail (pass=5)
+- **Activation:** AP pass runs only after BP + OSD fail (pass=6)
+
+#### OSD False-Positive Filter
+
+OSD explores many candidates, so noise can coincidentally pass CRC-14 (1/16384). Higher order = more candidates = higher false-positive risk, so the hard_errors threshold varies by order:
+
+| OSD order | Candidates | Expected CRC collisions | hard_errors limit |
+|-----------|-----------|------------------------|-------------------|
+| order-2 (pass=4) | ~4,187 | 26% | < 40 |
+| order-3 (pass=5) | ~121,667 | 7.4 per decode | < 30 |
 
 ### Signal Subtraction (`subtract.rs` + `decode.rs`)
 
