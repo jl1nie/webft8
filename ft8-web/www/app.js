@@ -50,6 +50,7 @@ let snipeFreq = 1000;
 let scoutDf = 1500; // Scout mode TX frequency (Hz)
 let apCall = '';
 let snipePhase = 'watch'; // 'watch' | 'call'
+let snipeAltCall = ''; // call2 (sender) from last tapped Snipe message
 const FREQ_MIN = 200, FREQ_MAX = 2800;
 
 // ── Waterfall ───────────────────────────────────────────────────────────────
@@ -270,7 +271,7 @@ function updateTxActions() {
   const state = qso.state;
 
   if (state === QSO_STATE.IDLE || !dx) {
-    // IDLE — show CQ button only
+    // IDLE — show CQ button
     const btn = document.createElement('button');
     btn.className = 'cq';
     btn.textContent = 'CQ';
@@ -281,6 +282,24 @@ function updateTxActions() {
       statusEl.textContent = 'Calling CQ';
     });
     txActionsEl.appendChild(btn);
+
+    // Snipe: show alt call (sender) as secondary option
+    if (currentMode === 'snipe' && snipeAltCall && snipeAltCall !== myCall) {
+      const altBtn = document.createElement('button');
+      altBtn.className = 'tx-msg';
+      altBtn.textContent = `Call ${snipeAltCall}`;
+      altBtn.addEventListener('click', () => {
+        qso.setMyInfo(myCallInput.value, myGridInput.value);
+        qso.callStation(snipeAltCall);
+        snipeCallInput.value = snipeAltCall;
+        apCall = snipeAltCall;
+        snipeDxCall.textContent = snipeAltCall;
+        snipeAltCall = '';
+        updateTxActions();
+        statusEl.textContent = `Calling ${apCall}`;
+      });
+      txActionsEl.appendChild(altBtn);
+    }
     return;
   }
 
@@ -423,11 +442,18 @@ const periodMgr = new FT8PeriodManager({
       // Scout chat
       if (!suspect) {
         const words = msg.split(/\s+/);
-        let clickCall = '';
+        // Extract sender (call2): skip CQ/DE/QRZ/DX prefixes, then
+        // in "CQ SENDER GRID" sender is 1st call, in "DEST SENDER RPT" sender is 2nd call
+        const calls = [];
         for (const w of words) {
           if (['CQ', 'DE', 'QRZ', 'DX'].includes(w)) continue;
-          if (w.length >= 3 && /[0-9]/.test(w)) { clickCall = w; break; }
+          if (w.length >= 3 && /[0-9]/.test(w)) calls.push(w);
+          if (calls.length >= 2) break;
         }
+        // CQ message: only 1 call before grid → sender is calls[0]
+        // Directed message: DEST SENDER → sender is calls[1]
+        const isCq = /^(CQ|DE|QRZ)\b/.test(msg);
+        const clickCall = isCq ? (calls[0] || '') : (calls[1] || calls[0] || '');
         addChatMsg('rx', utc, msg, snr, clickCall ? () => {
           qso.setMyInfo(myCallInput.value, myGridInput.value);
           const tx = qso.callStation(clickCall);
@@ -511,17 +537,25 @@ const periodMgr = new FT8PeriodManager({
           div.style.cursor = 'pointer';
           div.addEventListener('click', () => {
             const words = m.message.split(/\s+/);
-            let call = '';
+            // Extract call1 (target) and call2 (sender/alt)
+            const calls = [];
             for (const w of words) {
               if (['CQ','DE','QRZ','DX'].includes(w)) continue;
-              if (w.length >= 3 && /[0-9]/.test(w)) { call = w; break; }
+              if (w.length >= 3 && /[0-9]/.test(w)) calls.push(w);
+              if (calls.length >= 2) break;
             }
-            if (call) {
+            const isCq = /^(CQ|DE|QRZ)\b/.test(m.message);
+            const target = isCq ? (calls[0] || '') : (calls[0] || '');
+            const sender = isCq ? (calls[0] || '') : (calls[1] || '');
+            if (target) {
               qso.setMyInfo(myCallInput.value, myGridInput.value);
-              qso.callStation(call);
-              snipeCallInput.value = call;
-              apCall = call;
-              snipeDxCall.textContent = call;
+              qso.callStation(target);
+              snipeCallInput.value = target;
+              apCall = target;
+              snipeDxCall.textContent = target;
+              // Store alt call (sender) if different from target
+              snipeAltCall = (sender && sender !== target) ? sender : '';
+              updateTxActions();
             }
           });
           snipeRxList.appendChild(div);
