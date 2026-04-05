@@ -68,12 +68,14 @@ const FREQ_MIN = 200, FREQ_MAX = 2800;
 
 // ── Status display ─────────────────────────────────────────────────────────
 function setStatus(text) {
-  // Show queued TX prominently, other status as secondary info
-  const isQueued = text.startsWith('TX queued') || text.startsWith('CQ queued');
-  scoutDecodeInfo.textContent = isQueued ? '' : text;
-  scoutDecodeInfo.style.color = '';
-  // TX queue line (shown below decode info)
-  scoutTxQueue.textContent = isQueued ? text : (periodMgr.hasTxQueued() ? scoutTxQueue.textContent : '');
+  const isTx = text.startsWith('TX queued') || text.startsWith('CQ queued')
+    || text.startsWith('Retry') || text.startsWith('TX:');
+  if (isTx) {
+    scoutTxQueue.textContent = text;
+  } else {
+    scoutDecodeInfo.textContent = text;
+    if (!periodMgr.hasTxQueued()) scoutTxQueue.textContent = '';
+  }
   snipeTxLine.textContent = text;
 }
 
@@ -357,29 +359,15 @@ function updateTxActions() {
     return;
   }
 
-  if (autoCheck.checked) {
-    // Auto ON — show single next-TX button
-    const tx = qso.getNextTx();
-    if (tx) {
-      const btn = document.createElement('button');
-      btn.className = 'tx-next';
-      btn.textContent = qso.formatTx(tx);
-      btn.addEventListener('click', () => queueTxMsg(tx.call1, tx.call2, tx.report));
-      txActionsEl.appendChild(btn);
-    }
-    return;
-  }
-
-  // Auto OFF — show next TX + CQ (2 buttons max)
+  // QSO active — short DX call button + CQ
   const tx = qso.getNextTx();
   if (tx) {
     const btn = document.createElement('button');
     btn.className = 'tx-next';
-    btn.textContent = qso.formatTx(tx);
+    btn.textContent = dx; // just DX callsign, not full message
     btn.addEventListener('click', () => queueTxMsg(tx.call1, tx.call2, tx.report));
     txActionsEl.appendChild(btn);
   }
-  // Always offer CQ
   const cqBtn = document.createElement('button');
   cqBtn.className = 'cq';
   cqBtn.textContent = 'CQ';
@@ -591,13 +579,13 @@ const periodMgr = new FT8PeriodManager({
       r.free();
     }
 
-    // Auto TX / retry
+    // Auto TX / retry (retry runs regardless of Auto setting)
     const period = periodMgr.getCurrentPeriod();
     if (txMsg && autoCheck.checked) {
       const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
       periodMgr.queueTx({ ...txMsg, freq }, !period.isEven);
       setStatus(`TX queued: ${qso.formatTx(txMsg)}`);
-    } else if (!txMsg && qso.state !== QSO_STATE.IDLE && autoCheck.checked) {
+    } else if (!txMsg && qso.state !== QSO_STATE.IDLE) {
       // Save state before retry (retry may reset on max retries)
       const prevState = qso.state;
       const prevDx = qso.dxCall;
