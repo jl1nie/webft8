@@ -1073,10 +1073,12 @@ fn run_extreme_sweep() {
             ("RR73(77bit)",  msg_rr73,   &ap_rr73),
         ];
 
+        println!("  {:>6}  {:>12}  {:>12}  {:>12}", "SNR", "CQ(61bit)", "REPORT(61b)", "RR73(77bit)");
         for snr in [-18, -20, -22, -24, -26] {
             let mut results = Vec::new();
-            for (label, target_msg_qso, ap_hint) in &scenarios {
+            for (_label, target_msg_qso, ap_hint) in &scenarios {
                 let mut ok = 0usize;
+                let mut fp = 0usize;
                 for seed in 0..N_SEEDS {
                     let cfg = simulator::SimConfig {
                         signals: vec![simulator::SimSignal {
@@ -1094,9 +1096,13 @@ fn run_extreme_sweep() {
                     let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
                     let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
                     let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(ap_hint));
-                    if r.iter().any(|r| r.message77 == *target_msg_qso) { ok += 1; }
+                    let found = r.iter().any(|r| r.message77 == *target_msg_qso);
+                    if found { ok += 1; }
+                    // Count false positives: any decode that isn't the target
+                    fp += r.iter().filter(|r| r.message77 != *target_msg_qso).count();
                 }
-                results.push(format!("{:>4}/{:<4}", ok, N_SEEDS));
+                let fp_str = if fp > 0 { format!(" FP:{fp}") } else { String::new() };
+                results.push(format!("{:>4}/{:<4}{}", ok, N_SEEDS, fp_str));
             }
             println!("  {:+4} dB  {}  {}  {}", snr, results[0], results[1], results[2]);
         }
