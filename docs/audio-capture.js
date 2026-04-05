@@ -14,6 +14,7 @@ export class AudioCapture {
     this.workletNode = null;
     this.running = false;
     this.actualSampleRate = 12000;
+    this._onDisconnect = null; // callback when device disconnects
   }
 
   /** Enumerate available audio input devices. */
@@ -56,6 +57,17 @@ export class AudioCapture {
     };
 
     this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+    // Detect device disconnection
+    for (const track of this.stream.getTracks()) {
+      track.onended = () => {
+        if (this.running) {
+          this.stop();
+          if (this._onDisconnect) this._onDisconnect();
+        }
+      };
+    }
+
     const source = this.audioCtx.createMediaStreamSource(this.stream);
 
     // Load AudioWorklet

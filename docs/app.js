@@ -196,6 +196,13 @@ const capture = new AudioCapture({
   onWaterfall: (samples) => waterfall.pushSamples(samples),
   onBufferFull: () => {},
 });
+capture._onDisconnect = () => {
+  periodMgr.stop();
+  liveMode = false;
+  updateLiveUI();
+  setStatus('Audio disconnected');
+  showToast('Audio disconnected');
+};
 
 // ── Mode switching ──────────────────────────────────────────────────────────
 tabScout.addEventListener('click', () => setMode('scout'));
