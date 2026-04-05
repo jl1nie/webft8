@@ -323,6 +323,25 @@ Uses the Web Serial API to control rig PTT from the browser.
 
 ---
 
+## PWA Installation (Offline Support)
+
+rs-ft8n can be installed as a PWA on your device and works offline.
+
+**How to install:**
+
+| Browser | Steps |
+|---------|-------|
+| **Chrome (PC)** | Click install icon in address bar, or Menu -> "Install app" |
+| **Chrome (Android)** | Menu -> "Add to Home screen" |
+| **Safari (iOS)** | Share button -> "Add to Home Screen" |
+| **Edge** | Menu -> "Apps" -> "Install this site as an app" |
+
+After installation, launch from your home screen / app list as a standalone app. Files are cached on first online visit; WAV analysis works offline afterward (live audio requires device microphone permission).
+
+> Updates: The app automatically downloads the latest version when online.
+
+---
+
 ## System Requirements
 
 | Item | Requirement |

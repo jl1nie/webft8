@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="theme-color" content="#4fc3f7">
+<link rel="manifest" href="manifest.json">
 <title>rs-ft8n</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -264,5 +266,6 @@
 </div>
 
 <script type="module" src="app.js"></script>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');</script>
 </body>
 </html>
