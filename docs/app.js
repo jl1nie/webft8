@@ -5,6 +5,7 @@ import { AudioOutput } from './audio-output.js';
 import { FT8PeriodManager } from './ft8-period.js';
 import { QsoManager, QSO_STATE } from './qso.js';
 import { CatController } from './cat.js';
+import { QsoLog } from './qso-log.js';
 
 // ── Elements ────────────────────────────────────────────────────────────────
 const dropZone = document.getElementById('drop-zone');
@@ -52,6 +53,7 @@ const FREQ_MIN = 200, FREQ_MAX = 2800;
 // ── Audio output + CAT + QSO ────────────────────────────────────────────────
 const audioOut = new AudioOutput();
 const cat = new CatController();
+const qsoLog = new QsoLog();
 
 // Restore saved settings
 myCallInput.value = localStorage.getItem('rs-ft8n-mycall') || '';
@@ -66,6 +68,14 @@ const qso = new QsoManager({
     qsoStateEl.textContent = state;
     const tx = qso.getNextTx();
     qsoTxMsgEl.textContent = tx ? qso.formatTx(tx) : '';
+    if (state === QSO_STATE.COMPLETE) {
+      qsoLog.add({
+        dxCall: qso.dxCall, dxGrid: qso.dxGrid,
+        txReport: qso.txReport, rxReport: qso.rxReport,
+        freq: snipeMode ? snipeFreq : 1500,
+      });
+      statusEl.textContent = `QSO complete: ${qso.dxCall}`;
+    }
   },
   onTxReady: (c1, c2, rpt) => {
     qsoTxMsgEl.textContent = `${c1} ${c2} ${rpt}`.trim();
@@ -94,9 +104,9 @@ btnTx.addEventListener('click', async () => {
   await transmit(tx.call1, tx.call2, tx.report);
 });
 
-async function transmit(call1, call2, report) {
+async function transmit(call1, call2, report, freq) {
   if (!wasmReady) return;
-  const freq = snipeMode ? snipeFreq : 1500; // default 1500 Hz if not in snipe
+  freq = freq || (snipeMode ? snipeFreq : 1500);
   try {
     statusEl.textContent = `TX: ${call1} ${call2} ${report}`;
     btnTx.classList.add('tx-active');
@@ -364,6 +374,25 @@ const periodMgr = new FT8PeriodManager({
           <td>${r.pass}</td>
           <td class="msg">${r.message}</td>
         `;
+        // Click row to start QSO with that station
+        const msgText = r.message;
+        const msgFreq = r.freq_hz;
+        tr.addEventListener('click', () => {
+          const words = msgText.split(/\s+/);
+          // Extract callsign: skip CQ/DE/QRZ, take first callsign-like token
+          let dxCall = '';
+          for (const w of words) {
+            if (['CQ', 'DE', 'QRZ', 'DX'].includes(w)) continue;
+            if (w.length >= 3 && /[0-9]/.test(w)) { dxCall = w; break; }
+          }
+          if (dxCall) {
+            qso.setMyInfo(myCallInput.value, myGridInput.value);
+            const tx = qso.callStation(dxCall);
+            snipeCallInput.value = dxCall;
+            statusEl.textContent = `Calling ${dxCall}`;
+            qsoTxMsgEl.textContent = qso.formatTx(tx);
+          }
+        });
         tbody.insertBefore(tr, tbody.firstChild);
         r.free();
       }
@@ -372,24 +401,33 @@ const periodMgr = new FT8PeriodManager({
     waterfall.drawFreqAxis();
 
     // ── QSO state machine: process decoded messages ──────────────────
-    if (qso.state !== QSO_STATE.IDLE || qso.state === QSO_STATE.CQ_SENT) {
-      const period = periodMgr.getCurrentPeriod();
-      for (const m of msgs) {
-        const txMsg = qso.processMessage(m.message, period.isEven);
-        if (txMsg && autoQsoCheck.checked) {
-          // Auto-transmit on next period
-          setTimeout(() => transmit(txMsg.call1, txMsg.call2, txMsg.report), 500);
-          break;
+    const period = periodMgr.getCurrentPeriod();
+    for (const m of msgs) {
+      // Pass SNR to QSO for auto-report
+      if (m.freq_hz) qso.setRxSnr(parseFloat(m.snr_db || -10));
+      const txMsg = qso.processMessage(m.message, period.isEven);
+      if (txMsg) {
+        const freq = snipeMode ? snipeFreq : 1500;
+        if (autoQsoCheck.checked) {
+          // Queue TX for next appropriate period boundary
+          periodMgr.queueTx({ ...txMsg, freq }, qso.txEven);
+          statusEl.textContent = `TX queued: ${qso.formatTx(txMsg)}`;
         }
+        break;
       }
     }
 
-    // Hint: if QSO has a DX call, fill it into AP field (user confirms manually)
+    // Hint: fill DX call into AP field
     if (qso.dxCall && !apCall && snipeCallInput.value !== qso.dxCall) {
       snipeCallInput.value = qso.dxCall;
     }
   },
 });
+
+// TX fire callback — period manager calls this at the right slot boundary
+periodMgr.callbacks.onTxFire = async (tx) => {
+  await transmit(tx.call1, tx.call2, tx.report, tx.freq);
+};
 
 // ── Start / Stop ────────────────────────────────────────────────────────────
 let liveMode = false;

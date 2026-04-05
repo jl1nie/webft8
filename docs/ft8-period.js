@@ -1,39 +1,38 @@
 // FT8 15-second period manager.
 // Tracks UTC-aligned periods and fires callbacks at boundaries.
+// Supports TX queueing with even/odd slot control.
 
 export class FT8PeriodManager {
   /**
    * @param {Object} callbacks
-   * @param {function(number, boolean)} callbacks.onPeriodEnd - (periodIndex, isEven)
-   * @param {function(number)} callbacks.onTick - seconds remaining in current period
+   * @param {function(number, boolean)} callbacks.onPeriodStart — (periodIndex, isEven) fires at period START
+   * @param {function(number, boolean)} callbacks.onPeriodEnd — (periodIndex, isEven) fires at period END
+   * @param {function(number)} callbacks.onTick — seconds remaining in current period
    */
   constructor(callbacks) {
     this.callbacks = callbacks;
     this.tickInterval = null;
     this.boundaryTimeout = null;
     this.running = false;
+
+    // TX queue: { call1, call2, report, freq, txEven }
+    this.txQueue = null;
   }
 
-  /** Start period tracking. */
   start() {
     if (this.running) return;
     this.running = true;
-
-    // Tick every 100ms for countdown display
     this.tickInterval = setInterval(() => this._tick(), 100);
-
-    // Schedule first boundary
     this._scheduleBoundary();
   }
 
-  /** Stop period tracking. */
   stop() {
     this.running = false;
     if (this.tickInterval) { clearInterval(this.tickInterval); this.tickInterval = null; }
     if (this.boundaryTimeout) { clearTimeout(this.boundaryTimeout); this.boundaryTimeout = null; }
+    this.txQueue = null;
   }
 
-  /** Get current period info. */
   getCurrentPeriod() {
     const now = Date.now();
     const periodIndex = Math.floor(now / 15000);
@@ -42,6 +41,25 @@ export class FT8PeriodManager {
     const elapsed = (now - periodStartMs) / 1000;
     const remaining = 15 - elapsed;
     return { periodIndex, isEven, elapsed, remaining };
+  }
+
+  /**
+   * Queue a TX message for the next appropriate period.
+   * @param {Object} tx — { call1, call2, report, freq }
+   * @param {boolean|null} txEven — true=TX on even, false=odd, null=next period
+   */
+  queueTx(tx, txEven) {
+    this.txQueue = { ...tx, txEven };
+  }
+
+  /** Cancel queued TX. */
+  cancelTx() {
+    this.txQueue = null;
+  }
+
+  /** Check if TX is queued. */
+  hasTxQueued() {
+    return this.txQueue !== null;
   }
 
   // ── Internal ────────────────────────────────────────────────────────────
@@ -62,12 +80,34 @@ export class FT8PeriodManager {
 
     this.boundaryTimeout = setTimeout(() => {
       if (!this.running) return;
+
       const { periodIndex, isEven } = this.getCurrentPeriod();
-      // Fire end of the period that just completed
+      const endedPeriod = periodIndex - 1;
+      const endedIsEven = endedPeriod % 2 === 0;
+
+      // Fire period END (for the period that just completed — triggers decode)
       if (this.callbacks.onPeriodEnd) {
-        this.callbacks.onPeriodEnd(periodIndex - 1, (periodIndex - 1) % 2 === 0);
+        this.callbacks.onPeriodEnd(endedPeriod, endedIsEven);
       }
-      // Schedule next
+
+      // Fire period START (for the period that just began — triggers TX if queued)
+      if (this.callbacks.onPeriodStart) {
+        this.callbacks.onPeriodStart(periodIndex, isEven);
+      }
+
+      // Check TX queue — fire if this is the right slot
+      if (this.txQueue) {
+        const { txEven } = this.txQueue;
+        if (txEven === null || txEven === isEven) {
+          const tx = this.txQueue;
+          this.txQueue = null;
+          // Notify via onPeriodStart (TX is handled by the callback)
+          if (this.callbacks.onTxFire) {
+            this.callbacks.onTxFire(tx);
+          }
+        }
+      }
+
       this._scheduleBoundary();
     }, delay);
   }

@@ -137,6 +137,18 @@ export class QsoManager {
     }
   }
 
+  /** Set received SNR for auto-report calculation. */
+  setRxSnr(snr) {
+    this.rxSnr = Math.round(snr);
+  }
+
+  /** Calculate report string from received SNR. */
+  _autoReport() {
+    const snr = this.rxSnr !== undefined ? this.rxSnr : -10;
+    const clamped = Math.max(-50, Math.min(49, snr));
+    return (clamped >= 0 ? '+' : '') + String(clamped).padStart(2, '0');
+  }
+
   /** Format TX message as display string. */
   formatTx(tx) {
     if (!tx) return '';
@@ -146,13 +158,29 @@ export class QsoManager {
   // ── State handlers ──────────────────────────────────────────────────
 
   _handleIdle(words, isEven) {
-    // Look for "CQ <DX_CALL> <GRID>" directed at anyone
+    // 1. If we have a target DX — check if this is their CQ
     if (words[0] === 'CQ' && this.dxCall && words.length >= 2) {
-      // We have a target DX — check if this is their CQ
-      if (words[1] === this.dxCall || (words.length >= 3 && words[1] === 'DX' && words[2] === this.dxCall)) {
+      const callPos = words[1] === 'DX' ? 2 : 1;
+      if (words[callPos] === this.dxCall) {
+        if (words.length > callPos + 1) this.dxGrid = words[callPos + 1];
+        this.txEven = !isEven;
         return this.callStation(this.dxCall);
       }
     }
+
+    // 2. Detect someone calling us: "<MY_CALL> <DX_CALL> <GRID>"
+    if (words[0] === this.myCall && words.length >= 3) {
+      this.dxCall = words[1];
+      this.dxGrid = words[2];
+      this.txReport = this._autoReport();
+      this.state = QSO_STATE.REPORT;
+      this.txEven = !isEven;
+      this.onStateChange(this.state);
+      const tx = { call1: this.dxCall, call2: this.myCall, report: this.txReport };
+      this.onTxReady(tx.call1, tx.call2, tx.report);
+      return tx;
+    }
+
     return null;
   }
 
@@ -161,7 +189,7 @@ export class QsoManager {
     if (words[0] === this.myCall && words.length >= 3) {
       this.dxCall = words[1];
       this.dxGrid = words[2];
-      this.txReport = '-10'; // default report
+      this.txReport = this._autoReport();
       this.state = QSO_STATE.REPORT;
       this.txEven = !isEven; // TX on the opposite slot
       this.onStateChange(this.state);
