@@ -78,19 +78,19 @@ export class FT8PeriodManager {
     const nextBoundaryMs = (currentPeriod + 1) * 15000;
     const delay = nextBoundaryMs - now;
 
-    this.boundaryTimeout = setTimeout(() => {
+    this.boundaryTimeout = setTimeout(async () => {
       if (!this.running) return;
 
       const { periodIndex, isEven } = this.getCurrentPeriod();
       const endedPeriod = periodIndex - 1;
       const endedIsEven = endedPeriod % 2 === 0;
 
-      // Fire period END (for the period that just completed — triggers decode)
+      // Fire period END (await decode to complete before TX check)
       if (this.callbacks.onPeriodEnd) {
-        this.callbacks.onPeriodEnd(endedPeriod, endedIsEven);
+        await this.callbacks.onPeriodEnd(endedPeriod, endedIsEven);
       }
 
-      // Fire period START (for the period that just began — triggers TX if queued)
+      // Fire period START
       if (this.callbacks.onPeriodStart) {
         this.callbacks.onPeriodStart(periodIndex, isEven);
       }
@@ -101,7 +101,6 @@ export class FT8PeriodManager {
         if (txEven === null || txEven === isEven) {
           const tx = this.txQueue;
           this.txQueue = null;
-          // Notify via onPeriodStart (TX is handled by the callback)
           if (this.callbacks.onTxFire) {
             this.callbacks.onTxFire(tx);
           }
