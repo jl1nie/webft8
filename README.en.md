@@ -43,7 +43,52 @@ This "hardware shields, software polishes" approach exceeds the limits of WSJT-X
 | SNR estimation | Built-in | **WSJT-X compatible** (`10log10(xsig/xnoi-1) - 27 dB`) |
 | Message codec | Unpack only | **Bidirectional pack/unpack** (for simulator) |
 
-## Experimental Results
+## WASM Demo — Outperforming WSJT-X in the Browser
+
+Open **[https://jl1nie.github.io/rs-ft8n/](https://jl1nie.github.io/rs-ft8n/)** and drop a WAV file to experience FT8 decoding in the browser.
+
+### Quick Start
+
+1. Download test WAV files:
+   - [sim_stress_bpf_edge_clean.wav](https://github.com/jl1nie/rs-ft8n/raw/main/ft8-bench/testdata/sim_stress_bpf_edge_clean.wav) — **signal WSJT-X cannot decode** (target -18 dB, BPF edge)
+   - [sim_busy_band.wav](https://github.com/jl1nie/rs-ft8n/raw/main/ft8-bench/testdata/sim_busy_band.wav) — 15 stations + weak target (normal case)
+   - [sim_stress_fullband.wav](https://github.com/jl1nie/rs-ft8n/raw/main/ft8-bench/testdata/sim_stress_fullband.wav) — ADC saturation scenario (15 crowd @ +20 dB)
+2. Open the [WASM demo page](https://jl1nie.github.io/rs-ft8n/)
+3. Drag & drop the WAV → decode results and timing are displayed
+4. Check "Multi-pass subtract" to enable 3-pass successive interference cancellation
+
+### Comparing with WSJT-X
+
+Load the same WAV files into WSJT-X:
+
+1. Launch WSJT-X → File → Open → select a test WAV
+2. Mode: FT8 → Decode
+
+| WAV | WSJT-X | rs-ft8n WASM | Key point |
+|-----|--------|-------------|-----------|
+| `sim_busy_band.wav` | 7 stations | **16 stations** | OSD depth difference |
+| `sim_stress_fullband.wav` | 10 (target missed) | crowd only | ADC saturation buries target |
+| **`sim_stress_bpf_edge_clean.wav`** | **decode failure** | **CQ 3Y0Z JD34 (197 ms)** | **rs-ft8n wins** |
+
+### All Test WAV Files
+
+The repository's [`ft8-bench/testdata/`](https://github.com/jl1nie/rs-ft8n/tree/main/ft8-bench/testdata) contains 12 synthetic WAV files (352 KB each, 12 kHz / 16-bit mono).
+
+| WAV | Content |
+|-----|---------|
+| `sim_busy_band.wav` | 15 crowd @ +5 dB + target @ -12 dB |
+| `sim_stress_fullband.wav` | 15 crowd @ +20 dB + target @ -18 dB (AGC clipping) |
+| `sim_stress_bpf_edge_clean.wav` | target @ -18 dB, BPF edge -3 dB (WSJT-X fails) |
+| `sim_stress_bpf_edge.wav` | Same with crowd leakage |
+| `sim_bpf_center.wav` | BPF center placement |
+| `sim_bpf_shoulder.wav` | BPF shoulder placement |
+| `sim_bpf_edge.wav` | BPF edge placement |
+| `sim_bpf_subtract.wav` | In-band crowd + subtract |
+| `sim_busy_band_hard_mixed.wav` | Crowd +40 dB, AGC clipping |
+| `sim_busy_band_hard_bpf.wav` | Above after BPF |
+| `sim_interference.wav` | +40 dB adjacent interferer |
+
+## Experimental Results (Detail)
 
 ### Real Recording WSJT-X Comparison
 
