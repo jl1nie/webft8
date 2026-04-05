@@ -72,9 +72,9 @@ Each WAV contains 15 crowd stations and a weak target station **CQ 3Y0Z JD34**.
 | `sim_stress_fullband.wav` | crowd +20 dB / target -18 dB / **AGC locked to crowd → ADC saturation** | 10 (no 3Y0Z) | **15 (no 3Y0Z)** |
 | **`sim_stress_bpf_edge_clean.wav`** | target -18 dB / BPF edge -3 dB / target + noise only | **decode failure** | **CQ 3Y0Z JD34 (197 ms)** ※ |
 
-`sim_busy_band` normalizes all signals to fit within 16 bits, so 3Y0Z is decodable. `sim_stress_fullband` locks the AGC to the +20 dB crowd, burying the -18 dB 3Y0Z in quantization noise — this is the ADC dynamic-range problem that the 500 Hz BPF solves.
+`sim_busy_band` normalizes all signals to fit within 16 bits, so 3Y0Z is decodable. `sim_stress_fullband` locks the AGC to the +20 dB crowd, burying the -18 dB 3Y0Z in quantization noise — this is the problem solved by the combination of BPF + EQ + AP. The BPF alone is not sufficient; the filter edge distortion correction (EQ) and known-bit locking (AP) are both required for successful decoding.
 
-> ※ The WASM demo's subtract mode uses EQ + AP (target callsign 3Y0Z pre-specified). WSJT-X cannot use AP on a standalone WAV file (no QSO context). Under equal conditions (EQ only, no AP), rs-ft8n still achieves 30% decode rate at -18 dB BPF edge ([detail](#bpf-edge-snr-sweep--cumulative-effect-of-bpf--eq--ap)).
+> ※ rs-ft8n uses AP with the target callsign (3Y0Z) pre-specified. WSJT-X was also tested with 3Y0Z entered in the DX Call field (AP enabled), but still failed to decode. The differentiator is the **adaptive equalizer (EQ)** — correcting BPF edge amplitude/phase distortion from Costas pilots is unique to rs-ft8n and absent from WSJT-X. Without AP (EQ only), rs-ft8n still achieves 30% decode rate at -18 dB BPF edge ([detail](#bpf-edge-snr-sweep--cumulative-effect-of-bpf--eq--ap)).
 
 > **Multi-pass subtract** checkbox enables 3-pass successive interference cancellation: decode strong signals → subtract their waveforms → rescan the residual for weaker signals. Decodes more stations than single-pass at the cost of longer processing time.
 
