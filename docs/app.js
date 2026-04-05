@@ -409,9 +409,10 @@ const periodMgr = new FT8PeriodManager({
       if (txMsg) {
         const freq = snipeMode ? snipeFreq : 1500;
         if (autoQsoCheck.checked) {
-          // Queue TX for next appropriate period boundary
-          periodMgr.queueTx({ ...txMsg, freq }, qso.txEven);
-          statusEl.textContent = `TX queued: ${qso.formatTx(txMsg)}`;
+          // TX on the opposite slot from the RX we just decoded
+          const txSlot = !period.isEven;
+          periodMgr.queueTx({ ...txMsg, freq }, txSlot);
+          statusEl.textContent = `TX queued (${txSlot ? 'even' : 'odd'}): ${qso.formatTx(txMsg)}`;
         }
         break;
       }
