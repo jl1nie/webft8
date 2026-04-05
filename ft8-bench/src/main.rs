@@ -5,7 +5,7 @@ mod simulator;
 
 use std::path::PathBuf;
 use real_data::evaluate_real_data;
-use ft8_core::decode::{decode_sniper_eq, EqMode};
+use ft8_core::decode::{decode_sniper_eq, decode_sniper_ap, EqMode, ApHint};
 use simulator::{make_busy_band_scenario, build_cq_messages};
 
 fn main() {
@@ -724,36 +724,42 @@ fn run_wsjt_stress_test() {
 
     // ── Seed sweep for reliability stats ─────────────────────────────────────
     const N_SEEDS: u64 = 20;
-    let mut ok_off = 0usize;
-    let mut ok_local = 0usize;
-    let mut ok_adapt = 0usize;
-    for seed in 0..N_SEEDS {
-        let cfg = simulator::SimConfig {
-            signals: vec![simulator::SimSignal {
-                message77: target_msg,
-                freq_hz: TARGET_FREQ,
-                snr_db: TARGET_SNR,
-                dt_sec: 0.0,
-            }],
-            noise_seed: Some(seed),
-        };
-        let mix = simulator::generate_frame_f32(&cfg);
-        let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
-        let filt = bpf.filter(&mix);
-        let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-        let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
-        let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+    // ── SNR sweep: find the AP decode threshold ───────────────────────────
+    // Realistic AP: only the target callsign is known (not what call1 is)
+    let ap = ApHint::new().with_call2("3Y0Z");
+    println!("  SNR sweep (BPF edge, {N_SEEDS} seeds each):");
+    println!("  {:>6}  {:>8}  {:>8}  {:>8}", "SNR", "EQ OFF", "EQ", "EQ+AP");
+    for snr in [-16, -18, -20, -22, -24, -26] {
+        let mut ok_off = 0usize;
+        let mut ok_eq = 0usize;
+        let mut ok_ap = 0usize;
+        for seed in 0..N_SEEDS {
+            let cfg = simulator::SimConfig {
+                signals: vec![simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: snr as f32,
+                    dt_sec: 0.0,
+                }],
+                noise_seed: Some(seed),
+            };
+            let mix = simulator::generate_frame_f32(&cfg);
+            let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+            let filt = bpf.filter(&mix);
+            let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+            let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+            let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
 
-        if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off)
-            .iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
-        if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local)
-            .iter().any(|r| r.message77 == target_msg) { ok_local += 1; }
-        if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive)
-            .iter().any(|r| r.message77 == target_msg) { ok_adapt += 1; }
+            if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off)
+                .iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
+            if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive)
+                .iter().any(|r| r.message77 == target_msg) { ok_eq += 1; }
+            if decode_sniper_ap(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap))
+                .iter().any(|r| r.message77 == target_msg) { ok_ap += 1; }
+        }
+        println!("  {:+4} dB  {:>5}/{N_SEEDS}  {:>5}/{N_SEEDS}  {:>5}/{N_SEEDS}",
+            snr, ok_off, ok_eq, ok_ap);
     }
-    println!(
-        "  [BPF edge seeds] OFF: {ok_off}/{N_SEEDS}  Local: {ok_local}/{N_SEEDS}  Adaptive: {ok_adapt}/{N_SEEDS}",
-    );
     println!();
 }
 
