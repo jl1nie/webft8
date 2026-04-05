@@ -110,6 +110,9 @@ export class Waterfall {
     // Auto-detect noise floor
     this.noiseFloor = -30; // dB, will be updated adaptively
 
+    // DF line frequency (Hz) — null = no line
+    this.dfLine = null;
+
     // Residual buffer for streaming
     this.residual = new Float32Array(0);
   }
@@ -216,6 +219,7 @@ export class Waterfall {
   /** Draw frequency axis labels at the top of the canvas. */
   drawFreqAxis() {
     this._drawFreqAxisInternal();
+    this._drawDfLine();
   }
 
   // ── Internal ────────────────────────────────────────────────────────────
@@ -279,8 +283,9 @@ export class Waterfall {
 
     ctx.putImageData(imgData, 0, h - 1);
 
-    // Redraw frequency axis on top (survives scrolling)
+    // Redraw overlays on top (survives scrolling)
     this._drawFreqAxisInternal();
+    this._drawDfLine();
   }
 
   _drawFreqAxisInternal() {
@@ -302,5 +307,30 @@ export class Waterfall {
       ctx.fillStyle = '#999';
       ctx.fillText(`${f}`, x + 2, 2);
     }
+  }
+
+  /** Draw a vertical DF line if set. */
+  _drawDfLine() {
+    if (this.dfLine == null) return;
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const x = ((this.dfLine - this.freqMin) / (this.freqMax - this.freqMin)) * w;
+    if (x < 0 || x > w) return;
+
+    ctx.strokeStyle = '#f44336';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, 16);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Frequency label near top
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#f44336';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${this.dfLine}`, x + 3, 17);
   }
 }

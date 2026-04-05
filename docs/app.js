@@ -1,4 +1,4 @@
-import init, { decode_wav, decode_wav_subtract, decode_sniper, encode_ft8 } from './ft8_web.js';
+import init, { decode_wav, decode_wav_subtract, decode_sniper, encode_ft8 } from '../pkg/ft8_web.js';
 import { Waterfall } from './waterfall.js';
 import { AudioCapture } from './audio-capture.js';
 import { AudioOutput } from './audio-output.js';
@@ -26,17 +26,15 @@ const snipeDxInfo = document.getElementById('snipe-dx-info');
 const snipeTxLine = document.getElementById('snipe-tx-line');
 const snipeBand = document.getElementById('snipe-band');
 const qsoLabel = document.getElementById('qso-label');
-const btnCq = document.getElementById('btn-cq');
-const btnTx = document.getElementById('btn-tx');
+const txActionsEl = document.getElementById('tx-actions');
 const btnHalt = document.getElementById('btn-halt');
 const autoCheck = document.getElementById('auto-qso');
 const statusEl = document.getElementById('status');
-const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
-const fileLink = document.getElementById('file-link');
 const myCallInput = document.getElementById('my-call');
 const myGridInput = document.getElementById('my-grid');
 const deviceSelect = document.getElementById('audio-device');
+const outputDeviceSelect = document.getElementById('audio-output-device');
 const snipeCallInput = document.getElementById('snipe-call');
 const subtractCheck = document.getElementById('subtract-mode');
 const btnCat = document.getElementById('btn-cat');
@@ -49,7 +47,10 @@ let wasmReady = false;
 let liveMode = false;
 let currentMode = 'scout'; // 'scout' | 'snipe'
 let snipeFreq = 1000;
+let scoutDf = 1500; // Scout mode TX frequency (Hz)
 let apCall = '';
+let snipePhase = 'watch'; // 'watch' | 'call'
+let snipeAltCall = ''; // call2 (sender) from last tapped Snipe message
 const FREQ_MIN = 200, FREQ_MAX = 2800;
 
 // ── Waterfall ───────────────────────────────────────────────────────────────
@@ -83,7 +84,8 @@ const qso = new QsoManager({
       qsoLog.add({
         dxCall: qso.dxCall, dxGrid: qso.dxGrid,
         txReport: qso.txReport, rxReport: qso.rxReport,
-        freq: snipeFreq,
+        freq: currentMode === 'snipe' ? snipeFreq : scoutDf,
+        state: 'IDLE', // completed
       });
       addChatMsg('sys', '', `QSO complete: ${qso.dxCall}`, 0);
     }
@@ -110,7 +112,38 @@ function setMode(mode) {
   tabSnipe.classList.toggle('active', mode === 'snipe');
   resizeCanvas();
   waterfall.clear();
+  waterfall.dfLine = mode === 'scout' ? scoutDf : null;
   updateSnipeOverlay();
+}
+
+// ── Snipe Watch/Call phase ──────────────────────────────────────────────────
+const btnWatch = document.getElementById('btn-watch');
+const btnCall = document.getElementById('btn-call');
+const snipePhaseHint = document.getElementById('snipe-phase-hint');
+const snipeCallersEl = document.getElementById('snipe-callers');
+
+btnWatch.addEventListener('click', () => setSnipePhase('watch'));
+btnCall.addEventListener('click', () => setSnipePhase('call'));
+
+function setSnipePhase(phase) {
+  snipePhase = phase;
+  btnWatch.classList.toggle('active', phase === 'watch');
+  btnCall.classList.toggle('active', phase === 'call');
+  const snipeView = document.getElementById('snipe-view');
+  snipeView.classList.toggle('snipe-call-phase', phase === 'call');
+  if (phase === 'watch') {
+    snipePhaseHint.textContent = 'full-band — tap WF to set DF';
+  } else {
+    snipePhaseHint.textContent = `narrow ${snipeFreq} Hz — calling`;
+    // Auto-start calling if we have a target
+    if (apCall && qso.state === QSO_STATE.IDLE) {
+      qso.setMyInfo(myCallInput.value, myGridInput.value);
+      qso.callStation(apCall);
+      statusEl.textContent = `Calling ${apCall}`;
+    }
+  }
+  // Clear RX list when switching phases
+  document.getElementById('snipe-rx-list').innerHTML = '';
 }
 
 // ── Settings panel ──────────────────────────────────────────────────────────
@@ -149,11 +182,16 @@ function updateSnipeOverlay() {
 }
 
 wfWrap.addEventListener('click', (e) => {
-  if (currentMode !== 'snipe') return;
   const rect = wfCanvas.getBoundingClientRect();
-  snipeFreq = Math.round(FREQ_MIN + ((e.clientX - rect.left) / rect.width) * (FREQ_MAX - FREQ_MIN));
-  snipeFreq = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, snipeFreq));
-  updateSnipeOverlay();
+  const freq = Math.round(FREQ_MIN + ((e.clientX - rect.left) / rect.width) * (FREQ_MAX - FREQ_MIN));
+  if (currentMode === 'snipe') {
+    snipeFreq = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq));
+    updateSnipeOverlay();
+  } else {
+    scoutDf = Math.max(FREQ_MIN, Math.min(FREQ_MAX, freq));
+    waterfall.dfLine = scoutDf;
+    statusEl.textContent = `DF: ${scoutDf} Hz`;
+  }
 });
 
 // ── Chat message helper (Scout mode) ────────────────────────────────────────
@@ -193,20 +231,15 @@ function addChatMsg(type, time, text, snr, actionCb) {
 }
 
 // ── QSO display update ─────────────────────────────────────────────────────
-const txSelectEl = document.getElementById('tx-select');
 const snipeRxList = document.getElementById('snipe-rx-list');
 
 function updateQsoDisplay() {
   const state = qso.state;
-  const tx = qso.getNextTx();
-
-  // TX button state
-  btnTx.disabled = !tx;
-  btnTx.classList.toggle('tx-ready', !!tx);
 
   // Snipe view
   qsoLabel.textContent = state;
   snipeDxCall.textContent = qso.dxCall || 'No target';
+  const tx = qso.getNextTx();
   snipeTxLine.textContent = tx ? `Next: ${qso.formatTx(tx)}` : '';
 
   // Progress dots
@@ -226,53 +259,93 @@ function updateQsoDisplay() {
     dots.forEach(d => d.classList.add('done'));
   }
 
-  // TX message selector (manual mode — when Auto is off and QSO is active)
-  updateTxSelector();
+  // Unified TX actions
+  updateTxActions();
 }
 
-function updateTxSelector() {
-  if (autoCheck.checked || qso.state === QSO_STATE.IDLE || !qso.dxCall) {
-    txSelectEl.classList.remove('show');
-    return;
-  }
-  txSelectEl.classList.add('show');
-  txSelectEl.innerHTML = '';
-
+function updateTxActions() {
+  txActionsEl.innerHTML = '';
   const myCall = myCallInput.value.toUpperCase();
   const myGrid = myGridInput.value.toUpperCase();
   const dx = qso.dxCall;
+  const state = qso.state;
 
-  // Build TX message options based on current state
+  if (state === QSO_STATE.IDLE || !dx) {
+    // IDLE — show CQ button
+    const btn = document.createElement('button');
+    btn.className = 'cq';
+    btn.textContent = 'CQ';
+    btn.addEventListener('click', () => {
+      qso.setMyInfo(myCallInput.value, myGridInput.value);
+      const tx = qso.callCq();
+      addChatMsg('tx', '', qso.formatTx(tx), undefined);
+      statusEl.textContent = 'Calling CQ';
+    });
+    txActionsEl.appendChild(btn);
+
+    // Snipe: show alt call (sender) as secondary option
+    if (currentMode === 'snipe' && snipeAltCall && snipeAltCall !== myCall) {
+      const altBtn = document.createElement('button');
+      altBtn.className = 'tx-msg';
+      altBtn.textContent = `Call ${snipeAltCall}`;
+      altBtn.addEventListener('click', () => {
+        qso.setMyInfo(myCallInput.value, myGridInput.value);
+        qso.callStation(snipeAltCall);
+        snipeCallInput.value = snipeAltCall;
+        apCall = snipeAltCall;
+        snipeDxCall.textContent = snipeAltCall;
+        snipeAltCall = '';
+        updateTxActions();
+        statusEl.textContent = `Calling ${apCall}`;
+      });
+      txActionsEl.appendChild(altBtn);
+    }
+    return;
+  }
+
+  if (autoCheck.checked) {
+    // Auto ON — show single next-TX button
+    const tx = qso.getNextTx();
+    if (tx) {
+      const btn = document.createElement('button');
+      btn.className = 'tx-next';
+      btn.textContent = qso.formatTx(tx);
+      btn.addEventListener('click', () => transmit(tx.call1, tx.call2, tx.report));
+      txActionsEl.appendChild(btn);
+    }
+    return;
+  }
+
+  // Auto OFF — show all TX options
   const options = [];
-  if (qso.state === QSO_STATE.CALLING) {
+  if (state === QSO_STATE.CALLING) {
     options.push({ label: `${dx} ${myCall} ${myGrid}`, c1: dx, c2: myCall, rpt: myGrid });
   }
-  if (qso.state === QSO_STATE.REPORT) {
+  if (state === QSO_STATE.REPORT) {
     const rpt = qso._autoReport();
     options.push({ label: `${dx} ${myCall} ${rpt}`, c1: dx, c2: myCall, rpt });
     options.push({ label: `${dx} ${myCall} R${rpt}`, c1: dx, c2: myCall, rpt: `R${rpt}` });
   }
-  if (qso.state === QSO_STATE.FINAL) {
+  if (state === QSO_STATE.FINAL) {
     options.push({ label: `${dx} ${myCall} RR73`, c1: dx, c2: myCall, rpt: 'RR73' });
     options.push({ label: `${dx} ${myCall} 73`, c1: dx, c2: myCall, rpt: '73' });
   }
-  // Always offer these
   options.push({ label: `${dx} ${myCall} ${myGrid}`, c1: dx, c2: myCall, rpt: myGrid });
   options.push({ label: `CQ ${myCall} ${myGrid}`, c1: 'CQ', c2: myCall, rpt: myGrid });
 
-  // Deduplicate
   const seen = new Set();
   for (const o of options) {
     if (seen.has(o.label)) continue;
     seen.add(o.label);
     const btn = document.createElement('button');
+    btn.className = 'tx-msg';
     btn.textContent = o.label;
     btn.addEventListener('click', () => transmit(o.c1, o.c2, o.rpt));
-    txSelectEl.appendChild(btn);
+    txActionsEl.appendChild(btn);
   }
 }
 
-autoCheck.addEventListener('change', updateTxSelector);
+autoCheck.addEventListener('change', updateTxActions);
 
 // ── Decode ──────────────────────────────────────────────────────────────────
 function runDecode(samples) {
@@ -282,7 +355,7 @@ function runDecode(samples) {
   if (apCall) {
     const found = results.some(r => r.message.toUpperCase().includes(apCall));
     if (!found) {
-      const freq = currentMode === 'snipe' ? snipeFreq : 1500;
+      const freq = currentMode === 'snipe' ? snipeFreq : scoutDf;
       const ap = decode_sniper(samples, freq, apCall);
       for (const r of ap) {
         if (!results.some(x => Math.abs(x.freq_hz - r.freq_hz) < 10)) {
@@ -299,23 +372,25 @@ function runDecode(samples) {
 // ── Transmit ────────────────────────────────────────────────────────────────
 async function transmit(call1, call2, report, freq) {
   if (!wasmReady) return;
-  freq = freq || snipeFreq || 1500;
+  freq = freq || (currentMode === 'snipe' ? snipeFreq : scoutDf);
   try {
     statusEl.textContent = `TX: ${call1} ${call2} ${report}`;
-    btnTx.classList.add('tx-active');
+    // Mark active button
+    const activeBtn = txActionsEl.querySelector('button');
+    if (activeBtn) activeBtn.classList.add('tx-active');
 
     const utc = new Date().toISOString().substr(11, 5);
     addChatMsg('tx sending', utc, `${call1} ${call2} ${report}`, undefined);
 
     const samples = encode_ft8(call1, call2, report, freq);
     if (cat.connected) await cat.ptt(true);
-    await audioOut.play(samples);
+    await audioOut.play(samples, outputDeviceSelect.value || undefined);
     if (cat.connected) await cat.ptt(false);
 
-    btnTx.classList.remove('tx-active');
+    if (activeBtn) activeBtn.classList.remove('tx-active');
     statusEl.textContent = 'TX complete';
   } catch (e) {
-    btnTx.classList.remove('tx-active');
+    txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
     statusEl.textContent = `TX error: ${e.message || e}`;
     if (cat.connected) try { await cat.ptt(false); } catch (_) {}
   }
@@ -359,14 +434,26 @@ const periodMgr = new FT8PeriodManager({
       const suspect = r.pass >= 4 && r.hard_errors >= 35;
       msgs.push({ freq_hz: freq, message: msg });
 
+      // Log all non-suspect RX to persistent store
+      if (!suspect) {
+        qsoLog.addRx({ message: msg, freq_hz: freq, snr_db: snr });
+      }
+
       // Scout chat
       if (!suspect) {
         const words = msg.split(/\s+/);
-        let clickCall = '';
+        // Extract sender (call2): skip CQ/DE/QRZ/DX prefixes, then
+        // in "CQ SENDER GRID" sender is 1st call, in "DEST SENDER RPT" sender is 2nd call
+        const calls = [];
         for (const w of words) {
           if (['CQ', 'DE', 'QRZ', 'DX'].includes(w)) continue;
-          if (w.length >= 3 && /[0-9]/.test(w)) { clickCall = w; break; }
+          if (w.length >= 3 && /[0-9]/.test(w)) calls.push(w);
+          if (calls.length >= 2) break;
         }
+        // CQ message: only 1 call before grid → sender is calls[0]
+        // Directed message: DEST SENDER → sender is calls[1]
+        const isCq = /^(CQ|DE|QRZ)\b/.test(msg);
+        const clickCall = isCq ? (calls[0] || '') : (calls[1] || calls[0] || '');
         addChatMsg('rx', utc, msg, snr, clickCall ? () => {
           qso.setMyInfo(myCallInput.value, myGridInput.value);
           const tx = qso.callStation(clickCall);
@@ -395,46 +482,112 @@ const periodMgr = new FT8PeriodManager({
     // Auto TX / retry
     const period = periodMgr.getCurrentPeriod();
     if (txMsg && autoCheck.checked) {
-      const freq = currentMode === 'snipe' ? snipeFreq : 1500;
+      const freq = currentMode === 'snipe' ? snipeFreq : scoutDf;
       periodMgr.queueTx({ ...txMsg, freq }, !period.isEven);
       statusEl.textContent = `TX queued: ${qso.formatTx(txMsg)}`;
     } else if (!txMsg && qso.state !== QSO_STATE.IDLE && autoCheck.checked) {
+      // Save state before retry (retry may reset on max retries)
+      const prevState = qso.state;
+      const prevDx = qso.dxCall;
       const retryTx = qso.retry();
       if (retryTx) {
-        const freq = currentMode === 'snipe' ? snipeFreq : 1500;
+        const freq = currentMode === 'snipe' ? snipeFreq : scoutDf;
         periodMgr.queueTx({ ...retryTx, freq }, !period.isEven);
         statusEl.textContent = `Retry ${qso.retryInfo()}: ${qso.formatTx(retryTx)}`;
+      } else if (prevDx) {
+        // Max retries exceeded — log incomplete QSO
+        qsoLog.add({
+          dxCall: prevDx, dxGrid: qso.dxGrid,
+          txReport: qso.txReport, rxReport: qso.rxReport,
+          freq: currentMode === 'snipe' ? snipeFreq : scoutDf,
+          state: prevState, // incomplete
+        });
+        addChatMsg('sys', '', `QSO timeout: ${prevDx}`, 0);
+        // Auto-switch back to Watch on failure in Call phase
+        if (currentMode === 'snipe' && snipePhase === 'call') {
+          setSnipePhase('watch');
+        }
       }
     }
 
-    // Snipe: show all RX in scrolling list below target
+    // Snipe: update RX list based on phase
     if (currentMode === 'snipe') {
-      for (const m of msgs) {
-        const div = document.createElement('div');
-        div.className = 'chat-msg rx';
-        const isTarget = apCall && m.message.toUpperCase().includes(apCall);
-        if (isTarget) div.classList.add('qso-active');
-        div.innerHTML = `<span class="snr" style="min-width:2em">${Math.round(m.freq_hz)}</span>
-          <span class="text">${m.message}</span>`;
-        div.style.cursor = 'pointer';
-        div.addEventListener('click', () => {
-          const words = m.message.split(/\s+/);
-          let call = '';
-          for (const w of words) {
-            if (['CQ','DE','QRZ','DX'].includes(w)) continue;
-            if (w.length >= 3 && /[0-9]/.test(w)) { call = w; break; }
+      const myCall = myCallInput.value.toUpperCase();
+
+      if (snipePhase === 'watch') {
+        // Watch: show callers of target + all band activity
+        const callers = [];
+        for (const m of msgs) {
+          const upper = m.message.toUpperCase();
+          // Track who is calling the target
+          if (apCall && upper.includes(apCall)) {
+            const words = m.message.split(/\s+/);
+            // "TARGET CALLER GRID/RPT" — caller is words[1]
+            if (words[0]?.toUpperCase() === apCall && words[1] && words[1].toUpperCase() !== myCall) {
+              callers.push(words[1]);
+            }
           }
-          if (call) {
-            qso.setMyInfo(myCallInput.value, myGridInput.value);
-            qso.callStation(call);
-            snipeCallInput.value = call;
-            apCall = call;
-            snipeDxCall.textContent = call;
-          }
-        });
-        snipeRxList.appendChild(div);
+
+          const div = document.createElement('div');
+          div.className = 'chat-msg rx';
+          const isTarget = apCall && upper.includes(apCall);
+          if (isTarget) div.classList.add('qso-active');
+          div.innerHTML = `<span class="snr" style="min-width:2em">${Math.round(m.freq_hz)}</span>
+            <span class="text">${m.message}</span>`;
+          div.style.cursor = 'pointer';
+          div.addEventListener('click', () => {
+            const words = m.message.split(/\s+/);
+            // Extract call1 (target) and call2 (sender/alt)
+            const calls = [];
+            for (const w of words) {
+              if (['CQ','DE','QRZ','DX'].includes(w)) continue;
+              if (w.length >= 3 && /[0-9]/.test(w)) calls.push(w);
+              if (calls.length >= 2) break;
+            }
+            const isCq = /^(CQ|DE|QRZ)\b/.test(m.message);
+            const target = isCq ? (calls[0] || '') : (calls[0] || '');
+            const sender = isCq ? (calls[0] || '') : (calls[1] || '');
+            if (target) {
+              qso.setMyInfo(myCallInput.value, myGridInput.value);
+              qso.callStation(target);
+              snipeCallInput.value = target;
+              apCall = target;
+              snipeDxCall.textContent = target;
+              // Store alt call (sender) if different from target
+              snipeAltCall = (sender && sender !== target) ? sender : '';
+              updateTxActions();
+            }
+          });
+          snipeRxList.appendChild(div);
+        }
+        snipeRxList.scrollTop = snipeRxList.scrollHeight;
+
+        // Show callers list
+        if (apCall && callers.length > 0) {
+          snipeCallersEl.textContent = `Calling ${apCall}: ${callers.join(', ')}`;
+        }
+
+      } else {
+        // Call phase: only show messages involving me and target
+        for (const m of msgs) {
+          const upper = m.message.toUpperCase();
+          if (!apCall) continue;
+          const involvesMe = upper.includes(myCall);
+          const involvesTarget = upper.includes(apCall);
+          if (!involvesMe && !involvesTarget) continue;
+
+          const div = document.createElement('div');
+          div.className = 'chat-msg rx';
+          if (involvesTarget) div.classList.add('qso-active');
+          div.innerHTML = `<span class="snr" style="min-width:2em">${Math.round(m.freq_hz)}</span>
+            <span class="text">${m.message}</span>`;
+          snipeRxList.appendChild(div);
+        }
+        snipeRxList.scrollTop = snipeRxList.scrollHeight;
+
+        // Auto-switch back to Watch on QSO failure (reset)
+        // (handled by retry timeout above — user can manually switch too)
       }
-      snipeRxList.scrollTop = snipeRxList.scrollHeight;
     }
 
     waterfall.drawLabels(msgs);
@@ -453,24 +606,11 @@ periodMgr.callbacks.onTxFire = async (tx) => {
 };
 
 // ── Buttons ─────────────────────────────────────────────────────────────────
-btnCq.addEventListener('click', () => {
-  qso.setMyInfo(myCallInput.value, myGridInput.value);
-  const tx = qso.callCq();
-  addChatMsg('tx', '', qso.formatTx(tx), undefined);
-  statusEl.textContent = 'Calling CQ';
-});
-
-btnTx.addEventListener('click', async () => {
-  const tx = qso.getNextTx();
-  if (!tx) { statusEl.textContent = 'Nothing to send'; return; }
-  await transmit(tx.call1, tx.call2, tx.report);
-});
-
 btnHalt.addEventListener('click', () => {
   periodMgr.cancelTx();
   audioOut.stop();
   if (cat.connected) cat.ptt(false).catch(() => {});
-  btnTx.classList.remove('tx-active');
+  txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
   statusEl.textContent = 'Halted';
 });
 
@@ -478,7 +618,16 @@ btnReset.addEventListener('click', () => {
   periodMgr.cancelTx();
   audioOut.stop();
   if (cat.connected) cat.ptt(false).catch(() => {});
-  btnTx.classList.remove('tx-active');
+  txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
+  // Save incomplete QSO before reset
+  if (qso.state !== QSO_STATE.IDLE && qso.dxCall) {
+    qsoLog.add({
+      dxCall: qso.dxCall, dxGrid: qso.dxGrid,
+      txReport: qso.txReport, rxReport: qso.rxReport,
+      freq: currentMode === 'snipe' ? snipeFreq : scoutDf,
+      state: qso.state, // incomplete
+    });
+  }
   qso.reset();
   chatList.innerHTML = '';
   updateQsoDisplay();
@@ -535,16 +684,38 @@ btnCat.addEventListener('click', async () => {
   }
 });
 
-// ── File drop ───────────────────────────────────────────────────────────────
-fileLink.addEventListener('click', (e) => { e.preventDefault(); fileInput.click(); });
-dropZone.addEventListener('click', () => fileInput.click());
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
-dropZone.addEventListener('drop', e => {
-  e.preventDefault(); dropZone.classList.remove('over');
+// ── Log export ─────────────────────────────────────────────────────────────
+document.getElementById('btn-export-zip').addEventListener('click', () => qsoLog.exportZip());
+document.getElementById('btn-clear-log').addEventListener('click', () => {
+  if (confirm('Clear all QSO and RX logs?')) {
+    qsoLog.clear();
+    refreshQsoList();
+  }
+});
+
+function refreshQsoList() {
+  const el = document.getElementById('qso-list');
+  const entries = qsoLog.getAll();
+  if (!entries.length) { el.textContent = 'No QSOs'; return; }
+  el.innerHTML = entries.slice(0, 50).map(e => {
+    const t = e.utc.slice(0, 16).replace('T', ' ');
+    const tag = e.state && e.state !== 'IDLE' ? ` [${e.state}]` : '';
+    return `<div>${t} ${e.dxCall}${tag}</div>`;
+  }).join('');
+}
+
+// Refresh QSO list when settings panel opens
+btnSettings.addEventListener('click', refreshQsoList);
+
+// ── File drop (on waterfall) ────────────────────────────────────────────────
+wfWrap.addEventListener('dragover', e => { e.preventDefault(); wfWrap.classList.add('drop-over'); });
+wfWrap.addEventListener('dragleave', () => wfWrap.classList.remove('drop-over'));
+wfWrap.addEventListener('drop', e => {
+  e.preventDefault(); wfWrap.classList.remove('drop-over');
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
 fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+document.getElementById('btn-open-wav').addEventListener('click', () => fileInput.click());
 
 function parseWav(buf) {
   const view = new DataView(buf);
@@ -566,7 +737,14 @@ function parseWav(buf) {
 
 async function handleFile(file) {
   if (!wasmReady) return;
-  if (liveMode) { statusEl.textContent = 'Stop audio first'; return; }
+  // Auto-stop live audio if active
+  if (liveMode) {
+    periodMgr.stop();
+    capture.stop();
+    liveMode = false;
+    btnStart.textContent = 'Start Audio';
+    timerEl.textContent = '--';
+  }
   try {
     const buf = await file.arrayBuffer();
     const samples = parseWav(buf);
@@ -608,5 +786,16 @@ init().then(async () => {
       opt.value = d.id; opt.textContent = d.label;
       deviceSelect.appendChild(opt);
     }
+    // Enumerate audio output devices
+    const allDevices = await navigator.mediaDevices.enumerateDevices();
+    outputDeviceSelect.innerHTML = '<option value="">-- default --</option>';
+    for (const d of allDevices) {
+      if (d.kind !== 'audiooutput') continue;
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `Output ${d.deviceId.slice(0, 8)}`;
+      outputDeviceSelect.appendChild(opt);
+    }
   } catch (e) { console.warn('Audio devices:', e); }
+  updateTxActions();
 }).catch(e => { statusEl.textContent = `Load failed: ${e}`; });

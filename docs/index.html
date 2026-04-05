@@ -73,27 +73,37 @@
   .qso-progress .label { color: #4fc3f7; font-weight: bold; margin-left: .3rem; }
   .snipe-band { font-size: .75rem; color: #666; margin-top: .3rem; }
   .snipe-band span { margin-right: .8rem; }
+  .snipe-phase-tabs { display: flex; gap: 0; }
+  .snipe-phase-tabs button { font-size: .75rem; padding: .2rem .6rem; border: 1px solid #333;
+    background: #1a1a2e; color: #888; cursor: pointer; }
+  .snipe-phase-tabs button:first-child { border-radius: 4px 0 0 4px; }
+  .snipe-phase-tabs button:last-child { border-radius: 0 4px 4px 0; }
+  .snipe-phase-tabs button.active { background: #1b5e20; color: #76ff03; border-color: #76ff03; }
+  .snipe-call-phase #snipe-callers { display: none; }
+  .snipe-call-phase #snipe-band { display: none; }
 
   /* ── Bottom bar ─────────────────────────────────────────────────────── */
-  .bottom-bar { display: flex; align-items: center; gap: .4rem; padding: .4rem .5rem;
+  .bottom-bar { display: flex; align-items: center; gap: .3rem; padding: .3rem .5rem;
     background: #111; border-top: 1px solid #222; flex-shrink: 0; flex-wrap: wrap; }
-  .bottom-bar button { font-size: .95rem; padding: .5rem 1rem; border-radius: 6px;
+  .bottom-bar button { font-size: .8rem; padding: .35rem .7rem; border-radius: 5px;
     border: 1px solid #333; background: #1a1a2e; color: #e0e0e0; cursor: pointer;
-    min-width: 3.5rem; font-weight: bold; }
-  .bottom-bar button.cq { background: #0d47a1; border-color: #4fc3f7; color: #fff; }
-  .bottom-bar button.tx-active { background: #b71c1c; border-color: #f44336; color: #fff; animation: pulse .5s infinite alternate; }
-  .bottom-bar button.tx-ready { background: #1b5e20; border-color: #76ff03; color: #76ff03; }
+    font-weight: bold; }
   .bottom-bar button.halt { border-color: #f44336; color: #f44336; }
   .bottom-bar button:disabled { opacity: 0.3; cursor: default; }
-  .bottom-bar .status { font-size: .75rem; color: #888; flex: 1; min-width: 0; overflow: hidden;
+  .bottom-bar .status { font-size: .7rem; color: #888; flex: 1; min-width: 0; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
-  .bottom-bar label { font-size: .8rem; display: flex; align-items: center; gap: .3rem; }
+  .bottom-bar label { font-size: .75rem; display: flex; align-items: center; gap: .3rem; }
   @keyframes pulse { to { opacity: 0.6; } }
-  .tx-select { font-size: .75rem; margin: .2rem .5rem; padding: .2rem; display: none;
-    background: #111; border: 1px solid #333; border-radius: 4px; }
-  .tx-select.show { display: flex; gap: .3rem; flex-wrap: wrap; }
-  .tx-select button { font-size: .75rem; padding: .2rem .5rem; border: 1px solid #444;
-    background: #1a1a2e; color: #ffeb3b; border-radius: 4px; cursor: pointer; }
+  #tx-actions { display: flex; gap: .3rem; flex-wrap: wrap; }
+  #tx-actions button { font-size: .8rem; padding: .35rem .7rem; border-radius: 5px;
+    border: 1px solid #333; background: #1a1a2e; color: #e0e0e0; cursor: pointer;
+    font-weight: bold; }
+  #tx-actions button.cq { background: #0d47a1; border-color: #4fc3f7; color: #fff; }
+  #tx-actions button.tx-msg { background: #1a1a2e; border-color: #ffeb3b; color: #ffeb3b;
+    font-weight: normal; font-size: .75rem; }
+  #tx-actions button.tx-active { background: #b71c1c; border-color: #f44336; color: #fff;
+    animation: pulse .5s infinite alternate; }
+  #tx-actions button.tx-next { background: #1b5e20; border-color: #76ff03; color: #76ff03; }
 
   /* ── Settings panel (slide-out) ─────────────────────────────────────── */
   #settings-panel { display: none; position: fixed; top: 0; right: 0; bottom: 0;
@@ -112,11 +122,8 @@
     background: rgba(0,0,0,0.5); z-index: 99; }
   .settings-overlay.open { display: block; }
 
-  /* ── File drop ──────────────────────────────────────────────────────── */
-  #drop-zone { border: 1px dashed #333; border-radius: 4px; padding: .4rem; text-align: center;
-    cursor: pointer; font-size: .7rem; color: #555; margin: .3rem .5rem; }
-  #drop-zone.over { border-color: #4fc3f7; color: #4fc3f7; }
-  #drop-zone input { display: none; }
+  /* ── Waterfall drop highlight ────────────────────────────────────────── */
+  #waterfall-wrap.drop-over { outline: 2px dashed #4fc3f7; outline-offset: -2px; }
 </style>
 </head>
 <body class="scout-mode">
@@ -146,6 +153,13 @@
 
 <!-- Snipe view: target-focused -->
 <div id="snipe-view">
+  <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.3rem">
+    <div class="snipe-phase-tabs">
+      <button id="btn-watch" class="active">Watch</button>
+      <button id="btn-call">Call</button>
+    </div>
+    <span id="snipe-phase-hint" style="font-size:.7rem;color:#666">full-band — tap WF to set DF</span>
+  </div>
   <div class="snipe-target" id="snipe-target">
     <div class="dx-call" id="snipe-dx-call">No target</div>
     <div class="dx-msg" id="snipe-dx-msg"></div>
@@ -164,22 +178,16 @@
   <div class="chat-list" id="snipe-rx-list" style="flex:1;overflow-y:auto;margin-top:.3rem"></div>
 </div>
 
-<!-- TX message selector (shown when Auto is off and QSO active) -->
-<div class="tx-select" id="tx-select"></div>
-
 <!-- Bottom bar -->
 <div class="bottom-bar">
-  <button id="btn-cq" class="cq">CQ</button>
-  <button id="btn-tx" disabled>TX</button>
+  <div id="tx-actions"></div>
   <button id="btn-halt" class="halt">Halt</button>
   <label><input type="checkbox" id="auto-qso"> Auto</label>
   <span class="status" id="status">Ready</span>
 </div>
 
-<!-- File drop (compact) -->
-<div id="drop-zone" tabindex="0">
-  Drop WAV | <input type="file" id="file-input" accept=".wav"><a href="#" id="file-link" style="color:#4fc3f7">select file</a>
-</div>
+<!-- Hidden file input for WAV -->
+<input type="file" id="file-input" accept=".wav" style="display:none">
 
 <!-- Settings slide-out -->
 <div class="settings-overlay" id="settings-overlay"></div>
@@ -201,6 +209,10 @@
     <select id="audio-device"><option>-- select --</option></select>
   </div>
   <div class="field">
+    <label>Audio Output</label>
+    <select id="audio-output-device"><option value="">-- default --</option></select>
+  </div>
+  <div class="field">
     <label>DX Call (AP)</label>
     <input type="text" id="snipe-call" placeholder="3Y0Z" style="text-transform:uppercase">
   </div>
@@ -215,8 +227,15 @@
   <span class="cat-status" id="cat-status" style="font-size:.75rem;color:#666;display:block;margin-bottom:.5rem">not connected</span>
   <button id="btn-start">Start Audio</button>
   <button id="btn-qso-reset">Reset QSO</button>
+  <button id="btn-open-wav">Open WAV File</button>
   <div style="margin-top:1rem">
     <label><input type="checkbox" id="subtract-mode" checked> Multi-pass subtract</label>
+  </div>
+  <div style="margin-top:1rem;border-top:1px solid #333;padding-top:.5rem">
+    <h2 style="font-size:.85rem">Log</h2>
+    <button id="btn-export-zip">Export ZIP (ADIF + RX)</button>
+    <button id="btn-clear-log" style="color:#f44336;border-color:#f44336">Clear All Logs</button>
+    <div id="qso-list" style="margin-top:.4rem;font-size:.7rem;color:#888;max-height:120px;overflow-y:auto"></div>
   </div>
 </div>
 
