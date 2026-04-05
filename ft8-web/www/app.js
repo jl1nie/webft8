@@ -255,13 +255,21 @@ function runDecode(samples) {
   // Always run full-band subtract (works with or without hardware BPF)
   const results = subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
 
-  // If AP is set and target not found, try sniper+AP as supplement
+  // If AP is set and target not found in full-band, try AP-only supplement
+  // (no EQ — EQ is only useful with hardware BPF)
   if (apCall) {
     const found = results.some(r => r.message.toUpperCase().includes(apCall));
     if (!found) {
       const freq = snipeMode ? snipeFreq : 1500;
       const ap = decode_sniper(samples, freq, apCall);
-      results.push(...ap);
+      for (const r of ap) {
+        // Avoid duplicates
+        if (!results.some(x => Math.abs(x.freq_hz - r.freq_hz) < 10)) {
+          results.push(r);
+        } else {
+          r.free();
+        }
+      }
     }
   }
 
