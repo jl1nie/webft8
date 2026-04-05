@@ -777,7 +777,8 @@ const periodMgr = new FT8PeriodManager({
           });
           snipeRxList.appendChild(div);
         }
-        pruneList(snipeRxList);\n        snipeRxList.scrollTop = snipeRxList.scrollHeight;
+        pruneList(snipeRxList);
+        snipeRxList.scrollTop = snipeRxList.scrollHeight;
 
         // Show callers list
         if (apCall && callers.length > 0) {
