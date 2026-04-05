@@ -388,8 +388,8 @@ fn process_candidate(
                             if depth == DecodeDepth::BpAllOsd {
                                 let osd_result = osd_decode_deep(&llr_ap, 2);
                                 if let Some(osd) = osd_result {
-                                    // AP OSD: tight threshold + plausibility check
-                                    if osd.hard_errors < 25 {
+                                    // AP OSD: same threshold as AP BP
+                                    if osd.hard_errors < 30 {
                                         if let Some(text) = crate::message::unpack77(&osd.message77) {
                                             if crate::message::is_plausible_message(&text) {
                                                 let itone = message_to_tones(&osd.message77);
