@@ -62,23 +62,20 @@ function updateSnipeOverlay() {
 }
 
 function updateSnipeStatus() {
-  if (!snipeMode) {
+  const parts = [];
+  if (snipeMode) parts.push('Snipe');
+  if (apCall) parts.push(`AP: ${apCall}`);
+  if (parts.length === 0) {
     snipeStatusEl.textContent = '';
-    btnAp.classList.remove('ap-on');
-    return;
-  }
-  if (apCall) {
-    snipeStatusEl.textContent = `EQ + AP: ${apCall}`;
-    snipeStatusEl.style.color = '#76ff03';
   } else {
-    snipeStatusEl.textContent = 'EQ only';
-    snipeStatusEl.style.color = '#ff9800';
+    snipeStatusEl.textContent = parts.join(' + ');
+    snipeStatusEl.style.color = apCall ? '#76ff03' : '#4fc3f7';
   }
 }
 
 function confirmAp() {
   const call = snipeCallInput.value.trim().toUpperCase();
-  if (call && snipeMode) {
+  if (call) {
     apCall = call;
     btnAp.classList.add('ap-on');
     btnAp.textContent = `AP: ${apCall}`;
@@ -94,9 +91,6 @@ btnSnipe.addEventListener('click', () => {
   snipeMode = !snipeMode;
   btnSnipe.classList.toggle('snipe-on', snipeMode);
   btnSnipe.textContent = snipeMode ? 'Snipe ON' : 'Snipe';
-  snipeCallInput.disabled = !snipeMode;
-  btnAp.disabled = !snipeMode;
-  if (!snipeMode) { apCall = ''; btnAp.textContent = 'AP'; btnAp.classList.remove('ap-on'); }
   updateSnipeOverlay();
   updateSnipeStatus();
 });
@@ -149,7 +143,12 @@ init().then(async () => {
 // ── Decode helper ───────────────────────────────────────────────────────────
 function runDecode(samples) {
   if (snipeMode) {
+    // Snipe ±250 Hz with EQ, optional AP
     return decode_sniper(samples, snipeFreq, apCall);
+  }
+  if (apCall) {
+    // Full-band with AP (search for target across entire band)
+    return decode_sniper(samples, 1500.0, apCall); // TODO: full-band AP
   }
   return subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
 }
@@ -160,10 +159,11 @@ function isTargetMessage(msg) {
 }
 
 function decodeModeName() {
-  if (snipeMode) {
-    return apCall ? `snipe ${snipeFreq}Hz AP:${apCall}` : `snipe ${snipeFreq}Hz`;
-  }
-  return subtractCheck.checked ? 'subtract' : 'single-pass';
+  const parts = [];
+  if (snipeMode) parts.push(`snipe ${snipeFreq}Hz`);
+  else parts.push(subtractCheck.checked ? 'subtract' : 'single-pass');
+  if (apCall) parts.push(`AP:${apCall}`);
+  return parts.join(' + ');
 }
 
 // ── Audio capture ───────────────────────────────────────────────────────────
