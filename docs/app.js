@@ -1,4 +1,4 @@
-import init, { decode_wav, decode_wav_subtract, decode_sniper, encode_ft8 } from '../pkg/ft8_web.js';
+import init, { decode_wav, decode_wav_subtract, decode_sniper, encode_ft8 } from './ft8_web.js';
 import { Waterfall } from './waterfall.js';
 import { AudioCapture } from './audio-capture.js';
 import { AudioOutput } from './audio-output.js';
