@@ -3,8 +3,10 @@
 /// Chains: downsample → coarse_sync → fine_sync → LLR → BP decode
 use rayon::prelude::*;
 
+pub use crate::equalizer::EqMode;
 use crate::{
     downsample::{build_fft_cache, downsample},
+    equalizer,
     ldpc::{bp::bp_decode, osd::{osd_decode, osd_decode_deep}},
     llr::{compute_llr, compute_snr_db, symbol_spectra, sync_quality},
     params::BP_MAX_ITER,
@@ -79,7 +81,7 @@ pub fn decode_frame(
     depth: DecodeDepth,
     max_cand: usize,
 ) -> Vec<DecodeResult> {
-    decode_frame_inner(audio, freq_min, freq_max, sync_min, freq_hint, depth, max_cand, 2.5, &[])
+    decode_frame_inner(audio, freq_min, freq_max, sync_min, freq_hint, depth, max_cand, 2.5, &[], EqMode::Off)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -101,18 +103,18 @@ fn process_candidate(
     depth: DecodeDepth,
     osd_score_min: f32,
     known: &[DecodeResult],
+    eq_mode: EqMode,
 ) -> Option<DecodeResult> {
     let (cd0, _) = downsample(audio, cand.freq_hz, Some(fft_cache));
 
     let refined = refine_candidate(&cd0, cand, 10);
     let i_start = ((refined.dt_sec + 0.5) * 200.0).round() as usize;
-    let cs = symbol_spectra(&cd0, i_start);
-    let nsync = sync_quality(&cs);
+    let cs_raw = symbol_spectra(&cd0, i_start);
+    let nsync = sync_quality(&cs_raw);
     if nsync <= 6 {
         return None;
     }
 
-    // Costas-array power CV: near-zero for stable channel; > 0.3 implies QSB.
     let sync_cv = {
         let (sa, sb, sc) = fine_sync_power_split(&cd0, i_start);
         let mean = (sa + sb + sc) / 3.0;
@@ -124,72 +126,90 @@ fn process_candidate(
         }
     };
 
-    let llr_set = compute_llr(&cs);
+    let try_decode = |cs: &[[num_complex::Complex<f32>; 8]; 79]| -> Option<DecodeResult> {
+        let llr_set = compute_llr(cs);
 
-    let llr_variants: &[(&[f32; 174], u8)] = match depth {
-        DecodeDepth::Bp => &[(&llr_set.llra, 0)],
-        DecodeDepth::BpAll | DecodeDepth::BpAllOsd => &[
-            (&llr_set.llra, 0),
-            (&llr_set.llrb, 1),
-            (&llr_set.llrc, 2),
-            (&llr_set.llrd, 3),
-        ],
-    };
+        let llr_variants: &[(&[f32; 174], u8)] = match depth {
+            DecodeDepth::Bp => &[(&llr_set.llra, 0)],
+            DecodeDepth::BpAll | DecodeDepth::BpAllOsd => &[
+                (&llr_set.llra, 0),
+                (&llr_set.llrb, 1),
+                (&llr_set.llrc, 2),
+                (&llr_set.llrd, 3),
+            ],
+        };
 
-    // ── BP decode ─────────────────────────────────────────────────────────────
-    for &(llr, pass_id) in llr_variants {
-        if let Some(bp) = bp_decode(llr, None, BP_MAX_ITER) {
-            let itone = message_to_tones(&bp.message77);
-            let snr_db = compute_snr_db(&*cs, &itone);
-            return Some(DecodeResult {
-                message77: bp.message77,
-                freq_hz: cand.freq_hz,
-                dt_sec: refined.dt_sec,
-                hard_errors: bp.hard_errors,
-                sync_score: refined.score,
-                pass: pass_id,
-                sync_cv,
-                snr_db,
-            });
+        // BP decode
+        for &(llr, pass_id) in llr_variants {
+            if let Some(bp) = bp_decode(llr, None, BP_MAX_ITER) {
+                let itone = message_to_tones(&bp.message77);
+                let snr_db = compute_snr_db(cs, &itone);
+                return Some(DecodeResult {
+                    message77: bp.message77,
+                    freq_hz: cand.freq_hz,
+                    dt_sec: refined.dt_sec,
+                    hard_errors: bp.hard_errors,
+                    sync_score: refined.score,
+                    pass: pass_id,
+                    sync_cv,
+                    snr_db,
+                });
+            }
         }
-    }
 
-    // ── OSD fallback ──────────────────────────────────────────────────────────
-    if depth == DecodeDepth::BpAllOsd
-        && nsync >= 12 && cand.score >= osd_score_min
-    {
-        // Avoid OSD if a known (previous-pass) result is already at this freq.
-        let freq_dup = known.iter().any(|r| (r.freq_hz - cand.freq_hz).abs() < 20.0);
-        if !freq_dup {
-            let osd_depth: u8 = if nsync >= 18 { 3 } else { 2 };
-            for llr_osd in [&llr_set.llra, &llr_set.llrb, &llr_set.llrc, &llr_set.llrd] {
-                let osd_result = if osd_depth == 3 {
-                    osd_decode_deep(llr_osd, 3)
-                } else {
-                    osd_decode(llr_osd)
-                };
-                if let Some(osd) = osd_result {
-                    if osd.hard_errors >= 56 {
-                        continue;
+        // OSD fallback
+        if depth == DecodeDepth::BpAllOsd
+            && nsync >= 12 && cand.score >= osd_score_min
+        {
+            let freq_dup = known.iter().any(|r| (r.freq_hz - cand.freq_hz).abs() < 20.0);
+            if !freq_dup {
+                let osd_depth: u8 = if nsync >= 18 { 3 } else { 2 };
+                for llr_osd in [&llr_set.llra, &llr_set.llrb, &llr_set.llrc, &llr_set.llrd] {
+                    let osd_result = if osd_depth == 3 {
+                        osd_decode_deep(llr_osd, 3)
+                    } else {
+                        osd_decode(llr_osd)
+                    };
+                    if let Some(osd) = osd_result {
+                        if osd.hard_errors >= 56 { continue; }
+                        let itone = message_to_tones(&osd.message77);
+                        let snr_db = compute_snr_db(cs, &itone);
+                        return Some(DecodeResult {
+                            message77: osd.message77,
+                            freq_hz: cand.freq_hz,
+                            dt_sec: refined.dt_sec,
+                            hard_errors: osd.hard_errors,
+                            sync_score: refined.score,
+                            pass: 4,
+                            sync_cv,
+                            snr_db,
+                        });
                     }
-                    let itone = message_to_tones(&osd.message77);
-                    let snr_db = compute_snr_db(&*cs, &itone);
-                    return Some(DecodeResult {
-                        message77: osd.message77,
-                        freq_hz: cand.freq_hz,
-                        dt_sec: refined.dt_sec,
-                        hard_errors: osd.hard_errors,
-                        sync_score: refined.score,
-                        pass: 4,
-                        sync_cv,
-                        snr_db,
-                    });
                 }
             }
         }
-    }
 
-    None
+        None
+    };
+
+    match eq_mode {
+        EqMode::Off => try_decode(&cs_raw),
+        EqMode::Local => {
+            let mut cs_eq = cs_raw.clone();
+            equalizer::equalize_local(&mut cs_eq);
+            try_decode(&cs_eq)
+        }
+        EqMode::Adaptive => {
+            // Prepare equalized spectra (cheap: 79×8 complex multiply)
+            let mut cs_eq = cs_raw.clone();
+            equalizer::equalize_local(&mut cs_eq);
+            // Try EQ first (recovers edge), fall back to raw (safe for center)
+            if let Some(r) = try_decode(&cs_eq) {
+                return Some(r);
+            }
+            try_decode(&cs_raw)
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -208,19 +228,18 @@ fn decode_frame_inner(
     max_cand: usize,
     osd_score_min: f32,
     known: &[DecodeResult],
+    eq_mode: EqMode,
 ) -> Vec<DecodeResult> {
     let candidates = coarse_sync(audio, freq_min, freq_max, sync_min, freq_hint, max_cand);
     if candidates.is_empty() {
         return Vec::new();
     }
 
-    // Pre-compute the 192 000-point forward FFT once; all per-candidate
-    // calls share it read-only, enabling parallel processing.
     let fft_cache = build_fft_cache(audio);
 
     let raw: Vec<DecodeResult> = candidates
         .par_iter()
-        .filter_map(|cand| process_candidate(cand, audio, &fft_cache, depth, osd_score_min, known))
+        .filter_map(|cand| process_candidate(cand, audio, &fft_cache, depth, osd_score_min, known, eq_mode))
         .collect();
 
     // Deduplicate: preserve first occurrence; drop messages already in `known`.
@@ -277,6 +296,7 @@ pub fn decode_frame_subtract(
             freq_hint, depth, max_cand,
             osd_score_min,
             &all_results,
+            EqMode::Off,
         );
 
         for r in &new {
@@ -311,6 +331,20 @@ pub fn decode_sniper(
     depth: DecodeDepth,
     max_cand: usize,
 ) -> Vec<DecodeResult> {
+    decode_sniper_eq(audio, target_freq, depth, max_cand, EqMode::Off)
+}
+
+/// Sniper-mode decode with configurable equalizer.
+///
+/// Same as [`decode_sniper`] but allows enabling the adaptive equalizer
+/// to correct BPF edge distortion.
+pub fn decode_sniper_eq(
+    audio: &[i16],
+    target_freq: f32,
+    depth: DecodeDepth,
+    max_cand: usize,
+    eq_mode: EqMode,
+) -> Vec<DecodeResult> {
     let freq_min = (target_freq - 250.0).max(100.0);
     let freq_max = (target_freq + 250.0).min(5900.0);
     let sync_min = 0.8;
@@ -324,7 +358,7 @@ pub fn decode_sniper(
 
     let raw: Vec<DecodeResult> = candidates
         .par_iter()
-        .filter_map(|cand| process_candidate(cand, audio, &fft_cache, depth, 2.5, &[]))
+        .filter_map(|cand| process_candidate(cand, audio, &fft_cache, depth, 2.5, &[], eq_mode))
         .collect();
 
     let mut results: Vec<DecodeResult> = Vec::new();

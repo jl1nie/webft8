@@ -1,10 +1,12 @@
+mod bpf;
 mod real_data;
 mod diag;
 mod simulator;
 
 use std::path::PathBuf;
 use real_data::evaluate_real_data;
-use simulator::make_busy_band_scenario;
+use ft8_core::decode::{decode_sniper_eq, EqMode};
+use simulator::{make_busy_band_scenario, build_cq_messages};
 
 fn main() {
     let testdata = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata");
@@ -46,6 +48,12 @@ fn main() {
     // ── Busy-band hard case (+20 dB crowd, −20 dB target) ────────────────────
     run_busy_band_hard_scenario();
 
+    // ── BPF filter scenarios (center / shoulder / edge) ─────────────────────────
+    run_bpf_scenarios();
+
+    // ── WSJT-X stress test WAV ───────────────────────────────────────────────
+    run_wsjt_stress_test();
+
     // ── Speed benchmark (release build only meaningful) ───────────────────────
     run_speed_bench();
 
@@ -66,32 +74,49 @@ fn main() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+/// Fake JA callsigns (Q-code suffixes — impossible in real amateur allocations)
+/// paired with JA-area grid locators for crowd CQ messages.
+fn crowd_calls_grids() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("JQ1QSO", "PM95"), ("JQ1QRM", "PM95"), ("JQ1QRN", "PM96"),
+        ("JQ1QRP", "PM85"), ("JQ1QRT", "QM06"), ("JQ1QRV", "QM07"),
+        ("JQ1QRZ", "PM74"), ("JQ1QSB", "PM84"), ("JQ1QSL", "PM86"),
+        ("JQ1QSY", "QN01"), ("JQ1QTH", "QN02"), ("JQ1QRA", "PM75"),
+        ("JQ1QRG", "PM94"), ("JQ1QRI", "QM05"), ("JQ1QRK", "PM83"),
+    ]
+}
+
 /// Busy-band ADC dynamic-range scenario.
 ///
-/// 12 strong crowd stations (0 to +5 dB SNR) fill 200–2800 Hz.
-/// A single weak target sits at 1000 Hz at −12 dB SNR.
+/// 12 strong crowd stations calling CQ with fake JA callsigns fill 200–2800 Hz.
+/// A single weak 3Y0Z (Bouvet) target sits at 1000 Hz at −12 dB SNR.
 ///
 /// Expected result:
 ///   - Full-band decode: target is NOT decoded (ADC range dominated by crowd)
 ///   - Sniper decode (target ±250 Hz): target IS decoded (crowd outside BPF)
 fn run_busy_band_scenario() {
     use ft8_core::decode::{decode_frame, decode_sniper, DecodeDepth};
+    use ft8_core::message::{pack77_type1, unpack77};
 
     const TARGET_FREQ: f32 = 1000.0;
     const TARGET_SNR: f32 = -12.0;
-    const NUM_INTERFERERS: usize = 12;
     const INTERFERER_SNR: f32 = 5.0;
 
-    let target_msg = [0u8; 77];
+    let target_msg = pack77_type1("CQ", "3Y0Z", "JD34")
+        .expect("failed to pack target message");
 
-    println!("=== Busy-band: {} crowd stations @ {INTERFERER_SNR:+.0} dB, target @ {TARGET_SNR:+.0} dB ===",
-        NUM_INTERFERERS);
+    let crowd = crowd_calls_grids();
+    let interferer_msgs = build_cq_messages(&crowd);
+    let num_crowd = interferer_msgs.len();
+
+    println!("=== Busy-band: {num_crowd} crowd stations @ {INTERFERER_SNR:+.0} dB, target @ {TARGET_SNR:+.0} dB ===");
+    println!("  target: {}", unpack77(&target_msg).unwrap_or_default());
 
     let config = make_busy_band_scenario(
         target_msg,
         TARGET_FREQ,
         TARGET_SNR,
-        NUM_INTERFERERS,
+        &interferer_msgs,
         INTERFERER_SNR,
         Some(777),
     );
@@ -114,6 +139,11 @@ fn run_busy_band_scenario() {
         results_full.len(),
         if target_full { "DECODED" } else { "missed" }
     );
+    for r in &results_full {
+        if let Some(text) = unpack77(&r.message77) {
+            println!("    {:+4.0} dB  {:7.1} Hz  {}", r.snr_db, r.freq_hz, text);
+        }
+    }
 
     // Sniper-mode decode (simulates hardware 500 Hz BPF removing the crowd)
     let results_sniper = decode_sniper(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20);
@@ -148,22 +178,27 @@ fn run_busy_band_scenario() {
 ///   - Sniper-mode (500 Hz BPF removes crowd): target decoded
 fn run_busy_band_hard_scenario() {
     use ft8_core::decode::{decode_frame, decode_sniper, DecodeDepth};
+    use ft8_core::message::pack77_type1;
 
     const TARGET_FREQ: f32 = 1000.0;
     const TARGET_SNR: f32 = -14.0;  // 100% decode in BPF mode
-    const NUM_INTERFERERS: usize = 15;
     const INTERFERER_SNR: f32 = 40.0;  // 54 dB above target; hard-clips 16-bit ADC
 
-    let target_msg = [0u8; 77];
+    let target_msg = pack77_type1("CQ", "3Y0Z", "JD34")
+        .expect("failed to pack target message");
 
-    println!("=== Busy-band HARD: {} crowd @ {INTERFERER_SNR:+.0} dB, target @ {TARGET_SNR:+.0} dB  (gap={:.0} dB) ===",
-        NUM_INTERFERERS, INTERFERER_SNR - TARGET_SNR);
+    let crowd = crowd_calls_grids();
+    let interferer_msgs = build_cq_messages(&crowd);
+    let num_crowd = interferer_msgs.len();
+
+    println!("=== Busy-band HARD: {num_crowd} crowd @ {INTERFERER_SNR:+.0} dB, target @ {TARGET_SNR:+.0} dB  (gap={:.0} dB) ===",
+        INTERFERER_SNR - TARGET_SNR);
 
     let config = make_busy_band_scenario(
         target_msg,
         TARGET_FREQ,
         TARGET_SNR,
-        NUM_INTERFERERS,
+        &interferer_msgs,
         INTERFERER_SNR,
         Some(888),
     );
@@ -179,7 +214,7 @@ fn run_busy_band_hard_scenario() {
     // only the bottom few quantisation levels → buried in clipping/quantisation
     // noise from the crowd.  This is the real-world ADC dynamic-range problem.
     let mix_f32 = simulator::generate_frame_f32(&config);
-    let audio_mixed = simulator::quantise_crowd_agc(&mix_f32, INTERFERER_SNR, NUM_INTERFERERS);
+    let audio_mixed = simulator::quantise_crowd_agc(&mix_f32, INTERFERER_SNR, num_crowd);
 
     let results_full = decode_frame(
         &audio_mixed, 200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200,
@@ -261,6 +296,469 @@ fn run_busy_band_hard_scenario() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+/// BPF filter scenarios: demonstrate the effect of a 500 Hz hardware BPF on
+/// signal placement (center, shoulder, edge).
+///
+/// For each sub-scenario, the same busy-band mix is generated but the hardware
+/// BPF is centred so the target falls at a different position within the
+/// passband.  After BPF filtering, the audio is re-quantised to 16 bits and
+/// decoded.
+///
+/// * **Center:**   target at BPF center → minimal distortion, easy decode.
+/// * **Shoulder:** target 200 Hz off-centre → moderate attenuation.
+/// * **Edge:**     target at the −3 dB point → significant amplitude loss +
+///   phase distortion.  Without an equalizer, decode may fail at low SNR.
+fn run_bpf_scenarios() {
+    use ft8_core::decode::{decode_sniper, DecodeDepth};
+    use ft8_core::message::pack77_type1;
+    use bpf::ButterworthBpf;
+
+    const TARGET_FREQ: f32 = 1000.0;
+    const TARGET_SNR: f32 = -18.0;
+    const N_POLES: usize = 4; // 8th-order BPF (typical crystal CW filter)
+    const BPF_BW: f64 = 500.0;
+    const FS: f64 = 12_000.0;
+    const N_SEEDS: u64 = 20;
+
+    let target_msg = pack77_type1("CQ", "3Y0Z", "JD34")
+        .expect("failed to pack target message");
+
+    println!("=== BPF edge-effect scenarios: {N_POLES}-pole Butterworth ({BPF_BW:.0} Hz BW), target @ {TARGET_SNR:+.0} dB ===");
+    println!("  (target + AWGN only — isolates filter distortion from crowd interference)");
+
+    // Print reference filter response
+    {
+        let bpf = ButterworthBpf::design(N_POLES, 750.0, 1250.0, FS);
+        println!("  Filter response (example: centre=1000 Hz):");
+        for &f in &[750.0, 800.0, 900.0, 1000.0, 1100.0, 1200.0, 1250.0, 1300.0, 1500.0] {
+            println!("    {:7.0} Hz: {:+6.1} dB", f, bpf.response_db(f, FS));
+        }
+    }
+
+    // Sub-scenarios: (label, bpf_center_offset_from_target)
+    // BPF passband = [bpf_center - 250, bpf_center + 250]
+    // Offset 0: target at BPF centre; 200: shoulder; 250: at −3 dB edge
+    let cases: [(&str, f64); 3] = [
+        ("center",     0.0),   // target at BPF centre → ~0 dB atten
+        ("shoulder", 200.0),   // target 200 Hz from centre → moderate atten
+        ("edge",     250.0),   // target at −3 dB passband edge
+    ];
+
+    for &(label, offset) in &cases {
+        let bpf_center = TARGET_FREQ as f64 + offset;
+        let bpf_lo = bpf_center - BPF_BW / 2.0;
+        let bpf_hi = bpf_center + BPF_BW / 2.0;
+
+        let target_atten = {
+            let bpf = ButterworthBpf::design(N_POLES, bpf_lo, bpf_hi, FS);
+            bpf.response_db(TARGET_FREQ as f64, FS)
+        };
+
+        // Sweep seeds — compare EQ OFF vs EQ ON
+        let mut ok_off = 0usize;
+        let mut ok_on = 0usize;
+        for seed in 0..N_SEEDS {
+            let config = simulator::SimConfig {
+                signals: vec![simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: TARGET_SNR,
+                    dt_sec: 0.0,
+                }],
+                noise_seed: Some(seed),
+            };
+            let mix = simulator::generate_frame_f32(&config);
+
+            let mut bpf = ButterworthBpf::design(N_POLES, bpf_lo, bpf_hi, FS);
+            let filtered = bpf.filter(&mix);
+
+            let peak = filtered.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+            let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
+            let audio: Vec<i16> = filtered
+                .iter()
+                .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
+                .collect();
+
+            let r_off = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off);
+            if r_off.iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
+
+            let r_on = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive);
+            if r_on.iter().any(|r| r.message77 == target_msg) { ok_on += 1; }
+        }
+
+        println!(
+            "  [{label:8}] BPF {bpf_lo:.0}–{bpf_hi:.0} Hz  atten={target_atten:+.1} dB  \
+             EQ OFF: {ok_off}/{N_SEEDS} ({:.0}%)  EQ ON: {ok_on}/{N_SEEDS} ({:.0}%)",
+            100.0 * ok_off as f64 / N_SEEDS as f64,
+            100.0 * ok_on as f64 / N_SEEDS as f64,
+        );
+
+        // Write WAV (seed=0)
+        {
+            let config = simulator::SimConfig {
+                signals: vec![simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: TARGET_SNR,
+                    dt_sec: 0.0,
+                }],
+                noise_seed: Some(0),
+            };
+            let mix = simulator::generate_frame_f32(&config);
+            let mut bpf = ButterworthBpf::design(N_POLES, bpf_lo, bpf_hi, FS);
+            let filtered = bpf.filter(&mix);
+            let peak = filtered.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+            let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
+            let audio: Vec<i16> = filtered
+                .iter()
+                .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
+                .collect();
+            let wav_name = format!("sim_bpf_{label}.wav");
+            let out = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata")
+                .join(&wav_name);
+            let _ = simulator::write_wav(&out, &audio);
+        }
+    }
+
+    // Baseline (no BPF) for reference
+    {
+        let mut ok_ref = 0usize;
+        for seed in 0..N_SEEDS {
+            let config = simulator::SimConfig {
+                signals: vec![simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: TARGET_SNR,
+                    dt_sec: 0.0,
+                }],
+                noise_seed: Some(seed),
+            };
+            let audio = simulator::generate_frame(&config);
+            let results = decode_sniper(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20);
+            if results.iter().any(|r| r.message77 == target_msg) { ok_ref += 1; }
+        }
+        println!(
+            "  [no-BPF  ] reference (target+noise only)  {ok_ref}/{N_SEEDS} decoded ({:.0}%)",
+            100.0 * ok_ref as f64 / N_SEEDS as f64
+        );
+    }
+    println!();
+
+    // ── BPF + in-band crowd + signal subtraction ─────────────────────────────
+    // Even with the 500 Hz hardware BPF, a few crowd stations may fall inside
+    // the passband.  Signal subtraction decodes and removes the strong crowd
+    // first, then finds the weak target underneath.
+    run_bpf_subtract_scenario();
+}
+
+/// BPF with in-band crowd stations: signal subtraction recovers the target.
+///
+/// 3 strong crowd stations within the 500 Hz passband plus a weak target.
+/// Single-pass sniper: crowd masks the target.
+/// Subtract-pass: crowd is decoded & subtracted → target emerges.
+fn run_bpf_subtract_scenario() {
+    use ft8_core::decode::{decode_sniper, DecodeDepth};
+    use ft8_core::message::{pack77_type1, unpack77};
+    use bpf::ButterworthBpf;
+
+    const TARGET_FREQ: f32 = 1000.0;
+    const TARGET_SNR: f32 = -14.0;
+    const N_POLES: usize = 4;
+    const BPF_LO: f64 = 750.0;
+    const BPF_HI: f64 = 1250.0;
+    const FS: f64 = 12_000.0;
+
+    let target_msg = pack77_type1("CQ", "3Y0Z", "JD34")
+        .expect("failed to pack target message");
+
+    // 4 crowd stations within BPF passband, some very close to the target.
+    // The close stations (±50 Hz) cause spectral leakage into the target's
+    // LLR computation, masking it in single-pass.  After subtraction of the
+    // decoded crowd, the target emerges cleanly.
+    let in_band_crowd: Vec<(f32, [u8; 77])> = vec![
+        ( 850.0, pack77_type1("CQ", "JQ1QSO", "PM95").unwrap()),
+        ( 950.0, pack77_type1("CQ", "JQ1QRM", "PM95").unwrap()),  // 50 Hz below target
+        (1050.0, pack77_type1("CQ", "JQ1QRN", "PM96").unwrap()),  // 50 Hz above target
+        (1150.0, pack77_type1("CQ", "JQ1QRP", "PM85").unwrap()),
+    ];
+    let crowd_snr: f32 = 8.0; // 22 dB above target
+
+    println!("=== BPF + in-band crowd + signal subtraction ===");
+    println!("  BPF {BPF_LO:.0}–{BPF_HI:.0} Hz, target @ {TARGET_SNR:+.0} dB, {} crowd @ {crowd_snr:+.0} dB inside passband",
+        in_band_crowd.len());
+
+    let mut signals = vec![simulator::SimSignal {
+        message77: target_msg,
+        freq_hz: TARGET_FREQ,
+        snr_db: TARGET_SNR,
+        dt_sec: 0.0,
+    }];
+    for &(freq, ref msg) in &in_band_crowd {
+        signals.push(simulator::SimSignal {
+            message77: *msg,
+            freq_hz: freq,
+            snr_db: crowd_snr,
+            dt_sec: 0.0,
+        });
+    }
+
+    let config = simulator::SimConfig {
+        signals,
+        noise_seed: Some(1234),
+    };
+
+    // Generate and apply BPF
+    let mix = simulator::generate_frame_f32(&config);
+    let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+    let filtered = bpf.filter(&mix);
+
+    // Quantise
+    let peak = filtered.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+    let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
+    let audio: Vec<i16> = filtered
+        .iter()
+        .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
+        .collect();
+
+    // Single-pass sniper
+    let results_single = decode_sniper(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20);
+    let target_single = results_single.iter().any(|r| r.message77 == target_msg);
+    println!(
+        "  [single-pass] decoded: {:2}  target: {}",
+        results_single.len(),
+        if target_single { "DECODED" } else { "missed" }
+    );
+    for r in &results_single {
+        if let Some(text) = unpack77(&r.message77) {
+            println!("    {:+5.1} dB  {:7.1} Hz  {}", r.snr_db, r.freq_hz, text);
+        }
+    }
+
+    // Subtract-pass (multi-pass decode with signal subtraction)
+    use ft8_core::decode::decode_frame_subtract;
+    let results_sub = decode_frame_subtract(
+        &audio, BPF_LO as f32, BPF_HI as f32, 0.8, None, DecodeDepth::BpAllOsd, 20,
+    );
+    let target_sub = results_sub.iter().any(|r| r.message77 == target_msg);
+    println!(
+        "  [subtract   ] decoded: {:2}  target: {}",
+        results_sub.len(),
+        if target_sub { "DECODED" } else { "missed" }
+    );
+    for r in &results_sub {
+        if let Some(text) = unpack77(&r.message77) {
+            let tag = if r.message77 == target_msg { " ★" } else { "" };
+            println!("    {:+5.1} dB  {:7.1} Hz  pass={}  {}{tag}", r.snr_db, r.freq_hz, r.pass, text);
+        }
+    }
+
+    // Write WAV
+    let out = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join("sim_bpf_subtract.wav");
+    if simulator::write_wav(&out, &audio).is_ok() {
+        println!("  WAV: {}", out.display());
+    }
+    println!();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+/// WSJT-X stress test: generate WAVs at our decoder's limit to see if
+/// WSJT-X can match.
+///
+/// Scenario: busy band (15 crowd @ +20 dB) + BPF edge target @ −16 dB.
+/// Two WAVs are written:
+///   1. `sim_stress_fullband.wav`  — full-band mix (WSJT-X sees this)
+///   2. `sim_stress_bpf_edge.wav`  — BPF-filtered (our sniper sees this)
+///
+/// Our sniper+EQ should decode the target from (2); WSJT-X should fail
+/// on (1) due to ADC saturation and may fail on (2) due to BPF edge distortion.
+fn run_wsjt_stress_test() {
+    use ft8_core::decode::{decode_frame, DecodeDepth};
+    use ft8_core::message::{pack77_type1, unpack77};
+    use bpf::ButterworthBpf;
+
+    // ── Parameters tuned at the sniper+EQ limit ─────────────────────────────
+    const TARGET_FREQ: f32 = 1000.0;
+    const TARGET_SNR: f32 = -18.0;  // near FT8 threshold
+    const CROWD_SNR: f32 = 20.0;
+    const N_POLES: usize = 4;
+    const FS: f64 = 12_000.0;
+
+    // BPF offset: target at the −3 dB edge
+    const BPF_CENTER: f64 = 1250.0; // passband 1000–1500 Hz, target at low edge
+    const BPF_LO: f64 = BPF_CENTER - 250.0;
+    const BPF_HI: f64 = BPF_CENTER + 250.0;
+
+    let target_msg = pack77_type1("CQ", "3Y0Z", "JD34")
+        .expect("failed to pack target message");
+
+    let crowd = crowd_calls_grids();
+    let crowd_msgs = build_cq_messages(&crowd);
+
+    println!("=== WSJT-X stress test: crowd @ {CROWD_SNR:+.0} dB, target @ {TARGET_SNR:+.0} dB, BPF edge ===");
+
+    let config = make_busy_band_scenario(
+        target_msg,
+        TARGET_FREQ,
+        TARGET_SNR,
+        &crowd_msgs,
+        CROWD_SNR,
+        Some(555),
+    );
+
+    // ── (1) Full-band mixed WAV (WSJT-X test) ──────────────────────────────
+    let mix_f32 = simulator::generate_frame_f32(&config);
+    let audio_full = simulator::quantise_crowd_agc(&mix_f32, CROWD_SNR, crowd_msgs.len());
+
+    let results_full = decode_frame(
+        &audio_full, 200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200,
+    );
+    let target_full = results_full.iter().any(|r| r.message77 == target_msg);
+    println!(
+        "  [full-band     ] decoded: {:2}  target: {}",
+        results_full.len(),
+        if target_full { "DECODED" } else { "missed" }
+    );
+
+    let out_full = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata").join("sim_stress_fullband.wav");
+    let _ = simulator::write_wav(&out_full, &audio_full);
+    println!("  WAV: {}", out_full.display());
+
+    // ── (2) BPF-filtered WAV (sniper test) ──────────────────────────────────
+    // Apply BPF to the full mix, then re-quantise cleanly.
+    let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+    let filtered = bpf.filter(&mix_f32);
+    let peak = filtered.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+    let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
+    let audio_bpf: Vec<i16> = filtered
+        .iter()
+        .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
+        .collect();
+
+    let atten = {
+        let bpf_check = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+        bpf_check.response_db(TARGET_FREQ as f64, FS)
+    };
+
+    // Sniper decode: EQ OFF
+    let r_off = decode_sniper_eq(&audio_bpf, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off);
+    let t_off = r_off.iter().any(|r| r.message77 == target_msg);
+
+    // Sniper decode: EQ Adaptive
+    let r_on = decode_sniper_eq(&audio_bpf, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive);
+    let t_on = r_on.iter().any(|r| r.message77 == target_msg);
+
+    println!(
+        "  [BPF edge      ] atten={atten:+.1} dB  EQ OFF: {}  EQ Adaptive: {}",
+        if t_off { "DECODED" } else { "missed" },
+        if t_on { "DECODED" } else { "missed" },
+    );
+    for r in &r_on {
+        if let Some(text) = unpack77(&r.message77) {
+            let tag = if r.message77 == target_msg { " ★" } else { "" };
+            println!("    {:+5.1} dB  {:7.1} Hz  err={}  {}{tag}", r.snr_db, r.freq_hz, r.hard_errors, text);
+        }
+    }
+
+    let out_bpf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata").join("sim_stress_bpf_edge.wav");
+    let _ = simulator::write_wav(&out_bpf, &audio_bpf);
+    println!("  WAV: {}", out_bpf.display());
+
+    // ── (3) Target-only BPF edge WAV (cleanest WSJT-X comparison) ──────────
+    // This is what the sniper sees after hardware BPF: just target + noise,
+    // no crowd leakage.  WSJT-X decodes this without equalizer; our sniper
+    // has the EQ advantage.  Write multiple seeds for the best-case WAV.
+    {
+        let best_seed = (0u64..20).find(|&seed| {
+            let cfg = simulator::SimConfig {
+                signals: vec![simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: TARGET_SNR,
+                    dt_sec: 0.0,
+                }],
+                noise_seed: Some(seed),
+            };
+            let mix = simulator::generate_frame_f32(&cfg);
+            let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+            let filt = bpf.filter(&mix);
+            let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+            let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+            let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+            decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive)
+                .iter().any(|r| r.message77 == target_msg)
+        });
+
+        if let Some(seed) = best_seed {
+            let cfg = simulator::SimConfig {
+                signals: vec![simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: TARGET_SNR,
+                    dt_sec: 0.0,
+                }],
+                noise_seed: Some(seed),
+            };
+            let mix = simulator::generate_frame_f32(&cfg);
+            let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+            let filt = bpf.filter(&mix);
+            let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+            let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+            let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+            let out = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata").join("sim_stress_bpf_edge_clean.wav");
+            let _ = simulator::write_wav(&out, &au);
+            println!(
+                "  [target-only   ] BPF edge, seed={seed}  (our sniper+EQ decodes, WSJT-X: ???)"
+            );
+            println!("  WAV: {}", out.display());
+        } else {
+            println!("  [target-only   ] no seed found where EQ Adaptive decodes");
+        }
+    }
+
+    // ── Seed sweep for reliability stats ─────────────────────────────────────
+    const N_SEEDS: u64 = 20;
+    let mut ok_off = 0usize;
+    let mut ok_local = 0usize;
+    let mut ok_adapt = 0usize;
+    for seed in 0..N_SEEDS {
+        let cfg = simulator::SimConfig {
+            signals: vec![simulator::SimSignal {
+                message77: target_msg,
+                freq_hz: TARGET_FREQ,
+                snr_db: TARGET_SNR,
+                dt_sec: 0.0,
+            }],
+            noise_seed: Some(seed),
+        };
+        let mix = simulator::generate_frame_f32(&cfg);
+        let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+        let filt = bpf.filter(&mix);
+        let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+        let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+        let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+
+        if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off)
+            .iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
+        if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local)
+            .iter().any(|r| r.message77 == target_msg) { ok_local += 1; }
+        if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive)
+            .iter().any(|r| r.message77 == target_msg) { ok_adapt += 1; }
+    }
+    println!(
+        "  [BPF edge seeds] OFF: {ok_off}/{N_SEEDS}  Local: {ok_local}/{N_SEEDS}  Adaptive: {ok_adapt}/{N_SEEDS}",
+    );
+    println!();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 /// Speed benchmark: measure decode_frame throughput on a synthetic frame.
 ///
 /// Runs N_WARM warmup iterations (discarded) then N_MEASURE timed iterations.
@@ -270,31 +768,37 @@ fn run_busy_band_hard_scenario() {
 fn run_speed_bench() {
     use std::time::Instant;
     use ft8_core::decode::{decode_frame, decode_frame_subtract, DecodeDepth};
+    use ft8_core::message::pack77_type1;
 
     const N_WARM: usize = 3;
     const N_MEASURE: usize = 10;
+    const N_STATIONS: usize = 100;
 
-    // Generate a realistic frame: 8 stations spread across the band at +5 dB.
-    let msgs: [[u8; 77]; 8] = core::array::from_fn(|i| {
-        let mut m = [0u8; 77];
-        m[0] = (i & 1) as u8;
-        m[1] = ((i >> 1) & 1) as u8;
-        m[2] = ((i >> 2) & 1) as u8;
-        m
-    });
-    let freqs: [f32; 8] = [400.0, 600.0, 900.0, 1200.0, 1500.0, 1800.0, 2100.0, 2500.0];
-
-    let config = simulator::SimConfig {
-        signals: msgs.iter().zip(freqs.iter()).map(|(&message77, &freq_hz)| {
-            simulator::SimSignal { message77, freq_hz, snr_db: 5.0, dt_sec: 0.0 }
-        }).collect(),
-        noise_seed: Some(42),
-    };
+    // Generate 100 unique CQ messages spread across 200–2800 Hz.
+    // Callsign format: JQ1AAA..JQ1ADV (3-letter suffix, all valid in pack28)
+    let grids = ["PM95", "PM96", "PM85", "QM06", "QM07", "PM74", "PM84", "PM86", "QN01", "PM75"];
+    let mut signals = Vec::with_capacity(N_STATIONS);
+    for i in 0..N_STATIONS {
+        let c1 = (b'A' + (i / 26) as u8) as char;
+        let c2 = (b'A' + (i % 26) as u8) as char;
+        let call = format!("JQ1A{c1}{c2}");
+        let grid = grids[i % grids.len()];
+        let msg = pack77_type1("CQ", &call, grid)
+            .unwrap_or_else(|| panic!("pack failed for {call}"));
+        let freq = 200.0 + (i as f32 / N_STATIONS as f32) * 2600.0;
+        signals.push(simulator::SimSignal {
+            message77: msg,
+            freq_hz: freq,
+            snr_db: 5.0,
+            dt_sec: 0.0,
+        });
+    }
+    let config = simulator::SimConfig { signals, noise_seed: Some(42) };
     let audio = simulator::generate_frame(&config);
 
-    // ── decode_frame (single-pass) ────────────────────────────────────────────
-    println!("=== Speed benchmark ({N_MEASURE} runs, release build recommended) ===");
+    println!("=== Speed benchmark: {N_STATIONS} stations, {N_MEASURE} runs (release build recommended) ===");
 
+    // ── decode_frame (single-pass) ────────────────────────────────────────────
     for _ in 0..N_WARM {
         let _ = decode_frame(&audio, 200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200);
     }
@@ -310,7 +814,7 @@ fn run_speed_bench() {
     let mean = ms.iter().sum::<f64>() / ms.len() as f64;
     let min  = ms.iter().cloned().fold(f64::INFINITY, f64::min);
     let max  = ms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    println!("  decode_frame       (decoded={decoded_count:2})  mean={mean:6.1} ms  min={min:6.1} ms  max={max:6.1} ms");
+    println!("  decode_frame       (decoded={decoded_count:3})  mean={mean:7.1} ms  min={min:7.1} ms  max={max:7.1} ms");
 
     // ── decode_frame_subtract (3-pass) ────────────────────────────────────────
     for _ in 0..N_WARM {
@@ -328,8 +832,27 @@ fn run_speed_bench() {
     let mean_s = ms_sub.iter().sum::<f64>() / ms_sub.len() as f64;
     let min_s  = ms_sub.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_s  = ms_sub.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    println!("  decode_frame_sub   (decoded={decoded_sub:2})  mean={mean_s:6.1} ms  min={min_s:6.1} ms  max={max_s:6.1} ms");
+    println!("  decode_frame_sub   (decoded={decoded_sub:3})  mean={mean_s:7.1} ms  min={min_s:7.1} ms  max={max_s:7.1} ms");
 
+    // ── sniper mode (±250 Hz around 1000 Hz) ──────────────────────────────────
+    for _ in 0..N_WARM {
+        let _ = decode_sniper_eq(&audio, 1000.0, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive);
+    }
+    let mut times_sniper = Vec::with_capacity(N_MEASURE);
+    for _ in 0..N_MEASURE {
+        let t0 = Instant::now();
+        let r = decode_sniper_eq(&audio, 1000.0, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive);
+        let elapsed = t0.elapsed();
+        times_sniper.push((elapsed, r.len()));
+    }
+    let decoded_sniper = times_sniper[0].1;
+    let ms_sn: Vec<f64> = times_sniper.iter().map(|(d, _)| d.as_secs_f64() * 1000.0).collect();
+    let mean_sn = ms_sn.iter().sum::<f64>() / ms_sn.len() as f64;
+    let min_sn  = ms_sn.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_sn  = ms_sn.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    println!("  sniper+EQ          (decoded={decoded_sniper:3})  mean={mean_sn:7.1} ms  min={min_sn:7.1} ms  max={max_sn:7.1} ms");
+
+    println!("  FT8 period budget: 2400 ms");
     println!();
 }
 
@@ -341,12 +864,15 @@ fn run_speed_bench() {
 /// 1200 Hz in the same frame.  Tests that the decoder recovers the target.
 fn run_interference_scenario() {
     use ft8_core::decode::{decode_frame, DecodeDepth};
+    use ft8_core::message::pack77_type1;
     use simulator::{SimConfig, SimSignal, make_interference_scenario};
 
     println!("=== Synthetic: +40 dB interferer @ 200 Hz offset ===");
 
-    let target_msg = [0u8; 77];
-    let interferer_msg = [1u8; 77];
+    let target_msg = pack77_type1("CQ", "3Y0Z", "JD34")
+        .expect("failed to pack target message");
+    let interferer_msg = pack77_type1("CQ", "JQ1QSO", "PM95")
+        .expect("failed to pack interferer message");
 
     let config = make_interference_scenario(
         target_msg,

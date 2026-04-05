@@ -312,6 +312,102 @@ pub fn unpack77(msg: &[u8; 77]) -> Option<String> {
     }
 }
 
+// ── Packing (encode) ────────────────────────────────────────────────────────
+
+/// Write `len` bits of `val` (MSB first) into `msg` starting at `start`.
+fn write_bits(msg: &mut [u8; 77], start: usize, len: usize, val: u32) {
+    for i in 0..len {
+        msg[start + i] = ((val >> (len - 1 - i)) & 1) as u8;
+    }
+}
+
+/// Pack a callsign into a 28-bit token (inverse of [`unpack28`]).
+///
+/// Supports `"DE"`, `"QRZ"`, `"CQ"`, and standard 1–6 character callsigns
+/// whose 3rd character (1-indexed) is a digit (e.g. `"JQ1QSO"`, `"3Y0Z"`).
+///
+/// Returns `None` if the callsign contains characters outside the FT8 alphabet
+/// or cannot be encoded in the standard 28-bit field.
+pub fn pack28(call: &str) -> Option<u32> {
+    let call = call.trim();
+    match call {
+        "DE"  => return Some(0),
+        "QRZ" => return Some(1),
+        "CQ"  => return Some(2),
+        _ => {}
+    }
+
+    let bytes = call.as_bytes();
+    if bytes.is_empty() || bytes.len() > 6 {
+        return None;
+    }
+
+    // Pad to 6 characters: if position 3 (1-indexed) is not a digit, prepend space.
+    let mut buf = [b' '; 6];
+    if bytes.len() >= 3 && bytes[2].is_ascii_digit() {
+        // Digit already at position 3 — left-align
+        for (i, &b) in bytes.iter().enumerate().take(6) {
+            buf[i] = b.to_ascii_uppercase();
+        }
+    } else if bytes.len() >= 2 && bytes[1].is_ascii_digit() {
+        // Digit at position 2 — shift right by 1 so digit lands at position 3
+        buf[0] = b' ';
+        for (i, &b) in bytes.iter().enumerate() {
+            if i + 1 < 6 { buf[i + 1] = b.to_ascii_uppercase(); }
+        }
+    } else {
+        return None; // Cannot form a valid 6-char callsign
+    }
+
+    // Position 3 (index 2) must be a digit
+    if !buf[2].is_ascii_digit() {
+        return None;
+    }
+
+    let i1 = C1.iter().position(|&c| c == buf[0])?;
+    let i2 = C2.iter().position(|&c| c == buf[1])?;
+    let i3 = C3.iter().position(|&c| c == buf[2])?;
+    let i4 = C4.iter().position(|&c| c == buf[3])?;
+    let i5 = C4.iter().position(|&c| c == buf[4])?;
+    let i6 = C4.iter().position(|&c| c == buf[5])?;
+
+    let n = ((((i1 as u32 * 36 + i2 as u32) * 10 + i3 as u32) * 27
+        + i4 as u32) * 27 + i5 as u32) * 27 + i6 as u32;
+    Some(NTOKENS + MAX22 + n)
+}
+
+/// Pack a 4-character Maidenhead grid locator into a 15-bit index.
+pub fn pack_grid4(grid: &str) -> Option<u32> {
+    let g = grid.as_bytes();
+    if g.len() != 4 { return None; }
+    let j1 = g[0].to_ascii_uppercase().wrapping_sub(b'A') as u32;
+    let j2 = g[1].to_ascii_uppercase().wrapping_sub(b'A') as u32;
+    let j3 = g[2].wrapping_sub(b'0') as u32;
+    let j4 = g[3].wrapping_sub(b'0') as u32;
+    if j1 > 17 || j2 > 17 || j3 > 9 || j4 > 9 { return None; }
+    Some(((j1 * 18 + j2) * 10 + j3) * 10 + j4)
+}
+
+/// Pack a Type 1 standard message: `"CALL1 CALL2 GRID"`.
+///
+/// Both callsigns must be packable via [`pack28`], and `grid` must be a valid
+/// 4-character Maidenhead locator.  Returns the 77-bit message array.
+pub fn pack77_type1(call1: &str, call2: &str, grid: &str) -> Option<[u8; 77]> {
+    let n28a = pack28(call1)?;
+    let n28b = pack28(call2)?;
+    let igrid = pack_grid4(grid)?;
+
+    let mut msg = [0u8; 77];
+    write_bits(&mut msg, 0, 28, n28a);      // call1 (bits 0–27)
+    // ipa = 0 (bit 28) — already zero
+    write_bits(&mut msg, 29, 28, n28b);     // call2 (bits 29–56)
+    // ipb = 0 (bit 57) — already zero
+    // ir  = 0 (bit 58) — already zero
+    write_bits(&mut msg, 59, 15, igrid);    // grid  (bits 59–73)
+    write_bits(&mut msg, 74, 3, 1);         // i3=1  (bits 74–76)
+    Some(msg)
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -352,5 +448,33 @@ mod tests {
         let msg = [0u8; 77];
         // i3=0, n3=0 → free text, but all-zero = all-spaces → empty → None
         assert!(unpack77(&msg).is_none());
+    }
+
+    #[test]
+    fn pack28_roundtrip() {
+        // Standard callsigns
+        for call in &["JQ1QSO", "3Y0Z", "R7IW", "JA1ABC", "W1AW", "VK2RG"] {
+            let n = pack28(call).unwrap_or_else(|| panic!("pack28 failed for {call}"));
+            let decoded = unpack28(n);
+            assert_eq!(
+                decoded, call.trim(),
+                "roundtrip mismatch for {call}: got {decoded}"
+            );
+        }
+        // Special tokens
+        assert_eq!(pack28("CQ"), Some(2));
+        assert_eq!(pack28("DE"), Some(0));
+        assert_eq!(pack28("QRZ"), Some(1));
+    }
+
+    #[test]
+    fn pack77_type1_roundtrip() {
+        let msg = pack77_type1("CQ", "3Y0Z", "JD34").expect("pack failed");
+        let text = unpack77(&msg).expect("unpack failed");
+        assert_eq!(text, "CQ 3Y0Z JD34");
+
+        let msg2 = pack77_type1("CQ", "JQ1QSO", "PM95").expect("pack failed");
+        let text2 = unpack77(&msg2).expect("unpack failed");
+        assert_eq!(text2, "CQ JQ1QSO PM95");
     }
 }

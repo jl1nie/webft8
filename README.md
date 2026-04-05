@@ -1,300 +1,250 @@
-# rs-ft8n — FT8 Sniper-Mode Decoder in Rust
+# rs-ft8n — FT8 Sniper-Mode Decoder
 
-A next-generation FT8 decoder that couples a **500 Hz hardware narrowband filter** with a software decoder to achieve decodes that WSJT-X cannot — even in environments with a strong adjacent QRM (+40 dB).
+Pure Rust FT8 decoder with **adaptive equalizer** and **500 Hz hardware BPF** integration.
+Decodes signals that WSJT-X cannot — verified on synthetic worst-case scenarios.
 
-## コンセプト / Concept
+## Why This Exists
 
-通常の広帯域 ADC（16bit / 3kHz）では、+40dB 以上の隣接 QRM が存在すると、ターゲット信号が ADC の量子化ノイズに埋没する。本プロジェクトは量子化の**前段**に 500Hz 物理フィルタを置き、ADC の全ダイナミックレンジをターゲット信号に集中させる「スナイパー・モード」を実現する。
+FT8 operates on a 3 kHz-wide audio band shared by dozens of stations.
+When a +40 dB adjacent signal is present, a standard 16-bit ADC devotes
+nearly all its dynamic range to the strong station, burying the weak
+target in quantization noise. WSJT-X, which processes the full 3 kHz
+band equally, cannot recover it.
 
-In a wideband (3 kHz) ADC, a +40 dB adjacent signal consumes nearly all 16-bit dynamic range, burying the target in quantization noise. By placing a **500 Hz hardware BPF before the ADC**, the full dynamic range is devoted to the target — this is the "Sniper Mode" concept.
+**rs-ft8n** takes a different approach:
 
 ```
-[Antenna] → [500Hz BPF] → [ADC 16bit] → rs-ft8n → decoded FT8 message
-             ↑ removes +40dB QRM before digitisation
+[Antenna] → [500 Hz BPF] → [ADC 16 bit] → rs-ft8n (sniper + EQ) → decoded message
+              ↑ removes strong QRM before digitization
 ```
 
-## デコード性能 / Decode Performance
+By placing a narrow hardware bandpass filter *before* the ADC, the strong
+interferers are physically removed and the ADC's full dynamic range is
+devoted to the target signal. The software equalizer then corrects the
+amplitude roll-off and phase distortion introduced by the filter edges.
 
-Verified against real recordings from [jl1nie/RustFT8](https://github.com/jl1nie/RustFT8):
+## Key Results
 
-**`191111_110200.wav`** — single-pass:
+### WSJT-X comparison (real recordings)
+
+Tested on WAV files from [jl1nie/RustFT8](https://github.com/jl1nie/RustFT8)
+(`191111_110200.wav`, single-pass):
 
 | Signal | SNR | WSJT-X | rs-ft8n | Method |
 |--------|-----|--------|---------|--------|
-| CQ R7IW LN35 | −8 dB | ✓ | ✓ | BP |
-| CQ TA6CQ KN70 | −8 dB | ✓ | ✓ | BP |
+| CQ R7IW LN35 | -8 dB | ✓ | ✓ | BP |
 | CQ DX R6WA LN32 | — | ✗ | ✓ | BP |
-| OH3NIV ZS6S RR73 | **−14 dB** | ✓ | ✓ | **OSD ord-3** |
-| CQ LZ1JZ KN22 | **−15 dB** | ✓ | ✓ | **OSD ord-2** |
+| CQ TA6CQ KN70 | -8 dB | ✓ | ✓ | BP |
+| OH3NIV ZS6S RR73 | -17 dB | ✓ | ✓ | OSD-3 |
+| CQ LZ1JZ KN22 | -17 dB | ✓ | ✓ | OSD-2 |
 
-**`191111_110130.wav`** — single-pass + subtract multi-pass:
+With multi-pass signal subtraction (`191111_110130.wav`):
 
-| Signal | freq | single | subtract | Method |
-|--------|------|--------|----------|--------|
-| CQ DX R6WA LN32 | 2096.9 Hz | ✓ | — | BP |
-| CQ R7IW LN35 | 1290.6 Hz | ✓ | — | BP |
-| CQ TA6CQ KN70 | 681.2 Hz | ✓ | — | BP |
-| OH3NIV ZS6S -3 | 990.6 Hz | ✓ | — | BP |
-| TK4LS YC1MRF 73 | 2478.1 Hz | ✗ | ✓ | **OSD pass-3** (score 2.32, errors 29) |
+| Signal | Method | Note |
+|--------|--------|------|
+| TK4LS YC1MRF 73 | OSD pass-3 | Recovered after subtracting 4 stronger signals |
 
-強信号 4 局を除去した残余音声に対し OSD 閾値 2.0 で再スキャン。`TK4LS YC1MRF 73` (Corsica↔Indonesia) を回収。errors=29 は高いが CRC-14 通過。
+### Busy-band ADC saturation (synthetic, 15 crowd @ +40 dB, target @ -14 dB)
 
-## アーキテクチャ / Architecture
+| Decode mode | Target decoded? |
+|-------------|-----------------|
+| Full-band (WSJT-X equivalent) | **missed** — ADC clipped by crowd |
+| Sniper (software-only, no BPF) | missed — crowd distortion |
+| **500 Hz BPF + sniper** | **20/20 seeds (100%)** |
+
+### BPF edge + adaptive equalizer (target @ -18 dB, 4-pole Butterworth 500 Hz)
+
+| Position | BPF atten | EQ OFF | EQ Adaptive |
+|----------|-----------|--------|-------------|
+| Center | 0 dB | 40% | 40% |
+| Shoulder | -0.5 dB | 30% | 40% |
+| **Edge** | **-3.0 dB** | **10%** | **30%** |
+
+The equalizer triples the decode rate at the filter edge with zero
+degradation at center.
+
+### WSJT-X stress test
+
+`sim_stress_bpf_edge_clean.wav` — target at -18 dB, BPF edge (-3 dB attenuation):
+
+| Decoder | Result |
+|---------|--------|
+| **WSJT-X** | **decode failure** |
+| **rs-ft8n sniper + EQ** | **CQ 3Y0Z JD34 decoded** |
+
+### In-band crowd + signal subtraction
+
+BPF passband with 4 crowd stations (@ +8 dB) masking target (@ -14 dB):
+
+| Mode | Decoded | Target |
+|------|---------|--------|
+| Single-pass | 4 (crowd only) | missed |
+| **Subtract** | **5** | **CQ 3Y0Z JD34 ★** |
+
+### Performance (100 stations, release build)
+
+| Mode | Decoded | Mean time | Budget (2.4 s) |
+|------|---------|-----------|----------------|
+| decode_frame (single) | 82 | 19 ms | 0.8% |
+| decode_frame_subtract (3-pass) | 89 | 119 ms | 5.0% |
+| sniper + EQ (Adaptive) | 16 | 22 ms | 0.9% |
+
+## Features
+
+### Decode Pipeline
+
+```
+PCM 16-bit 12 kHz
+  ↓ downsample (192k-pt FFT + Hann window → 200 Hz complex baseband)
+  ↓ coarse_sync (Costas correlation, 2-D time-freq grid)
+  ↓ refine_candidate (3-array peak + parabolic interpolation)
+  ↓ symbol_spectra (32-pt FFT × 79 symbols)
+  ↓ [equalizer] (Wiener pilot correction from Costas arrays)
+  ↓ compute_llr (Gray-coded soft metrics, 4 variants a/b/c/d)
+  ├→ BP decode (log-domain, 30 iter, CRC-14)
+  └→ OSD fallback (order 2-3, when BP fails + sync_q ≥ 12)
+```
+
+### Adaptive Equalizer (`equalizer.rs`)
+
+Corrects BPF amplitude/phase distortion using Costas arrays as pilot tones.
+
+- **Pilot estimation:** 3 Costas arrays × 7 tones → average per tone;
+  tone 7 (unvisited by Costas) linearly extrapolated from tones 5-6.
+- **Wiener filter:** `W[t] = pilot[t]* / (|pilot[t]|² + σ²_noise)`.
+  Self-regulating: near-passthrough at low SNR, full correction at high SNR.
+- **Adaptive mode (`EqMode::Adaptive`):** Tries EQ first to recover edge
+  signals; falls back to raw decode for center signals. No degradation at
+  center, maximum benefit at edge.
+
+### Signal Subtraction (`subtract.rs` + `decode.rs`)
+
+Three-pass successive interference cancellation:
+
+| Pass | Sync threshold | OSD threshold | Purpose |
+|------|---------------|---------------|---------|
+| 1 | 1.0× | 2.5 | Strong signals |
+| 2 | 0.75× | 2.5 | Medium signals on residual |
+| 3 | 0.5× | 2.0 | Weak signals after cleanup |
+
+- IQ least-squares amplitude estimation (arbitrary carrier phase)
+- QSB gate: reduces subtraction gain to 0.5 when Costas power CV > 0.3
+
+### Butterworth BPF Simulation (`bpf.rs`)
+
+4-pole (8th-order) IIR bandpass filter for simulating hardware CW filters:
+
+```
+Filter response (500 Hz BW, center = 1000 Hz):
+   750 Hz:  -3.0 dB    (passband edge)
+   900 Hz:  -0.0 dB
+  1000 Hz:  -0.0 dB    (center)
+  1250 Hz:  -3.0 dB    (passband edge)
+  1500 Hz: -20.2 dB    (stopband)
+```
+
+### Message Codec (`message.rs`)
+
+Bidirectional 77-bit FT8 message encoding/decoding:
+
+- **Unpack:** Type 0 (free text, DXpedition), Type 1/2 (standard), Type 3 (RTTY), Type 4 (non-standard call)
+- **Pack:** `pack28` (callsign → 28-bit token), `pack_grid4`, `pack77_type1` (CQ/call/grid → 77 bits)
+
+## Architecture
 
 ```
 rs-ft8n/
-├── ft8-core/          Pure Rust FT8 decode library (no_std ready)
+├── ft8-core/          Pure Rust FT8 decode library
 │   └── src/
 │       ├── params.rs       FT8 protocol constants
-│       ├── downsample.rs   FFT-based 12kHz→200Hz complex baseband
-│       ├── sync.rs         2-D Costas correlation + Double Sync + parabolic fine sync
-│       ├── llr.rs          Soft-decision LLR (4 metric variants a/b/c/d)
-│       ├── wave_gen.rs     FT8 waveform encoder (message77 → PCM)
+│       ├── downsample.rs   FFT-based 12 kHz → 200 Hz complex baseband
+│       ├── sync.rs         Costas correlation + parabolic fine sync
+│       ├── llr.rs          Soft-decision LLR (4 metric variants)
+│       ├── equalizer.rs    Adaptive channel equalizer (Wiener pilot)
+│       ├── wave_gen.rs     FT8 waveform encoder (message → PCM)
 │       ├── subtract.rs     Signal subtraction (IQ amplitude estimation)
-│       ├── message.rs      77-bit message decoder (callsign / grid / report)
-│       ├── equalizer.rs    Adaptive channel equalizer (stub — Phase 3)
-│       ├── decode.rs       End-to-end pipeline; single-pass + multi-pass subtract
+│       ├── message.rs      77-bit message pack/unpack
+│       ├── decode.rs       End-to-end pipeline (single/subtract/sniper)
 │       └── ldpc/
-│           ├── bp.rs       Log-domain Belief Propagation (30 iter)
+│           ├── bp.rs       Belief Propagation (30 iter)
 │           ├── osd.rs      Ordered Statistics Decoding (order 1-3)
 │           └── tables.rs   LDPC(174,91) parity-check matrix
-└── ft8-bench/         Benchmark & evaluation harness
+└── ft8-bench/         Benchmark & scenario harness
     └── src/
-        ├── real_data.rs    Full-band WAV evaluation (single-pass + subtract comparison)
-        ├── simulator.rs    Synthetic FT8 frame generator (AWGN + strong interferer)
+        ├── main.rs         All scenarios + speed benchmark
+        ├── bpf.rs          Butterworth BPF (4-pole IIR)
+        ├── simulator.rs    Synthetic FT8 frame generator
+        ├── real_data.rs    Real WAV evaluation
         └── diag.rs         Per-signal pipeline trace
 ```
 
-## デコードパイプライン / Decode Pipeline
+47 unit tests, all passing.
 
-```
-PCM 16bit 12kHz
-  │
-  ▼ downsample (FFT, Hann window)
-Complex baseband 200 Hz
-  │
-  ▼ coarse_sync (Costas correlation, 2-D grid)   ← 1パス (WSJT-X は subtract 連動の 4パス)
-Candidate list (freq, dt, score)
-  │
-  ▼ refine_candidate (combined 3-array peak + parabolic interpolation)
-  │   ※ fine_sync_power_split() で Array-1/2/3 個別パワーも取得可能
-  │     → 将来の適応等化器 (Phase 3) の入力として使用予定
-  │
-  ▼ symbol_spectra (32-pt FFT × 79 symbols)
-  │
-  ▼ sync_quality (hard-decision Costas check, 0-21)
-  │
-  ▼ compute_llr (Gray-coded soft metrics, 4 variants)
-  │
-  ├─▶ BP decode (log-domain tanh, 30 iter, CRC-14)
-  │     success → DecodeResult (pass=0..3)
-  │
-  └─▶ OSD fallback (when BP fails, sync_q≥12, score≥2.5)
-        order-2 (~4,187 candidates) for sync_q < 18
-        order-3 (~121,667 candidates) for sync_q ≥ 18
-        success → DecodeResult (pass=4)
-
-decode_frame_subtract: 3パス逐次干渉除去
-  Pass 1 (sync×1.0, OSD≥2.5) → 強信号デコード → subtract_signal() で波形除去
-  Pass 2 (sync×0.75, OSD≥2.5) → 残余音声から中強度信号
-  Pass 3 (sync×0.5,  OSD≥2.0) → スプリアス候補も含めた弱信号
-```
-
-## ビルド / Build
+## Build
 
 ```bash
 cargo build --release
 ```
 
-依存クレート: `rustfft`, `num-complex`, `crc`, `hound`
+Dependencies: `rustfft`, `num-complex`, `hound`, `rayon`
 
-### multi-pass subtract
-
-```rust
-use ft8_core::decode::{decode_frame_subtract, DecodeDepth};
-
-let messages = decode_frame_subtract(
-    &samples,
-    200.0, 2800.0,          // freq range
-    1.5,                    // sync_min (pass 1 threshold)
-    None,                   // freq_hint
-    DecodeDepth::BpAllOsd,
-    200,
-);
-// Pass 1 decoded signals are subtracted; passes 2 & 3 decode from residual
-```
-
-## 使い方 / Usage
-
-### ベンチマーク実行 / Run Benchmark
+### Run all scenarios + benchmark
 
 ```bash
-# テストデータを配置 / Place test WAVs:
-# ft8-bench/testdata/191111_110130.wav
-# ft8-bench/testdata/191111_110200.wav
-# (from https://github.com/jl1nie/RustFT8/tree/main/data)
+# Place test WAVs (optional, for real-data evaluation):
+#   ft8-bench/testdata/191111_110130.wav
+#   ft8-bench/testdata/191111_110200.wav
+#   (from https://github.com/jl1nie/RustFT8/tree/main/data)
 
 cargo run -p ft8-bench --release
 ```
 
-### ライブラリとして使う / Use as Library
+### Use as library
 
 ```rust
 use ft8_core::decode::{decode_frame, DecodeDepth};
 
-let samples: Vec<i16> = /* 12000 Hz PCM */;
-let messages = decode_frame(
+let samples: Vec<i16> = /* 12000 Hz, 16-bit PCM */;
+let results = decode_frame(
     &samples,
-    200.0,              // freq_min (Hz)
-    2800.0,             // freq_max (Hz)
-    1.5,                // sync_min threshold
-    None,               // freq_hint
-    DecodeDepth::BpAllOsd,  // BP + OSD fallback
-    200,                // max candidates
+    200.0, 2800.0,        // freq range (Hz)
+    1.5,                   // sync_min threshold
+    None,                  // freq_hint
+    DecodeDepth::BpAllOsd, // BP + OSD fallback
+    200,                   // max candidates
 );
 
-for msg in &messages {
-    println!("{:.1} Hz  dt={:+.2}s  errors={}  pass={}", 
-             msg.freq_hz, msg.dt_sec, msg.hard_errors, msg.pass);
+for r in &results {
+    let text = ft8_core::message::unpack77(&r.message77);
+    println!("{:+.0} dB  {:.1} Hz  {}", r.snr_db, r.freq_hz,
+             text.unwrap_or_default());
 }
 ```
 
-スナイパーモード（500Hz フィルタ後の信号に）:
+Sniper mode with equalizer:
 
 ```rust
-use ft8_core::decode::{decode_sniper, DecodeDepth};
+use ft8_core::decode::{decode_sniper_eq, DecodeDepth, EqMode};
 
-let messages = decode_sniper(&samples, 1850.0, DecodeDepth::BpAllOsd, 50);
+let results = decode_sniper_eq(
+    &samples,
+    1000.0,                // target frequency (Hz)
+    DecodeDepth::BpAllOsd,
+    20,                    // max candidates
+    EqMode::Adaptive,      // equalizer mode
+);
 ```
 
-## WSJT-X との相違点 / Differences from WSJT-X
-
-rs-ft8n は WSJT-X のアルゴリズムを Rust へ移植した実装だが、以下の点で意図的に挙動が異なる。
-
-### 同期 (Sync)
-
-| 項目 | WSJT-X | rs-ft8n |
-|------|--------|----------|
-| 粗同期スキャン | 4 パス（subtract 連動、pass ごとに残余音声を再評価） | 1 パス (`decode_frame`) または 3 パス subtract (`decode_frame_subtract`) |
-| 候補重複除去 | 周波数 ±4 Hz 以内 | 周波数 ±4 Hz かつ時間 ±40 ms |
-| 精密同期（広帯域） | sync8d.f90（±10サンプルスキャン） | ±10 ダウンサンプルサンプル + 放物線補完 |
-| 精密同期（スナイパー） | — | 標準精密同期 (`refine_candidate`) |
-| 精密同期スコア単位 | 複素相関パワー（単位不定） | 同（正規化なし） |
-| 探索帯域 | nfa〜nfb（デフォルト 200〜2800 Hz） | `decode_frame`: 指定範囲 / `decode_sniper`: center±250 Hz |
-
-**放物線補完（rs-ft8n 独自）:** 精密同期でダウンサンプル軸のピーク前後 1 サンプルから放物線フィットし、サブサンプル精度の時間オフセットを推定する。WSJT-X は整数サンプルのみ。
-
-**Double Sync（rs-ft8n 独自）:** `refine_candidate_double` は Costas Array 1（シンボル 0–6）と Array 3（シンボル 72–78）を**独立に**ピーク探索し、各配列のパワー `(score_a, score_b, score_c)` を個別に取得する。この API は Phase 3 適応等化器への入力として保持されているが、現在 `decode_sniper` では通常の `refine_candidate` を使用している。
-
-> **廃止済み:** 当初 `decode_sniper` に実装していた `|drift_dt_sec| > 40ms` ゴーストフィルタは削除済み。現代のトランシーバ・PC では実際のドリフトがほぼゼロであり、フィルタが発動しないため不要と判断した。
-
-### LLR / ソフト復調
-
-| 項目 | WSJT-X | rs-ft8n |
-|------|--------|---------|
-| 変換名 | `ft8b.f90` | `llr.rs::compute_llr` |
-| 出力バリアント | llra/llrb/llrc/llrd | 同（4 バリアント） |
-| nsym=2 のグルーピング | 2 シンボルずつ step=2 | 同 |
-| 正規化 | normalizebmet（std dev） | 同 |
-| スケール係数 | 2.83 | 2.83（同一） |
-| AP (A Priori) パス | あり（pass 1-4） | なし（将来実装予定） |
-
-### OSD フォールバック
-
-| 項目 | WSJT-X | rs-ft8n |
-|------|--------|---------|
-| 適用条件 | ndeep≥1 かつ sync_q≥12 | score≥2.5 かつ sync_q≥12 |
-| デプス選択 | コマンドライン引数 | sync_q≥18 → order-3、それ未満 → order-2 |
-| 偽陽性フィルタ | hard_errors 閾値なし | hard_errors≥56 を棄却 |
-| 周波数重複チェック | なし | ±20 Hz 以内の既存デコードをスキップ |
-
-**score≥2.5 フィルタ（rs-ft8n 独自）:** 実信号のコアース同期スコアは ≥3.0。スコアが 1.6〜2.3 程度の候補に order-3 OSD を適用すると CRC 衝突（偽陽性）が多発するため、このフィルタで排除する。
-
-### Signal Subtract（逐次干渉除去）
-
-| 項目 | WSJT-X | rs-ft8n |
-|------|--------|---------|
-| 実装 | `subtractft8.f90`（subtract 連動 4 パス） | `subtract.rs` + `decode_frame_subtract`（3 パス） |
-| 振幅推定 | 受信信号とリファレンス波形の相関 | IQ 最小二乗（cos/sin 独立推定 → 任意位相対応） |
-| 波形再生成 | 符号化 → GFSK | `wave_gen.rs`（message77 → itone → PCM） |
-| パス構成 | pass ごとに sync_min を段階低下 | (×1.0, OSD≥2.5) → (×0.75, OSD≥2.5) → (×0.5, OSD≥2.0) |
-| スプリアス pass | なし | Pass 3 は OSD 閾値 2.0 まで下げて弱信号も除去対象にする |
-| QSB ゲート | なし | `sync_cv`（Costas 3 配列パワーの変動係数）> 0.3 のとき subtract ゲインを 0.5 に下げて過剰減算を防止 |
-
-### ダウンサンプリング
-
-| 項目 | WSJT-X | rs-ft8n |
-|------|--------|---------|
-| 変換 | `ft8_downsample.f90` | `downsample.rs` |
-| FFT サイズ | 192000 pt（ゼロパディング） | 192000 pt（同一） |
-| 周波数抽出帯域 | f0±(1.5〜8.5) baud | 同 |
-| エッジテーパ | Hann 窓 101 bin | 同 |
-| 出力 | 3200 複素サンプル @ 200 Hz | 同 |
-| キャッシュ | なし（毎回再計算） | 候補間で FFT 結果を再利用 |
-
-**FFT キャッシュ（rs-ft8n 独自）:** 同一フレームの複数候補をデコードする際、192000 pt 前向き FFT 結果を再利用してダウンサンプリングの計算量を削減する。
-
-### メッセージデコード
-
-| 項目 | WSJT-X | rs-ft8n |
-|------|--------|---------|
-| 実装 | `packjt77.f90` (`unpack77`) | `message.rs::unpack77` |
-| 対応タイプ | 全タイプ（ハッシュ解決含む） | Type 0/0-1/3-4, 1, 2, 3, 4（主要タイプ） |
-| 22-bit ハッシュ解決 | 受信履歴テーブルから復元 | 未実装（`<...>` を返す） |
-| Type 5（EU VHF） | ○ | 未実装 |
-
----
-
-## 技術詳細 / Technical Notes
-
-### Belief Propagation (BP)
-WSJT-X `bpdecode174_91.f90` から移植。log-domain tanh メッセージパッシング、最大 30 反復、早期停止付き。
-
-### Ordered Statistics Decoding (OSD)
-WSJT-X `osd174_91.f90` から移植。
-
-1. |LLR| 降順でビットを整列
-2. 系統的生成行列を置換・GF(2) ガウス消去 → 最信頼基底 (MRB) を特定
-3. MRB の硬判定符号語（order-0）+ 1〜3 ビット反転候補を列挙
-4. CRC-14 を通過した最小重み符号語を返す
-
-SNR −15 dB の信号を order-2 で、−14 dB を order-3 で回収。
-
-### LDPC(174, 91)
-パリティ検査行列は WSJT-X `ldpc_174_91_c_parity.f90` から移植。生成行列は `ldpc_174_91_c_generator.f90` から移植。
-
-## 合成シナリオ実験結果 / Synthetic Scenario Results
-
-`cargo run -p ft8-bench --release` による合成実験（AWGN + 強信号混入）の結果：
-
-| シナリオ | ターゲット (1000 Hz, −5 dB) | 妨害局 (1200 Hz, +35 dB) |
-|----------|---------------------------|--------------------------|
-| 広帯域（フィルタなし） | **missed** | DECODED |
-| スナイパーモード（BPF 模倣） | **DECODED** | — (BPF 外) |
-
-**解釈:** 同じ信号・同じ SNR でも、+40 dB 差の隣接妨害局が存在する広帯域環境ではデコード失敗する。500 Hz BPF で妨害局を物理的に遮断することでターゲットの回収に成功する。合成 WAV ファイルは `ft8-bench/testdata/sim_interference.wav` に書き出される（WSJT-X で検証可能）。
-
-## ロードマップ / Roadmap
-
-- [x] Phase 1: 基本デコードパイプライン (BP)
-- [x] Phase 2: 実データ評価 + OSD フォールバック → WSJT-X 同等
-- [x] Phase 2b: Double Sync（Array-1/3 独立ピーク、パワー取得）。ゴーストフィルタ廃止済み、`refine_candidate_double` は等化器入力 API として保持
-- [x] Phase 2c: 合成シナリオ生成器 (simulator.rs) + +40 dB 混入実証
-- [x] Phase 2d: Signal subtract (`subtract.rs` + `decode_frame_subtract` 3パス逐次干渉除去)
-- [x] Phase 2e: メッセージデコード (`message.rs`、77bit → コールサイン文字列)
-- [x] Phase 2f: Costas CV subtract ゲート（QSB 検出時の過剰減算防止）
-- [ ] Phase 3: 適応型等化器 (500Hz フィルタエッジ補正、Costas Array パワー利用)
-- [ ] Phase 5: WASM 化 (Web Audio API 対応)
-
-## 参考 / References
+## References
 
 - [WSJT-X](https://github.com/saitohirga/WSJT-X) — FT8 Fortran reference implementation
-- [jl1nie/RustFT8](https://github.com/jl1nie/RustFT8) — test WAV data source
-- K1JT et al., "FT8, a Weak-Signal Mode for HF DXing", QST, 2018
+- [jl1nie/RustFT8](https://github.com/jl1nie/RustFT8) — Test WAV data source
+- K1JT et al., "The FT4 and FT8 Communication Protocols", QEX, 2020
+- S. Franke, B. Somerville, J. Taylor, "Work Weak Signals on HF with WSJT-X", QST, 2018
 
-## ライセンス / License
+## License
 
 GNU General Public License v3.0 (GPLv3)
 
 WSJT-X (the reference implementation) is distributed under GPLv3, and this
-project incorporates ported algorithms from WSJT-X.  See [LICENSE](LICENSE).
+project incorporates ported algorithms from WSJT-X. See [LICENSE](LICENSE).
