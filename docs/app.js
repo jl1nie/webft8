@@ -93,6 +93,11 @@ function showToast(text) {
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2000);
 }
 
+const scoutTargetEl = document.getElementById('scout-target');
+const scoutTargetCall = document.getElementById('scout-target-call');
+const scoutTargetMsg = document.getElementById('scout-target-msg');
+const scoutTargetInfo = document.getElementById('scout-target-info');
+
 function updateScoutStatus() {
   const state = qso.state;
   const stateIdx = { IDLE: -1, CALLING: 0, REPORT: 1, FINAL: 2 }[state] ?? -1;
@@ -104,6 +109,13 @@ function updateScoutStatus() {
   if (state === 'IDLE' && qso.dxCall) scoutDots.forEach(d => d.classList.add('done'));
   scoutState.textContent = state === 'IDLE' ? '' : state;
   scoutDxEl.textContent = (state !== 'IDLE' && qso.dxCall) ? qso.dxCall : '';
+
+  // Scout target card: show during active QSO
+  const active = state !== 'IDLE' && qso.dxCall;
+  scoutTargetEl.style.display = active ? '' : 'none';
+  if (active) {
+    scoutTargetCall.textContent = qso.dxCall;
+  }
 }
 
 // ── Waterfall ───────────────────────────────────────────────────────────────
@@ -606,6 +618,12 @@ const periodMgr = new FT8PeriodManager({
         qso.setRxSnr(snr);
         const result = qso.processMessage(msg);
         if (result && !txMsg) txMsg = result;
+
+        // Update target card (Scout & Snipe) when DX is heard
+        if (qso.dxCall && msg.toUpperCase().includes(qso.dxCall)) {
+          scoutTargetMsg.textContent = msg;
+          scoutTargetInfo.textContent = `${freq.toFixed(0)} Hz  ${snr >= 0 ? '+' : ''}${Math.round(snr)} dB`;
+        }
       }
 
       r.free();
