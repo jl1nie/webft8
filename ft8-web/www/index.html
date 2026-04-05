@@ -47,6 +47,8 @@
   tr:hover td { background: #1a1a2e; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .msg { color: #ffeb3b; font-weight: bold; }
+  tr.target td { background: #1b2a1b; }
+  tr.target .msg { color: #76ff03; }
   #results-wrap { max-height: 250px; overflow-y: auto; }
 
   /* File drop */
@@ -73,6 +75,7 @@
   <span style="color:#444">|</span>
   <button id="btn-snipe">Snipe</button>
   <input type="text" id="snipe-call" placeholder="DX Call" disabled>
+  <span id="snipe-status" style="font-size:.75rem;color:#666"></span>
 </div>
 
 <div id="waterfall-wrap">

@@ -18,6 +18,7 @@ const btnStart = document.getElementById('btn-start');
 const timerEl = document.getElementById('period-timer');
 const btnSnipe = document.getElementById('btn-snipe');
 const snipeCallInput = document.getElementById('snipe-call');
+const snipeStatusEl = document.getElementById('snipe-status');
 const snipeOverlay = document.getElementById('snipe-overlay');
 const snipeFreqLabel = document.getElementById('snipe-freq-label');
 
@@ -58,13 +59,31 @@ function updateSnipeOverlay() {
   snipeFreqLabel.textContent = `${snipeFreq.toFixed(0)} Hz ±250`;
 }
 
+function updateSnipeStatus() {
+  if (!snipeMode) {
+    snipeStatusEl.textContent = '';
+    return;
+  }
+  const call = snipeCallInput.value.trim().toUpperCase();
+  if (call) {
+    snipeStatusEl.textContent = `EQ + AP: ${call}`;
+    snipeStatusEl.style.color = '#76ff03';
+  } else {
+    snipeStatusEl.textContent = 'EQ only (no AP)';
+    snipeStatusEl.style.color = '#ff9800';
+  }
+}
+
 btnSnipe.addEventListener('click', () => {
   snipeMode = !snipeMode;
   btnSnipe.classList.toggle('snipe-on', snipeMode);
   btnSnipe.textContent = snipeMode ? 'Snipe ON' : 'Snipe';
   snipeCallInput.disabled = !snipeMode;
   updateSnipeOverlay();
+  updateSnipeStatus();
 });
+
+snipeCallInput.addEventListener('input', updateSnipeStatus);
 
 // Click/drag on waterfall to set snipe frequency
 wfWrap.addEventListener('click', (e) => {
@@ -106,6 +125,13 @@ function runDecode(samples) {
     return decode_sniper(samples, snipeFreq, call);
   }
   return subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
+}
+
+function isTargetMessage(msg) {
+  if (!snipeMode) return false;
+  const call = snipeCallInput.value.trim().toUpperCase();
+  if (!call) return false;
+  return msg.toUpperCase().includes(call);
 }
 
 function decodeModeName() {
@@ -171,6 +197,7 @@ const periodMgr = new FT8PeriodManager({
         const r = results[i];
         msgs.push({ freq_hz: r.freq_hz, message: r.message });
         const tr = document.createElement('tr');
+        if (isTargetMessage(r.message)) tr.classList.add('target');
         tr.innerHTML = `
           <td class="num">${utc}</td>
           <td class="num">${r.freq_hz.toFixed(1)}</td>
@@ -290,6 +317,7 @@ async function handleFile(file) {
         const r = results[i];
         msgs.push({ freq_hz: r.freq_hz, message: r.message });
         const tr = document.createElement('tr');
+        if (isTargetMessage(r.message)) tr.classList.add('target');
         tr.innerHTML = `
           <td class="num">${i + 1}</td>
           <td class="num">${r.freq_hz.toFixed(1)}</td>
