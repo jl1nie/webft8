@@ -10,15 +10,18 @@ rs-ft8n is a browser-based FT8 QSO application -- decode, transmit, CAT control,
 
 ```
 +--------------------------------------+
-| rs-ft8n [Scout][Snipe]    12s (213ms)| <- Header (mode, secs left, decode time)
+| rs-ft8n [Scout][Snipe]        12s  * | <- Header (logo/mode/secs/settings)
 |--------------------------------------|
 | ::::::::: Waterfall ::::::::::::::::: | <- Waterfall (tap to set DF)
 | ::::::::|::::::::::::::::::::::::::::: |    Red dashed line = current DF
 |--------------------------------------|
+| oooo CALLING 3Y0Z  12 decoded(213ms)| <- Scout status bar
+|--------------------------------------|
+| --- 12:30 -------------------------- | <- Period separator (UTC inline)
 |  1234 +0.3  -12  CQ 3Y0Z JD34       | <- DF  DT  SNR  Message
 |   800 +0.1   -8  JA1ABC 3Y0Z PM95   |
 |--------------------------------------|
-| [CQ]  [Halt] Auto    12 decoded     | <- TX actions + status
+| [CQ]  [Halt]  Auto                  | <- TX actions
 +--------------------------------------+
 ```
 
@@ -27,15 +30,32 @@ rs-ft8n is a browser-based FT8 QSO application -- decode, transmit, CAT control,
 ## Initial Setup
 
 1. Open the [app](https://jl1nie.github.io/rs-ft8n/)
-2. The settings panel (gear icon in the top right) opens automatically
+2. The settings panel (gear icon) opens automatically (first time only)
 3. Enter the following:
    - **My Callsign** -- your callsign (e.g., `W1AW`)
    - **My Grid** -- your grid locator (e.g., `FN31`)
    - **Audio Input** -- select your USB audio interface (receive side)
    - **Audio Output** -- select TX audio output device (transmit side)
-4. Tap **Start Audio** to begin live decoding
+4. **Tap the logo (rs-ft8n)** to start live decoding (logo turns blue)
 
-> For CAT control, select your CAT Protocol and tap **Connect CAT**. Requires a Web Serial API compatible browser (Chrome / Edge).
+> Audio device selections are saved in localStorage and automatically restored on next visit. After initial setup, just tap the logo to start.
+
+> For CAT control, select your CAT Protocol in settings and tap **Connect CAT**. Requires Chrome or Edge (Web Serial API).
+
+---
+
+## Header
+
+```
+rs-ft8n [Scout][Snipe]   12s  *
+```
+
+| Element | Description |
+|---------|-------------|
+| **rs-ft8n logo** | Tap to toggle Audio Start/Stop. Dimmed = stopped, blue = live |
+| **Mode tabs** | Scout / Snipe toggle |
+| **Seconds remaining** | Integer seconds until next period boundary |
+| **Gear icon** | Open settings panel |
 
 ---
 
@@ -51,22 +71,35 @@ A chat-style UI for relaxed QSOs. Ideal for portable operation and smartphone us
 |--------|--------|
 | **CQ button** | Queue CQ for the next period |
 | **Tap waterfall** | Set TX frequency (DF). Shown as a red dashed vertical line |
-| **Tap an RX message** | Call the sender (call2) of that message (auto-starts QSO) |
+| **Tap an RX message** | Call the sender (call2) of that message (TX queued for next period) |
 | **Auto checkbox** | ON: automatic responses. OFF: manually select TX messages |
 | **Halt** | Immediately stop transmission |
 
-**Message display (unified format):**
+**Scout status bar (between waterfall and list):**
 
 ```
- DF(Hz)  DT(s)  SNR  Message
-  1234   +0.3   -12  CQ 3Y0Z JD34
-   800   +0.1    -8  JA1ABC 3Y0Z PM95
+oooo CALLING  3Y0Z   |   12 decoded (213ms)
 ```
 
-- Blue border = received message (RX)
-- Grey border = transmitted message (TX)
-- **Yellow bold** = your callsign
-- **Green bold** = QSO partner's callsign
+- Progress dots (4 stages: grey=pending, blue=current, green=done)
+- QSO state + DX callsign
+- Decode count + decode time
+- IDLE: decode info only
+
+**Message display:**
+
+```
+--- 12:30 --------------------------
+ 1234  +0.3  -12  CQ 3Y0Z JD34
+  800  +0.1   -8  JA1ABC 3Y0Z PM95
+--- 12:45 --------------------------
+ 1500  +0.2   -5  CQ VK2RG QF56
+```
+
+- **DF / DT / SNR / Message** in unified column format
+- Period boundaries shown as UTC timestamp inline separator (skipped when 0 decodes)
+- Blue border = RX, grey border = TX
+- **Yellow bold** = your callsign, **green bold** = QSO partner
 
 **QSO flow (Auto mode):**
 
@@ -77,7 +110,7 @@ A chat-style UI for relaxed QSOs. Ideal for portable operation and smartphone us
 
 **Scout AP decoding:**
 
-During an active QSO (when the DX station is known), A Priori (AP) decoding is automatically enabled to improve reception of weak signals from the target. If decode time exceeds the FT8 budget (2.4 seconds), AP and subtract are automatically paused (see [Adaptive Budget](#adaptive-budget-scout-mode)).
+During an active QSO, A Priori (AP) decoding is automatically enabled using the QSO partner's callsign (no manual input needed). If decode time exceeds the FT8 budget, AP and subtract are automatically paused (see [Adaptive Budget](#adaptive-budget-scout-mode)).
 
 ---
 
@@ -91,15 +124,14 @@ Find the target and choose a calling frequency.
 
 | Action | Effect |
 |--------|--------|
-| **DX Call (AP)** in settings | Set target station (enables AP decoding) |
 | **Tap waterfall** | Set DF (red dashed line). In Call phase this becomes the 500 Hz window center |
-| **Tap an RX message** | Set call1 as target. A secondary "Call call2" button also appears in TX actions |
+| **Tap an RX message** | Set call1 as target (AP auto-enabled). A secondary "Call call2" button also appears in TX actions |
 
 **Watch display:**
 
 - **Top**: Target station's latest message (call / frequency / SNR)
 - **Callers**: List of other stations calling the target
-- **Message list**: DF / DT / SNR / Message in unified format
+- **Message list**: DF / DT / SNR / Message in unified format (with period separators)
 - **QSO progress dots**: filled-circle empty-circle empty-circle empty-circle -> all filled
 
 #### Call Phase (Keep Calling)
@@ -108,7 +140,7 @@ Once you've set the DF in Watch, switch to **Call**.
 
 - 500 Hz BPF window shown as a cyan band on the waterfall
 - Only messages involving you and the target are displayed (noise reduction)
-- Automatically starts calling the target
+- Automatically starts calling the target (TX queued for next period)
 - QSO failure (retry limit reached) -- auto-reverts to Watch
 - You can manually switch back to Watch to change DF
 
@@ -120,7 +152,7 @@ Use the `[Watch] [Call]` tabs at the top of the Snipe view. The message list is 
 
 ## Waterfall
 
-Real-time spectrogram covering 200-2800 Hz.
+Real-time spectrogram covering 200-2800 Hz. Scout: responsive height (min(25vh, 220px)), Snipe: 280px.
 
 | Element | Description |
 |---------|-------------|
@@ -134,30 +166,18 @@ Real-time spectrogram covering 200-2800 Hz.
 
 ---
 
-## Header Display
-
-```
-rs-ft8n [Scout][Snipe]   12s (213ms)
-```
-
-- **Mode tabs**: Scout / Snipe toggle
-- **Seconds remaining**: Integer seconds until next period boundary
-- **Decode time**: Time taken for the last decode cycle (ms)
-
----
-
 ## TX Actions (Bottom Bar)
 
-Buttons change dynamically based on QSO state:
+All TX is **synchronized to the next period boundary** (never immediate).
 
 | QSO State | Auto ON | Auto OFF |
 |-----------|---------|----------|
 | **IDLE** | `[CQ]` button | `[CQ]` button |
-| **Active QSO** | Single next-TX message (tap to send) | All TX options as buttons |
+| **Active QSO** | Single next-TX message | All TX options as buttons |
 
 - **Snipe**: A secondary `[Call xxx]` button appears when call2 differs from the target
-- **Halt**: Immediately stops transmission
-- CQ is queued on tap and transmitted at the next period start
+- **Halt**: Immediately stops transmission (cancels queued TX)
+- Status bar shows `TX queued: ...` when TX is pending
 
 ---
 
@@ -217,16 +237,17 @@ Open/close with the gear icon.
 |------|-------------|
 | **My Callsign** | Your callsign |
 | **My Grid** | Grid locator (4 characters) |
-| **Audio Input** | Receive audio device |
-| **Audio Output** | TX audio output device |
-| **DX Call (AP)** | Target station call (AP decoding + Snipe target) |
+| **Audio Input** | Receive audio device (selection auto-saved) |
+| **Audio Output** | TX audio output device (selection auto-saved) |
 | **CAT Protocol** | Yaesu (FTDX10) / Icom (CI-V) |
 | **Connect CAT** | Connect to rig via Web Serial (PTT control) |
-| **Start / Stop Audio** | Start or stop live decoding |
+| **Start / Stop Audio** | Start or stop live decoding (also via logo tap) |
 | **Reset QSO** | Abort QSO (saved as incomplete to log) |
 | **Open WAV File** | Select a WAV file for offline analysis |
-| **Multi-pass subtract** | Successive interference cancellation (3-pass SIC). Default ON |
-| **A Priori (AP) decode** | AP decoding. Default ON. Scout auto-pauses when over budget |
+| **Multi-pass subtract** | Successive interference cancellation (3-pass SIC). Default ON. Auto-paused over budget |
+| **A Priori (AP)** | AP decoding. Default ON. Auto-paused over budget |
+
+> AP target is set automatically -- from the QSO partner in Scout mode, or from the tapped target in Snipe mode. No manual input needed.
 
 ---
 
@@ -291,12 +312,12 @@ Uses the Web Serial API to control rig PTT from the browser.
 
 | Symptom | Solution |
 |---------|----------|
-| "Select audio device" shown | Select Audio Input in the settings panel |
+| Logo stays dimmed | Tap logo to start audio. Check Audio Input is selected in settings |
 | 0 decodes | Check antenna, audio level, and frequency (e.g., 14.074 MHz) |
 | WAV drop error | Verify 12 kHz / 16-bit / mono format. 48 kHz WAV is not supported |
 | CAT won't connect | Use Chrome / Edge. Restart browser and retry |
-| Waterfall is black | Verify the correct Audio Input device. Press Start Audio again |
-| QSO not progressing | Check that Auto is ON. Verify DX Call is correct |
+| Waterfall is black | Verify the correct Audio Input device. Tap logo to restart |
+| QSO not progressing | Check that Auto is ON. Tap an RX message to select the target station |
 | `[-sub]` `[-sub,AP]` shown | Decode is too heavy; features auto-paused. Will recover when budget allows |
 | `<...>` not resolved | That station hasn't been decoded in this session. Hash table clears on page reload |
 
