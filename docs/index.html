@@ -13,17 +13,27 @@
   .header .ver { font-size: .75rem; color: #666; }
 
   /* Waterfall */
-  #waterfall-wrap { position: relative; margin-bottom: .5rem; }
+  #waterfall-wrap { position: relative; margin-bottom: .5rem; cursor: crosshair; }
   #waterfall { width: 100%; height: 300px; background: #000; display: block; border: 1px solid #222; }
+  #snipe-overlay { position: absolute; top: 0; bottom: 0; background: rgba(79,195,247,0.12);
+    border-left: 1px solid rgba(79,195,247,0.5); border-right: 1px solid rgba(79,195,247,0.5);
+    pointer-events: none; display: none; }
+  #snipe-freq-label { position: absolute; top: 18px; color: #4fc3f7; font-size: .7rem;
+    pointer-events: none; display: none; }
 
   /* Controls */
   .controls { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
               margin-bottom: .5rem; font-size: .85rem; }
-  .controls select, .controls button { font-size: .8rem; padding: .25rem .5rem;
-    background: #1a1a2e; color: #e0e0e0; border: 1px solid #333; border-radius: 4px; cursor: pointer; }
+  .controls select, .controls button, .controls input[type=text] {
+    font-size: .8rem; padding: .25rem .5rem;
+    background: #1a1a2e; color: #e0e0e0; border: 1px solid #333; border-radius: 4px; }
+  .controls button { cursor: pointer; }
   .controls button.active { background: #0d47a1; border-color: #4fc3f7; }
+  .controls button.snipe-on { background: #b71c1c; border-color: #f44336; }
   .controls .timer { font-variant-numeric: tabular-nums; color: #81c784; min-width: 3.5em; }
   .controls label { display: flex; align-items: center; gap: .3rem; }
+  #snipe-call { width: 7em; text-transform: uppercase; }
+  #snipe-call::placeholder { color: #555; text-transform: none; }
 
   /* Status */
   #status { font-size: .85rem; color: #aaa; margin-bottom: .3rem; min-height: 1.2em; }
@@ -60,10 +70,15 @@
   <button id="btn-start" disabled>Start</button>
   <span class="timer" id="period-timer">--</span>
   <label><input type="checkbox" id="subtract-mode" checked> Subtract</label>
+  <span style="color:#444">|</span>
+  <button id="btn-snipe">Snipe</button>
+  <input type="text" id="snipe-call" placeholder="DX Call" disabled>
 </div>
 
 <div id="waterfall-wrap">
   <canvas id="waterfall"></canvas>
+  <div id="snipe-overlay"></div>
+  <div id="snipe-freq-label"></div>
 </div>
 
 <div id="status"></div>

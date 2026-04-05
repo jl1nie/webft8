@@ -1,4 +1,4 @@
-import init, { decode_wav, decode_wav_subtract } from '../pkg/ft8_web.js';
+import init, { decode_wav, decode_wav_subtract, decode_sniper } from '../pkg/ft8_web.js';
 import { Waterfall } from './waterfall.js';
 import { AudioCapture } from './audio-capture.js';
 import { FT8PeriodManager } from './ft8-period.js';
@@ -12,9 +12,14 @@ const resultsTable = document.getElementById('results');
 const tbody = resultsTable.querySelector('tbody');
 const subtractCheck = document.getElementById('subtract-mode');
 const wfCanvas = document.getElementById('waterfall');
+const wfWrap = document.getElementById('waterfall-wrap');
 const deviceSelect = document.getElementById('audio-device');
 const btnStart = document.getElementById('btn-start');
 const timerEl = document.getElementById('period-timer');
+const btnSnipe = document.getElementById('btn-snipe');
+const snipeCallInput = document.getElementById('snipe-call');
+const snipeOverlay = document.getElementById('snipe-overlay');
+const snipeFreqLabel = document.getElementById('snipe-freq-label');
 
 // ── Waterfall setup ─────────────────────────────────────────────────────────
 function resizeCanvas() {
@@ -25,6 +30,63 @@ resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
 const waterfall = new Waterfall(wfCanvas);
+const FREQ_MIN = 200, FREQ_MAX = 2800;
+
+// ── Snipe mode state ────────────────────────────────────────────────────────
+let snipeMode = false;
+let snipeFreq = 1000; // center frequency of 500 Hz window
+
+function updateSnipeOverlay() {
+  if (!snipeMode) {
+    snipeOverlay.style.display = 'none';
+    snipeFreqLabel.style.display = 'none';
+    return;
+  }
+  const w = wfCanvas.clientWidth;
+  const freqRange = FREQ_MAX - FREQ_MIN;
+  const leftFreq = snipeFreq - 250;
+  const rightFreq = snipeFreq + 250;
+  const leftPx = ((leftFreq - FREQ_MIN) / freqRange) * w;
+  const rightPx = ((rightFreq - FREQ_MIN) / freqRange) * w;
+
+  snipeOverlay.style.display = 'block';
+  snipeOverlay.style.left = Math.max(0, leftPx) + 'px';
+  snipeOverlay.style.width = (rightPx - leftPx) + 'px';
+
+  snipeFreqLabel.style.display = 'block';
+  snipeFreqLabel.style.left = (leftPx + 4) + 'px';
+  snipeFreqLabel.textContent = `${snipeFreq.toFixed(0)} Hz ±250`;
+}
+
+btnSnipe.addEventListener('click', () => {
+  snipeMode = !snipeMode;
+  btnSnipe.classList.toggle('snipe-on', snipeMode);
+  btnSnipe.textContent = snipeMode ? 'Snipe ON' : 'Snipe';
+  snipeCallInput.disabled = !snipeMode;
+  updateSnipeOverlay();
+});
+
+// Click/drag on waterfall to set snipe frequency
+wfWrap.addEventListener('click', (e) => {
+  if (!snipeMode) return;
+  const rect = wfCanvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const freq = FREQ_MIN + (x / rect.width) * (FREQ_MAX - FREQ_MIN);
+  snipeFreq = Math.round(Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq)));
+  updateSnipeOverlay();
+});
+
+let dragging = false;
+wfWrap.addEventListener('mousedown', (e) => { if (snipeMode) dragging = true; });
+window.addEventListener('mouseup', () => { dragging = false; });
+wfWrap.addEventListener('mousemove', (e) => {
+  if (!snipeMode || !dragging) return;
+  const rect = wfCanvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const freq = FREQ_MIN + (x / rect.width) * (FREQ_MAX - FREQ_MIN);
+  snipeFreq = Math.round(Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq)));
+  updateSnipeOverlay();
+});
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 let wasmReady = false;
@@ -32,84 +94,82 @@ statusEl.textContent = 'Loading WASM module...';
 init().then(async () => {
   wasmReady = true;
   statusEl.textContent = 'Ready. Drop a WAV file or select an audio device.';
-  // Enumerate audio devices (non-fatal if it fails)
   try { await populateDevices(); } catch (e) { console.warn('Audio devices:', e); }
 }).catch(e => {
   statusEl.textContent = `WASM load failed: ${e}`;
 });
 
+// ── Decode helper ───────────────────────────────────────────────────────────
+function runDecode(samples) {
+  if (snipeMode) {
+    const call = snipeCallInput.value.trim().toUpperCase();
+    return decode_sniper(samples, snipeFreq, call);
+  }
+  return subtractCheck.checked ? decode_wav_subtract(samples) : decode_wav(samples);
+}
+
+function decodeModeName() {
+  if (snipeMode) {
+    const call = snipeCallInput.value.trim().toUpperCase();
+    return call ? `snipe ${snipeFreq}Hz AP:${call}` : `snipe ${snipeFreq}Hz`;
+  }
+  return subtractCheck.checked ? 'subtract' : 'single-pass';
+}
+
 // ── Audio capture ───────────────────────────────────────────────────────────
 const capture = new AudioCapture({
-  onWaterfall: (samples) => {
-    waterfall.pushSamples(samples);
-  },
-  onBufferFull: () => {
-    // Buffer full — period manager will handle snapshot
-  },
+  onWaterfall: (samples) => { waterfall.pushSamples(samples); },
+  onBufferFull: () => {},
 });
 
 async function populateDevices() {
-  try {
-    const devices = await capture.enumerateDevices();
-    deviceSelect.innerHTML = '<option value="">-- select device --</option>';
-    for (const d of devices) {
-      const opt = document.createElement('option');
-      opt.value = d.id;
-      opt.textContent = d.label;
-      deviceSelect.appendChild(opt);
-    }
-    deviceSelect.disabled = false;
-    btnStart.disabled = false;
-  } catch (e) {
-    deviceSelect.innerHTML = '<option>No audio devices</option>';
+  const devices = await capture.enumerateDevices();
+  deviceSelect.innerHTML = '<option value="">-- select device --</option>';
+  for (const d of devices) {
+    const opt = document.createElement('option');
+    opt.value = d.id;
+    opt.textContent = d.label;
+    deviceSelect.appendChild(opt);
   }
+  deviceSelect.disabled = false;
+  btnStart.disabled = false;
 }
 
 // ── Period manager ──────────────────────────────────────────────────────────
 const periodMgr = new FT8PeriodManager({
-  onTick: (remaining) => {
-    timerEl.textContent = remaining.toFixed(1) + 's';
-  },
-  onPeriodEnd: async (periodIndex, isEven) => {
+  onTick: (remaining) => { timerEl.textContent = remaining.toFixed(1) + 's'; },
+  onPeriodEnd: async (periodIndex) => {
     if (!capture.running || !wasmReady) return;
 
-    // Draw period boundary line on waterfall
     waterfall.drawPeriodLine();
-
     statusEl.textContent = 'Decoding...';
     const float32 = await capture.snapshot();
 
     if (float32.length < 12000) {
-      statusEl.textContent = `Period ${periodIndex}: too few samples (${float32.length})`;
+      statusEl.textContent = `Period: too few samples (${float32.length})`;
       return;
     }
 
-    // Convert Float32 → Int16
     const samples = new Int16Array(float32.length);
     for (let i = 0; i < float32.length; i++) {
       samples[i] = Math.round(Math.max(-32768, Math.min(32767, float32[i] * 32767)));
     }
 
-    // Decode
-    const useSubtract = subtractCheck.checked;
     const t0 = performance.now();
-    const results = useSubtract ? decode_wav_subtract(samples) : decode_wav(samples);
+    const results = runDecode(samples);
     const elapsed = performance.now() - t0;
 
     const n = results.length;
     const utc = new Date(periodIndex * 15000).toISOString().substr(11, 5);
-    const mode = useSubtract ? 'subtract' : 'single';
     statusEl.textContent = `Period ${utc} UTC: ${float32.length} samples`;
-    timingEl.textContent = `Decoded ${n} message(s) in ${elapsed.toFixed(1)} ms (${mode})`;
+    timingEl.textContent = `Decoded ${n} message(s) in ${elapsed.toFixed(1)} ms (${decodeModeName()})`;
 
-    // Add results to table (newest first)
     const msgs = [];
     if (n > 0) {
       resultsTable.hidden = false;
       for (let i = 0; i < n; i++) {
         const r = results[i];
         msgs.push({ freq_hz: r.freq_hz, message: r.message });
-
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td class="num">${utc}</td>
@@ -129,17 +189,13 @@ const periodMgr = new FT8PeriodManager({
   },
 });
 
-// ── Start / Stop button ─────────────────────────────────────────────────────
+// ── Start / Stop ────────────────────────────────────────────────────────────
 let liveMode = false;
 
 btnStart.addEventListener('click', async () => {
   if (!liveMode) {
-    // Start
     const deviceId = deviceSelect.value;
-    if (!deviceId) {
-      statusEl.textContent = 'Select an audio device first.';
-      return;
-    }
+    if (!deviceId) { statusEl.textContent = 'Select an audio device first.'; return; }
     try {
       await capture.start(deviceId);
       periodMgr.start();
@@ -152,7 +208,6 @@ btnStart.addEventListener('click', async () => {
       statusEl.textContent = `Audio error: ${e.message || e}`;
     }
   } else {
-    // Stop
     periodMgr.stop();
     capture.stop();
     liveMode = false;
@@ -163,7 +218,7 @@ btnStart.addEventListener('click', async () => {
   }
 });
 
-// ── File handling (WAV drop, kept as fallback) ──────────────────────────────
+// ── File handling ───────────────────────────────────────────────────────────
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
@@ -180,21 +235,16 @@ function parseWav(buf) {
   const view = new DataView(buf);
   const riff = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
   if (riff !== 'RIFF') throw new Error('Not a WAV file');
-
   const numChannels = view.getUint16(22, true);
   const sampleRate = view.getUint32(24, true);
   const bitsPerSample = view.getUint16(34, true);
-
   if (sampleRate !== 12000) throw new Error(`Sample rate ${sampleRate} Hz (expected 12000)`);
   if (bitsPerSample !== 16) throw new Error(`${bitsPerSample}-bit (expected 16)`);
   if (numChannels !== 1) throw new Error(`${numChannels} channels (expected mono)`);
-
   let offset = 12;
   while (offset < buf.byteLength - 8) {
-    const id = String.fromCharCode(
-      view.getUint8(offset), view.getUint8(offset+1),
-      view.getUint8(offset+2), view.getUint8(offset+3)
-    );
+    const id = String.fromCharCode(view.getUint8(offset), view.getUint8(offset+1),
+      view.getUint8(offset+2), view.getUint8(offset+3));
     const size = view.getUint32(offset + 4, true);
     if (id === 'data') return new Int16Array(buf, offset + 8, size / 2);
     offset += 8 + size;
@@ -225,15 +275,13 @@ async function handleFile(file) {
     statusEl.textContent = `Decoding ${nSamples} samples (${duration} s)...`;
     await new Promise(r => setTimeout(r, 0));
 
-    const useSubtract = subtractCheck.checked;
     const t0 = performance.now();
-    const results = useSubtract ? decode_wav_subtract(samples) : decode_wav(samples);
+    const results = runDecode(samples);
     const elapsed = performance.now() - t0;
 
     const n = results.length;
-    const mode = useSubtract ? 'subtract' : 'single-pass';
     statusEl.textContent = `${file.name}: ${nSamples} samples (${duration} s)`;
-    timingEl.textContent = `Decoded ${n} message(s) in ${elapsed.toFixed(1)} ms (${mode})`;
+    timingEl.textContent = `Decoded ${n} message(s) in ${elapsed.toFixed(1)} ms (${decodeModeName()})`;
 
     const msgs = [];
     if (n > 0) {

@@ -44,6 +44,29 @@ pub fn decode_wav(samples: &[i16]) -> Vec<DecodedMessage> {
         .collect()
 }
 
+/// Sniper-mode decode: ±250 Hz around target_freq, with optional EQ + AP.
+///
+/// `target_freq` — center frequency in Hz (e.g. 1000.0)
+/// `callsign` — target callsign for AP (empty string = no AP)
+#[wasm_bindgen]
+pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str) -> Vec<DecodedMessage> {
+    use ft8_core::decode::{decode_sniper_ap, EqMode, ApHint};
+
+    let ap = if callsign.is_empty() {
+        None
+    } else {
+        Some(ApHint::new().with_call2(callsign))
+    };
+
+    decode_sniper_ap(
+        samples, target_freq, DecodeDepth::BpAllOsd, 20,
+        EqMode::Adaptive, ap.as_ref(),
+    )
+        .into_iter()
+        .filter_map(to_decoded)
+        .collect()
+}
+
 /// Decode FT8 with multi-pass signal subtraction (3-pass).
 #[wasm_bindgen]
 pub fn decode_wav_subtract(samples: &[i16]) -> Vec<DecodedMessage> {
