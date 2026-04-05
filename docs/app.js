@@ -134,10 +134,11 @@ btnCat.addEventListener('click', async () => {
     return;
   }
   try {
+    const proto = document.getElementById('cat-protocol').value;
     await cat.requestPort();
-    await cat.connect();
+    await cat.connect({ protocol: proto });
     btnCat.classList.add('connected');
-    catStatusEl.textContent = 'connected (CI-V)';
+    catStatusEl.textContent = `connected (${proto})`;
   } catch (e) {
     catStatusEl.textContent = `error: ${e.message || e}`;
   }

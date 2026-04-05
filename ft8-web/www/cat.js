@@ -1,13 +1,13 @@
 // CAT (Computer Aided Transceiver) control via Web Serial API.
-// Currently supports Icom CI-V protocol for PTT control.
+// Supports: Yaesu CAT (FTDX10 default), Icom CI-V.
 
 export class CatController {
   constructor() {
     this.port = null;
     this.writer = null;
     this.connected = false;
-    this.protocol = 'civ'; // 'civ' (Icom) for now
-    this.civAddress = 0x94; // Default Icom address (IC-7300)
+    this.protocol = 'yaesu'; // 'yaesu' or 'civ'
+    this.civAddress = 0x94;  // Icom CI-V address (IC-7300 default)
   }
 
   /** Check if Web Serial API is available. */
@@ -15,10 +15,10 @@ export class CatController {
     return 'serial' in navigator;
   }
 
-  /** Enumerate available serial ports (requires user gesture). */
+  /** Request a serial port (requires user gesture). */
   async requestPort() {
     if (!CatController.isSupported()) {
-      throw new Error('Web Serial API not supported in this browser');
+      throw new Error('Web Serial API not supported');
     }
     this.port = await navigator.serial.requestPort();
     return this.port;
@@ -27,12 +27,15 @@ export class CatController {
   /**
    * Connect to the serial port.
    * @param {Object} opts
-   * @param {number} opts.baudRate — baud rate (default 19200 for Icom)
-   * @param {number} [opts.civAddress] — CI-V address (default 0x94 for IC-7300)
+   * @param {number} opts.baudRate — baud rate (default 38400 for Yaesu, 19200 for Icom)
+   * @param {string} [opts.protocol] — 'yaesu' (default) or 'civ'
+   * @param {number} [opts.civAddress] — CI-V address (Icom only)
    */
   async connect(opts = {}) {
     if (!this.port) throw new Error('No port selected');
-    const baudRate = opts.baudRate || 19200;
+    this.protocol = opts.protocol || 'yaesu';
+    const defaultBaud = this.protocol === 'yaesu' ? 38400 : 19200;
+    const baudRate = opts.baudRate || defaultBaud;
     if (opts.civAddress !== undefined) this.civAddress = opts.civAddress;
 
     await this.port.open({ baudRate });
@@ -42,13 +45,8 @@ export class CatController {
 
   /** Disconnect. */
   async disconnect() {
-    if (this.writer) {
-      this.writer.releaseLock();
-      this.writer = null;
-    }
-    if (this.port) {
-      await this.port.close();
-    }
+    if (this.writer) { this.writer.releaseLock(); this.writer = null; }
+    if (this.port) { await this.port.close(); }
     this.connected = false;
   }
 
@@ -59,41 +57,69 @@ export class CatController {
   async ptt(on) {
     if (!this.connected) throw new Error('Not connected');
 
-    if (this.protocol === 'civ') {
+    if (this.protocol === 'yaesu') {
+      // Yaesu CAT: TX (on) = 0x08, RX (off) = 0x88
+      await this._yaesuSend(on ? 0x08 : 0x88);
+    } else {
+      // Icom CI-V: PTT sub-command
       await this._civSend(0x1C, 0x00, on ? [0x01] : [0x00]);
     }
   }
 
   /**
-   * Set VFO frequency (Hz).
-   * @param {number} freqHz — frequency in Hz (e.g. 14074000)
+   * Set VFO frequency.
+   * @param {number} freqHz — frequency in Hz
    */
   async setFreq(freqHz) {
     if (!this.connected) throw new Error('Not connected');
 
-    if (this.protocol === 'civ') {
-      // CI-V frequency format: 5 bytes BCD, LSB first
-      // e.g. 14074000 Hz → 00 40 07 14 00
-      const bcd = [];
-      let f = Math.round(freqHz);
-      for (let i = 0; i < 5; i++) {
-        const lo = f % 10; f = Math.floor(f / 10);
-        const hi = f % 10; f = Math.floor(f / 10);
-        bcd.push((hi << 4) | lo);
-      }
-      await this._civSend(0x05, null, bcd);
+    if (this.protocol === 'yaesu') {
+      await this._yaesuSetFreq(freqHz);
+    } else {
+      await this._civSetFreq(freqHz);
     }
   }
 
-  // ── CI-V protocol internals ──────────────────────────────────────────
+  // ── Yaesu CAT protocol ────────────────────────────────────────────────
+
+  async _yaesuSend(cmd) {
+    // Yaesu simple command: 5 bytes, last byte is the command
+    const frame = new Uint8Array([0x00, 0x00, 0x00, 0x00, cmd]);
+    await this.writer.write(frame);
+  }
+
+  async _yaesuSetFreq(freqHz) {
+    // Yaesu frequency format: 4 bytes BCD (8 digits), MSB first + cmd 0x01
+    // e.g. 14.074000 MHz → 0x14 0x07 0x40 0x00
+    let f = Math.round(freqHz / 10); // in 10 Hz units
+    const bcd = new Uint8Array(5);
+    for (let i = 3; i >= 0; i--) {
+      const lo = f % 10; f = Math.floor(f / 10);
+      const hi = f % 10; f = Math.floor(f / 10);
+      bcd[i] = (hi << 4) | lo;
+    }
+    bcd[4] = 0x01; // Set Frequency command
+    await this.writer.write(bcd);
+  }
+
+  // ── Icom CI-V protocol ────────────────────────────────────────────────
 
   async _civSend(cmd, subCmd, data = []) {
-    // CI-V frame: FE FE <to> <from> <cmd> [<sub>] [<data>...] FD
     const frame = [0xFE, 0xFE, this.civAddress, 0xE0, cmd];
     if (subCmd !== null && subCmd !== undefined) frame.push(subCmd);
     frame.push(...data);
     frame.push(0xFD);
-
     await this.writer.write(new Uint8Array(frame));
+  }
+
+  async _civSetFreq(freqHz) {
+    const bcd = [];
+    let f = Math.round(freqHz);
+    for (let i = 0; i < 5; i++) {
+      const lo = f % 10; f = Math.floor(f / 10);
+      const hi = f % 10; f = Math.floor(f / 10);
+      bcd.push((hi << 4) | lo);
+    }
+    await this._civSend(0x05, null, bcd);
   }
 }
