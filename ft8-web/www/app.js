@@ -590,6 +590,7 @@ const periodMgr = new FT8PeriodManager({
 
     const msgs = [];
     let txMsg = null;
+    const callers = []; // track stations calling me (for pileup notification)
 
     for (let i = 0; i < n; i++) {
       const r = results[i];
@@ -635,6 +636,15 @@ const periodMgr = new FT8PeriodManager({
         snipeDxInfo.textContent = `${freq.toFixed(0)} Hz  ${snr >= 0 ? '+' : ''}${Math.round(snr)} dB`;
       }
 
+      // Track callers (my call is first word = someone calling me)
+      if (!suspect) {
+        const myCall = myCallInput.value.toUpperCase();
+        const w = msg.split(/\s+/);
+        if (w[0] === myCall && w.length >= 2 && w[1] !== myCall) {
+          callers.push(w[1]);
+        }
+      }
+
       // QSO state machine
       if (!suspect) {
         qso.setRxSnr(snr);
@@ -649,6 +659,14 @@ const periodMgr = new FT8PeriodManager({
       }
 
       r.free();
+    }
+
+    // Pileup notification: multiple stations calling me
+    if (callers.length > 1) {
+      const others = callers.filter(c => c !== qso.dxCall);
+      if (others.length > 0) {
+        scoutTargetInfo.textContent += `  +${others.length} calling: ${others.join(' ')}`;
+      }
     }
 
     // Auto TX / retry — TX on opposite slot from RX (DX transmits on isEven, we TX on !isEven)

@@ -182,11 +182,16 @@ export class QsoManager {
       const responder = words[1];
       const field = words[2];
 
-      // If we were calling CQ, accept any responder
-      if (!this.dxCall || this.dxCall === responder) {
-        this.dxCall = responder;
-        this.dxGrid = field;
+      // Lock first responder — ignore others in same period
+      if (this.dxCall && this.dxCall !== responder) {
+        return null; // already locked to a different station
       }
+
+      // Accept this responder
+      if (!this.dxCall) {
+        this.dxCall = responder;
+      }
+      this.dxGrid = field;
 
       // Is this a report? (e.g., "-12", "+05", "R-12")
       if (field.match(/^R?[+-]\d{2}$/)) {
