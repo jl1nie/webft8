@@ -30,15 +30,13 @@ const txActionsEl = document.getElementById('tx-actions');
 const btnHalt = document.getElementById('btn-halt');
 const autoCheck = document.getElementById('auto-qso');
 const fileInput = document.getElementById('file-input');
-// Scout status bar elements
+// Scout status bar
 const scoutState = document.getElementById('scout-state');
-const scoutDx = document.getElementById('scout-dx');
+const scoutDxEl = document.getElementById('scout-dx');
 const scoutDecodeInfo = document.getElementById('scout-decode-info');
 const scoutDots = [
-  document.getElementById('scout-dot-1'),
-  document.getElementById('scout-dot-2'),
-  document.getElementById('scout-dot-3'),
-  document.getElementById('scout-dot-4'),
+  document.getElementById('scout-dot-1'), document.getElementById('scout-dot-2'),
+  document.getElementById('scout-dot-3'), document.getElementById('scout-dot-4'),
 ];
 const myCallInput = document.getElementById('my-call');
 const myGridInput = document.getElementById('my-grid');
@@ -67,7 +65,8 @@ let subDisabledAuto = false; // true if subtract was auto-disabled due to timeou
 const FREQ_MIN = 200, FREQ_MAX = 2800;
 
 // ── Status display ─────────────────────────────────────────────────────────
-function setStatus(\1);
+function setStatus(text) {
+  scoutDecodeInfo.textContent = text;
   snipeTxLine.textContent = text;
 }
 
@@ -79,11 +78,9 @@ function updateScoutStatus() {
     if (i < stateIdx) d.classList.add('done');
     if (i === stateIdx) d.classList.add('current');
   });
-  if (state === 'IDLE' && qso.dxCall) {
-    scoutDots.forEach(d => d.classList.add('done'));
-  }
+  if (state === 'IDLE' && qso.dxCall) scoutDots.forEach(d => d.classList.add('done'));
   scoutState.textContent = state === 'IDLE' ? '' : state;
-  scoutDx.textContent = (state !== 'IDLE' && qso.dxCall) ? qso.dxCall : '';
+  scoutDxEl.textContent = (state !== 'IDLE' && qso.dxCall) ? qso.dxCall : '';
 }
 
 // ── Waterfall ───────────────────────────────────────────────────────────────
@@ -172,7 +169,7 @@ function setSnipePhase(phase) {
     if (apCall && qso.state === QSO_STATE.IDLE) {
       qso.setMyInfo(myCallInput.value, myGridInput.value);
       qso.callStation(apCall);
-      setStatus(\1);
+      setStatus(`Calling ${apCall}`);
     }
   }
   updateSnipeOverlay();
@@ -220,11 +217,11 @@ wfWrap.addEventListener('click', (e) => {
     snipeFreq = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq));
     waterfall.dfLine = snipeFreq;
     updateSnipeOverlay();
-    setStatus(\1);
+    setStatus(`DF: ${snipeFreq} Hz`);
   } else {
     scoutDf = Math.max(FREQ_MIN, Math.min(FREQ_MAX, freq));
     waterfall.dfLine = scoutDf;
-    setStatus(\1);
+    setStatus(`DF: ${scoutDf} Hz`);
   }
 });
 
@@ -299,10 +296,7 @@ function updateQsoDisplay() {
     dots.forEach(d => d.classList.add('done'));
   }
 
-  // Scout status bar
   updateScoutStatus();
-
-  // Unified TX actions
   updateTxActions();
 }
 
@@ -324,7 +318,7 @@ function updateTxActions() {
       const freq = currentMode === 'snipe' ? snipeFreq : scoutDf;
       const period = periodMgr.getCurrentPeriod();
       periodMgr.queueTx({ ...tx, freq }, !period.isEven);
-      setStatus(\1);
+      setStatus(`CQ queued (${freq} Hz)`);
     });
     txActionsEl.appendChild(btn);
 
@@ -341,7 +335,7 @@ function updateTxActions() {
         snipeDxCall.textContent = snipeAltCall;
         snipeAltCall = '';
         updateTxActions();
-        setStatus(\1);
+        setStatus(`Calling ${apCall}`);
       });
       txActionsEl.appendChild(altBtn);
     }
@@ -455,7 +449,7 @@ async function transmit(call1, call2, report, freq) {
   if (!wasmReady) return;
   freq = freq || (currentMode === 'snipe' ? snipeFreq : scoutDf);
   try {
-    setStatus(\1);
+    setStatus(`TX: ${call1} ${call2} ${report}`);
     // Mark active button
     const activeBtn = txActionsEl.querySelector('button');
     if (activeBtn) activeBtn.classList.add('tx-active');
@@ -469,10 +463,10 @@ async function transmit(call1, call2, report, freq) {
     if (cat.connected) await cat.ptt(false);
 
     if (activeBtn) activeBtn.classList.remove('tx-active');
-    setStatus(\1);
+    setStatus('TX complete');
   } catch (e) {
     txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
-    setStatus(\1);
+    setStatus(`TX error: ${e.message || e}`);
     if (cat.connected) try { await cat.ptt(false); } catch (_) {}
   }
 }
@@ -507,7 +501,7 @@ const periodMgr = new FT8PeriodManager({
 
     const shed = [subDisabledAuto && 'sub', apDisabledAuto && 'AP'].filter(Boolean);
     const shedTag = shed.length ? ` [-${shed.join(',')}]` : '';
-    setStatus(\1);
+    setStatus(`${n} decoded (${lastDecodeMs} ms)${shedTag}`);
 
     // Update AP from snipe call input
     apCall = snipeCallInput.value.trim().toUpperCase();
@@ -549,7 +543,7 @@ const periodMgr = new FT8PeriodManager({
           const tx = qso.callStation(clickCall);
           snipeCallInput.value = clickCall;
           apCall = clickCall;
-          setStatus(\1);
+          setStatus(`Calling ${clickCall}`);
         } : null, freq, dt, isEven);
       }
 
@@ -574,7 +568,7 @@ const periodMgr = new FT8PeriodManager({
     if (txMsg && autoCheck.checked) {
       const freq = currentMode === 'snipe' ? snipeFreq : scoutDf;
       periodMgr.queueTx({ ...txMsg, freq }, !period.isEven);
-      setStatus(\1);
+      setStatus(`TX queued: ${qso.formatTx(txMsg)}`);
     } else if (!txMsg && qso.state !== QSO_STATE.IDLE && autoCheck.checked) {
       // Save state before retry (retry may reset on max retries)
       const prevState = qso.state;
@@ -583,7 +577,7 @@ const periodMgr = new FT8PeriodManager({
       if (retryTx) {
         const freq = currentMode === 'snipe' ? snipeFreq : scoutDf;
         periodMgr.queueTx({ ...retryTx, freq }, !period.isEven);
-        setStatus(\1);
+        setStatus(`Retry ${qso.retryInfo()}: ${qso.formatTx(retryTx)}`);
       } else if (prevDx) {
         // Max retries exceeded — log incomplete QSO
         qsoLog.add({
@@ -709,7 +703,7 @@ btnHalt.addEventListener('click', () => {
   audioOut.stop();
   if (cat.connected) cat.ptt(false).catch(() => {});
   txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
-  setStatus(\1);
+  setStatus('Halted');
 });
 
 btnReset.addEventListener('click', () => {
@@ -729,25 +723,25 @@ btnReset.addEventListener('click', () => {
   qso.reset();
   chatList.innerHTML = '';
   updateQsoDisplay();
-  setStatus(\1);
+  setStatus('Reset');
 });
 
 // ── Audio start/stop ────────────────────────────────────────────────────────
 btnStart.addEventListener('click', async () => {
   if (!liveMode) {
     const deviceId = deviceSelect.value;
-    if (!deviceId) { setStatus(\1); return; }
+    if (!deviceId) { setStatus('Select audio device'); return; }
     try {
       await capture.start(deviceId);
       periodMgr.start();
       liveMode = true;
       btnStart.textContent = 'Stop Audio';
-      setStatus(\1);
+      setStatus(`Listening (${capture.getSampleRate()} Hz)`);
       waterfall.clear();
       settingsPanel.classList.remove('open');
       settingsOverlay.classList.remove('open');
     } catch (e) {
-      setStatus(\1);
+      setStatus(`Audio error: ${e.message || e}`);
     }
   } else {
     periodMgr.stop();
@@ -755,7 +749,7 @@ btnStart.addEventListener('click', async () => {
     liveMode = false;
     btnStart.textContent = 'Start Audio';
     timerEl.textContent = '--';
-    setStatus(\1);
+    setStatus('Stopped');
   }
 });
 
@@ -850,14 +844,14 @@ async function handleFile(file) {
     waterfall.pushSamples(samples);
     waterfall.drawFreqAxis();
 
-    setStatus(\1);
+    setStatus('Decoding...');
     await new Promise(r => setTimeout(r, 0));
 
     const t0 = performance.now();
     const results = runDecode(samples);
     const elapsed = performance.now() - t0;
 
-    setStatus(\1);
+    setStatus(`${results.length} decoded (${elapsed.toFixed(0)} ms) — ${file.name}`);
     chatList.innerHTML = '';
 
     for (let i = 0; i < results.length; i++) {
@@ -867,15 +861,15 @@ async function handleFile(file) {
       r.free();
     }
   } catch (e) {
-    setStatus(\1);
+    setStatus(`Error: ${e.message || e}`);
   }
 }
 
 // ── WASM init ───────────────────────────────────────────────────────────────
-setStatus(\1);
+setStatus('Loading...');
 init().then(async () => {
   wasmReady = true;
-  setStatus(\1);
+  setStatus('Ready');
   try {
     const devices = await capture.enumerateDevices();
     deviceSelect.innerHTML = '<option value="">-- select --</option>';
@@ -896,4 +890,4 @@ init().then(async () => {
     }
   } catch (e) { console.warn('Audio devices:', e); }
   updateTxActions();
-}).catch(e => { setStatus(\1); });
+}).catch(e => { setStatus(`Load failed: ${e}`); });
