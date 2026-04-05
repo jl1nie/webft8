@@ -464,7 +464,9 @@ function runDecode(samples) {
   const baseMs = performance.now() - t0;
 
   // AP supplement: enabled by checkbox, auto-disabled by budget
-  const useAp = apCheck.checked && !apDisabledAuto;
+  // Skip AP when calling CQ (no target yet — AP would only produce false positives)
+  const isCqWaiting = qso.state === QSO_STATE.CALLING && !qso.dxCall;
+  const useAp = apCheck.checked && !apDisabledAuto && !isCqWaiting;
   const apTarget = useAp
     ? (apCall || (currentMode === 'scout' && qso.dxCall ? qso.dxCall : ''))
     : '';
