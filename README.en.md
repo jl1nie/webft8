@@ -86,10 +86,13 @@ Equalizer triples decode rate at the filter edge. Zero degradation at center.
 
 `sim_stress_bpf_edge_clean.wav` — target -18 dB, BPF edge (-3 dB attenuation):
 
-| Decoder | Result |
-|---------|--------|
-| **WSJT-X** | **decode failure** |
-| **rs-ft8n sniper + EQ** | **CQ 3Y0Z JD34 decoded** |
+| Decoder | Result | Time |
+|---------|--------|------|
+| **WSJT-X** | **decode failure** | — |
+| **rs-ft8n Native** | **CQ 3Y0Z JD34** | ~22 ms |
+| **rs-ft8n WASM (browser)** | **CQ 3Y0Z JD34** | 197 ms |
+
+Reproducible via [WASM Demo](https://jl1nie.github.io/rs-ft8n/) — drop the same WAV file.
 
 ### BPF Edge SNR Sweep — Cumulative Effect of BPF + EQ + AP
 

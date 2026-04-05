@@ -86,10 +86,13 @@ Signal subtract (`191111_110130.wav`):
 
 `sim_stress_bpf_edge_clean.wav` — target -18 dB、BPF edge (-3 dB 減衰):
 
-| デコーダ | 結果 |
-|----------|------|
-| **WSJT-X** | **デコード不能** |
-| **rs-ft8n sniper + EQ** | **CQ 3Y0Z JD34 デコード成功** |
+| デコーダ | 結果 | 時間 |
+|----------|------|------|
+| **WSJT-X** | **デコード不能** | — |
+| **rs-ft8n Native** | **CQ 3Y0Z JD34** | ~22 ms |
+| **rs-ft8n WASM (ブラウザ)** | **CQ 3Y0Z JD34** | 197 ms |
+
+[WASM デモ](https://jl1nie.github.io/rs-ft8n/) で同じ WAV ファイルをドロップして再現可能。
 
 ### BPF edge SNR sweep — BPF + EQ + AP の累積効果
 
