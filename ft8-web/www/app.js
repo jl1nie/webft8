@@ -915,15 +915,20 @@ init().then(async () => {
       opt.value = d.id; opt.textContent = d.label;
       deviceSelect.appendChild(opt);
     }
-    // Enumerate audio output devices
+    // Enumerate audio output devices (not supported on all platforms)
     const allDevices = await navigator.mediaDevices.enumerateDevices();
-    outputDeviceSelect.innerHTML = '<option value="">-- default --</option>';
-    for (const d of allDevices) {
-      if (d.kind !== 'audiooutput') continue;
-      const opt = document.createElement('option');
-      opt.value = d.deviceId;
-      opt.textContent = d.label || `Output ${d.deviceId.slice(0, 8)}`;
-      outputDeviceSelect.appendChild(opt);
+    const outputs = allDevices.filter(d => d.kind === 'audiooutput');
+    if (outputs.length > 0) {
+      outputDeviceSelect.innerHTML = '<option value="">-- default --</option>';
+      for (const d of outputs) {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Output ${d.deviceId.slice(0, 8)}`;
+        outputDeviceSelect.appendChild(opt);
+      }
+    } else {
+      // Android / platforms without audiooutput enumeration
+      outputDeviceSelect.closest('.field').style.display = 'none';
     }
     // Restore saved device selections
     const savedIn = localStorage.getItem('rs-ft8n-audio-in');
