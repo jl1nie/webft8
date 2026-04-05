@@ -155,15 +155,17 @@ export class Waterfall {
 
   /**
    * Draw decoded message labels on the waterfall.
+   * Labels are placed just above the period boundary line.
    * @param {Array} messages - array of { freq_hz, message }
-   * @param {number} yOffset - vertical position (pixels from bottom)
+   * @param {number} yOffset - vertical position (pixels from bottom, default 4)
    */
-  drawLabels(messages, yOffset = 10) {
+  drawLabels(messages, yOffset = 4) {
     const ctx = this.ctx;
     const w = this.canvas.width;
+    const h = this.canvas.height;
     const freqRange = this.freqMax - this.freqMin;
 
-    ctx.font = '11px monospace';
+    ctx.font = '10px monospace';
     ctx.textBaseline = 'bottom';
 
     for (const msg of messages) {
@@ -171,16 +173,44 @@ export class Waterfall {
       if (x < 0 || x > w) continue;
 
       const text = msg.message || '';
-      const tw = ctx.measureText(text).width + 6;
+      if (!text) continue;
+      const tw = ctx.measureText(text).width + 4;
+      const y = h - yOffset;
 
       // Background
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(x - 1, this.canvas.height - yOffset - 14, tw, 14);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.fillRect(x - 1, y - 12, tw, 12);
 
       // Text
       ctx.fillStyle = '#ffeb3b';
-      ctx.fillText(text, x + 2, this.canvas.height - yOffset);
+      ctx.fillText(text, x + 1, y);
     }
+  }
+
+  /**
+   * Record current scroll position for label placement tracking.
+   * Call this right after drawPeriodLine() to remember where the
+   * period boundary is on the canvas.
+   */
+  get labelY() {
+    return 4; // labels sit just above the period line at the bottom
+  }
+
+  /**
+   * Draw a horizontal period boundary line at the bottom of the waterfall.
+   */
+  drawPeriodLine() {
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    ctx.strokeStyle = '#f44336';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, h - 1);
+    ctx.lineTo(w, h - 1);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   /**
@@ -268,5 +298,29 @@ export class Waterfall {
     }
 
     ctx.putImageData(imgData, 0, h - 1);
+
+    // Redraw frequency axis on top (survives scrolling)
+    this._drawFreqAxisInternal();
+  }
+
+  _drawFreqAxisInternal() {
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const freqRange = this.freqMax - this.freqMin;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, w, 16);
+
+    ctx.font = '10px monospace';
+    ctx.textBaseline = 'top';
+
+    const ticks = [200, 500, 1000, 1500, 2000, 2500];
+    for (const f of ticks) {
+      const x = ((f - this.freqMin) / freqRange) * w;
+      ctx.fillStyle = '#666';
+      ctx.fillRect(x, 13, 1, 3);
+      ctx.fillStyle = '#999';
+      ctx.fillText(`${f}`, x + 2, 2);
+    }
   }
 }

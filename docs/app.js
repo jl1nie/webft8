@@ -73,6 +73,9 @@ const periodMgr = new FT8PeriodManager({
   onPeriodEnd: async (periodIndex, isEven) => {
     if (!capture.running || !wasmReady) return;
 
+    // Draw period boundary line on waterfall
+    waterfall.drawPeriodLine();
+
     statusEl.textContent = 'Decoding...';
     const float32 = await capture.snapshot();
 

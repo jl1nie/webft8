@@ -36,7 +36,10 @@ pub fn decode_wav(samples: &[i16]) -> Vec<DecodedMessage> {
         200,
     );
     results.into_iter().map(|r| {
-        let text = unpack77(&r.message77).unwrap_or_default();
+        let text = unpack77(&r.message77).unwrap_or_else(|| {
+            // Show hex of first 10 bytes for undecodable message types
+            r.message77.iter().take(20).map(|b| format!("{}", b)).collect::<Vec<_>>().join("")
+        });
         DecodedMessage {
             freq_hz: r.freq_hz,
             dt_sec: r.dt_sec,
@@ -60,7 +63,10 @@ pub fn decode_wav_subtract(samples: &[i16]) -> Vec<DecodedMessage> {
         200,
     );
     results.into_iter().map(|r| {
-        let text = unpack77(&r.message77).unwrap_or_default();
+        let text = unpack77(&r.message77).unwrap_or_else(|| {
+            // Show hex of first 10 bytes for undecodable message types
+            r.message77.iter().take(20).map(|b| format!("{}", b)).collect::<Vec<_>>().join("")
+        });
         DecodedMessage {
             freq_hz: r.freq_hz,
             dt_sec: r.dt_sec,
