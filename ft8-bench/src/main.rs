@@ -70,6 +70,9 @@ fn main() {
         println!();
         let _ = diag::trace_spurious(&wav130);
     }
+
+    // ── Extreme limit sweep ─────────────────────────────────────────────────
+    run_extreme_sweep();
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -946,4 +949,150 @@ fn run_interference_scenario() {
         if target_sniper { "DECODED" } else { "missed" }
     );
     println!("  total decoded: {}", results_sniper.len());
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Extreme limit sweep: find the decoder's breaking point.
+///
+/// 1. Hard-mixed: crowd +40 dB, sweep target from -14 to -26 dB (full-band subtract)
+/// 2. BPF edge: sweep target from -18 to -28 dB (sniper + EQ + AP)
+/// 3. Write WAVs at the extreme limit for WSJT-X comparison
+fn run_extreme_sweep() {
+    use ft8_core::decode::{decode_frame_subtract, decode_sniper_ap, DecodeDepth, EqMode, ApHint};
+    use ft8_core::message::{pack77_type1, unpack77};
+
+    let target_msg = pack77_type1("CQ", "3Y0Z", "JD34").unwrap();
+    let ap = ApHint::new().with_call2("3Y0Z");
+    let crowd_data = crowd_calls_grids();
+    const N_SEEDS: u64 = 20;
+    const TARGET_FREQ: f32 = 1000.0;
+
+    println!("\n=== EXTREME LIMIT SWEEP ===\n");
+
+    // ── (1) Hard-mixed: crowd +40 dB, target SNR sweep ─────────────────────
+    println!("--- Hard-mixed: 15 crowd @ +40 dB, target SNR sweep ({N_SEEDS} seeds) ---");
+    println!("  {:>6}  {:>10}  {:>10}", "SNR", "subtract", "sniper+AP");
+    for snr in [-14, -16, -18, -20, -22, -24, -26] {
+        let mut ok_sub = 0usize;
+        let mut ok_sniper = 0usize;
+        for seed in 0..N_SEEDS {
+            let mut signals: Vec<simulator::SimSignal> = crowd_data.iter().enumerate().map(|(i, (call, grid))| {
+                let msg = pack77_type1("CQ", call, grid).unwrap();
+                simulator::SimSignal {
+                    message77: msg,
+                    freq_hz: 200.0 + (i as f32 / crowd_data.len() as f32) * 2600.0,
+                    snr_db: 40.0,
+                    dt_sec: 0.0,
+                }
+            }).collect();
+            signals.push(simulator::SimSignal {
+                message77: target_msg,
+                freq_hz: TARGET_FREQ,
+                snr_db: snr as f32,
+                dt_sec: 0.0,
+            });
+            let audio = simulator::generate_frame(&simulator::SimConfig {
+                signals,
+                noise_seed: Some(seed),
+            });
+            let r_sub = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200);
+            if r_sub.iter().any(|r| r.message77 == target_msg) { ok_sub += 1; }
+
+            let r_sniper = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap));
+            if r_sniper.iter().any(|r| r.message77 == target_msg) { ok_sniper += 1; }
+        }
+        println!("  {:+4} dB  {:>4}/{:<4}  {:>4}/{:<4}", snr, ok_sub, N_SEEDS, ok_sniper, N_SEEDS);
+    }
+
+    // ── (2) BPF edge: target SNR sweep (sniper + EQ + AP) ──────────────────
+    println!("\n--- BPF edge (500 Hz, 4-pole): target SNR sweep ({N_SEEDS} seeds) ---");
+    println!("  {:>6}  {:>10}  {:>10}  {:>10}", "SNR", "EQ OFF", "EQ", "EQ+AP");
+    const FS: f64 = 12000.0;
+    const BPF_LO: f64 = 750.0;
+    const BPF_HI: f64 = 1250.0;
+    const N_POLES: usize = 4;
+    for snr in [-18, -20, -22, -24, -26, -28] {
+        let mut ok_off = 0usize;
+        let mut ok_eq = 0usize;
+        let mut ok_ap = 0usize;
+        for seed in 0..N_SEEDS {
+            let cfg = simulator::SimConfig {
+                signals: vec![simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: snr as f32,
+                    dt_sec: 0.0,
+                }],
+                noise_seed: Some(seed),
+            };
+            let mix = simulator::generate_frame_f32(&cfg);
+            let mut bpf = bpf::ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+            let filt = bpf.filter(&mix);
+            let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+            let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+            let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+
+            let r_off = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off, None);
+            if r_off.iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
+            let r_eq = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, None);
+            if r_eq.iter().any(|r| r.message77 == target_msg) { ok_eq += 1; }
+            let r_ap = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap));
+            if r_ap.iter().any(|r| r.message77 == target_msg) { ok_ap += 1; }
+        }
+        println!("  {:+4} dB  {:>4}/{:<4}  {:>4}/{:<4}  {:>4}/{:<4}", snr, ok_off, N_SEEDS, ok_eq, N_SEEDS, ok_ap, N_SEEDS);
+    }
+
+    // ── (3) Write extreme WAVs for WSJT-X comparison ────────────────────────
+    // hard_mixed at -20 dB (near our subtract limit)
+    {
+        let mut signals: Vec<simulator::SimSignal> = crowd_data.iter().enumerate().map(|(i, (call, grid))| {
+            let msg = pack77_type1("CQ", call, grid).unwrap();
+            simulator::SimSignal {
+                message77: msg,
+                freq_hz: 200.0 + (i as f32 / crowd_data.len() as f32) * 2600.0,
+                snr_db: 40.0,
+                dt_sec: 0.0,
+            }
+        }).collect();
+        signals.push(simulator::SimSignal {
+            message77: target_msg,
+            freq_hz: TARGET_FREQ,
+            snr_db: -20.0,
+            dt_sec: 0.0,
+        });
+        let audio = simulator::generate_frame(&simulator::SimConfig { signals, noise_seed: Some(0) });
+        let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata").join("sim_extreme_hard.wav");
+        let _ = simulator::write_wav(&out, &audio);
+        let r = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200);
+        let found = r.iter().any(|r| r.message77 == target_msg);
+        println!("\n  WAV: sim_extreme_hard.wav (crowd +40, target -20)  rs-ft8n: {}  decoded: {}", if found {"3Y0Z FOUND"} else {"3Y0Z missed"}, r.len());
+    }
+
+    // BPF edge at -22 dB (near our sniper+EQ+AP limit)
+    {
+        let cfg = simulator::SimConfig {
+            signals: vec![simulator::SimSignal {
+                message77: target_msg,
+                freq_hz: TARGET_FREQ,
+                snr_db: -22.0,
+                dt_sec: 0.0,
+            }],
+            noise_seed: Some(0),
+        };
+        let mix = simulator::generate_frame_f32(&cfg);
+        let mut bpf_f = bpf::ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+        let filt = bpf_f.filter(&mix);
+        let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+        let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+        let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+        let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata").join("sim_extreme_edge.wav");
+        let _ = simulator::write_wav(&out, &audio);
+        let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap));
+        let found = r.iter().any(|r| r.message77 == target_msg);
+        println!("  WAV: sim_extreme_edge.wav (BPF edge, target -22)  rs-ft8n: {}  decoded: {}", if found {"3Y0Z FOUND"} else {"3Y0Z missed"}, r.len());
+    }
+    println!();
 }
