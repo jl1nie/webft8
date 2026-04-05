@@ -1,37 +1,28 @@
 // FT8 QSO state machine.
 //
-// Standard QSO sequence (responding to CQ):
-//   RX: CQ DX_CALL DX_GRID       → state: IDLE → CALLING
-//   TX: DX_CALL MY_CALL MY_GRID  → state: CALLING
-//   RX: MY_CALL DX_CALL REPORT   → state: ROGER
-//   TX: DX_CALL MY_CALL R+REPORT → state: ROGER
-//   RX: MY_CALL DX_CALL RRR/RR73 → state: FINAL
-//   TX: DX_CALL MY_CALL 73       → state: COMPLETE
+// Minimal states — even/odd timing is handled by the period manager,
+// not the state machine.
 //
-// Standard QSO sequence (calling CQ):
-//   TX: CQ MY_CALL MY_GRID       → state: CQ_SENT
-//   RX: MY_CALL DX_CALL DX_GRID  → state: REPORT
-//   TX: DX_CALL MY_CALL REPORT   → state: REPORT
-//   RX: MY_CALL DX_CALL R+REPORT → state: FINAL
-//   TX: DX_CALL MY_CALL RR73     → state: COMPLETE
+// IDLE → CALLING → REPORT → FINAL → IDLE
+//
+// CALLING: first message sent (CQ or response), waiting for reply
+// REPORT:  report exchange in progress
+// FINAL:   73/RR73 sent, waiting for confirmation or done
 
 export const QSO_STATE = {
   IDLE: 'IDLE',
-  CQ_SENT: 'CQ_SENT',
   CALLING: 'CALLING',
-  ROGER: 'ROGER',
   REPORT: 'REPORT',
   FINAL: 'FINAL',
-  COMPLETE: 'COMPLETE',
 };
 
 export class QsoManager {
   /**
    * @param {Object} opts
-   * @param {string} opts.myCall — my callsign
-   * @param {string} opts.myGrid — my grid locator
-   * @param {function(string)} opts.onStateChange — callback(state)
-   * @param {function(string, string, string)} opts.onTxReady — callback(call1, call2, report)
+   * @param {string} opts.myCall
+   * @param {string} opts.myGrid
+   * @param {function(string)} opts.onStateChange
+   * @param {function(Object)} opts.onTxReady — callback({ call1, call2, report })
    */
   constructor(opts) {
     this.myCall = opts.myCall?.toUpperCase() || '';
@@ -42,94 +33,78 @@ export class QsoManager {
     this.state = QSO_STATE.IDLE;
     this.dxCall = '';
     this.dxGrid = '';
-    this.txReport = '';   // report we send
-    this.rxReport = '';   // report we received
-    this.txEven = null;   // true = TX on even periods, false = odd
-    this.autoMode = false;
+    this.txReport = '';
+    this.rxReport = '';
+    this.rxSnr = -10;
   }
 
-  /** Update my callsign and grid. */
   setMyInfo(call, grid) {
     this.myCall = call.toUpperCase();
     this.myGrid = grid.toUpperCase();
   }
 
-  /** Reset QSO state. */
   reset() {
     this.state = QSO_STATE.IDLE;
     this.dxCall = '';
     this.dxGrid = '';
     this.txReport = '';
     this.rxReport = '';
-    this.txEven = null;
     this.onStateChange(this.state);
   }
 
-  /** Start calling CQ. Returns the TX message fields. */
+  setRxSnr(snr) {
+    this.rxSnr = Math.round(snr);
+  }
+
+  /** Start calling CQ. */
   callCq() {
-    this.state = QSO_STATE.CQ_SENT;
+    this.state = QSO_STATE.CALLING;
     this.dxCall = '';
     this.dxGrid = '';
     this.onStateChange(this.state);
-    return { call1: 'CQ', call2: this.myCall, report: this.myGrid };
+    return this._tx('CQ', this.myCall, this.myGrid);
   }
 
-  /** Manually initiate a call to a specific station. */
-  callStation(dxCall, freq) {
+  /** Call a specific station. */
+  callStation(dxCall) {
     this.dxCall = dxCall.toUpperCase();
     this.state = QSO_STATE.CALLING;
     this.onStateChange(this.state);
-    return { call1: this.dxCall, call2: this.myCall, report: this.myGrid };
+    return this._tx(this.dxCall, this.myCall, this.myGrid);
   }
 
   /**
-   * Process a decoded message and advance the QSO state.
-   * @param {string} message — decoded message text (e.g. "CQ 3Y0Z JD34")
-   * @param {boolean} isEven — true if this was decoded in an even period
-   * @returns {Object|null} — TX message fields if we should transmit, null if no action
+   * Process a decoded message. Returns TX message if we should respond, null otherwise.
+   * @param {string} message — decoded text
+   * @returns {Object|null} { call1, call2, report } or null
    */
-  processMessage(message, isEven) {
+  processMessage(message) {
     const words = message.trim().split(/\s+/);
-    if (words.length < 2) return null;
-
-    const myCallUp = this.myCall;
-    if (!myCallUp) return null;
+    if (words.length < 2 || !this.myCall) return null;
 
     switch (this.state) {
       case QSO_STATE.IDLE:
-        return this._handleIdle(words, isEven);
-
-      case QSO_STATE.CQ_SENT:
-        return this._handleCqSent(words, isEven);
-
+        return this._onIdle(words);
       case QSO_STATE.CALLING:
-        return this._handleCalling(words, isEven);
-
-      case QSO_STATE.ROGER:
-        return this._handleRoger(words, isEven);
-
+        return this._onCalling(words);
       case QSO_STATE.REPORT:
-        return this._handleReport(words, isEven);
-
+        return this._onReport(words);
       case QSO_STATE.FINAL:
-        return this._handleFinal(words, isEven);
-
+        return this._onFinal(words);
       default:
         return null;
     }
   }
 
-  /** Get the next TX message for the current state (for manual TX). */
+  /** Get the current TX message (for manual TX). */
   getNextTx() {
     switch (this.state) {
-      case QSO_STATE.CQ_SENT:
-        return { call1: 'CQ', call2: this.myCall, report: this.myGrid };
       case QSO_STATE.CALLING:
-        return { call1: this.dxCall, call2: this.myCall, report: this.myGrid };
-      case QSO_STATE.ROGER:
-        return { call1: this.dxCall, call2: this.myCall, report: this.txReport };
+        return this.dxCall
+          ? { call1: this.dxCall, call2: this.myCall, report: this.myGrid }
+          : { call1: 'CQ', call2: this.myCall, report: this.myGrid };
       case QSO_STATE.REPORT:
-        return { call1: this.dxCall, call2: this.myCall, report: this.txReport || '-10' };
+        return { call1: this.dxCall, call2: this.myCall, report: this.txReport };
       case QSO_STATE.FINAL:
         return { call1: this.dxCall, call2: this.myCall, report: '73' };
       default:
@@ -137,125 +112,121 @@ export class QsoManager {
     }
   }
 
-  /** Set received SNR for auto-report calculation. */
-  setRxSnr(snr) {
-    this.rxSnr = Math.round(snr);
-  }
-
-  /** Calculate report string from received SNR. */
-  _autoReport() {
-    const snr = this.rxSnr !== undefined ? this.rxSnr : -10;
-    const clamped = Math.max(-50, Math.min(49, snr));
-    return (clamped >= 0 ? '+' : '') + String(clamped).padStart(2, '0');
-  }
-
-  /** Format TX message as display string. */
   formatTx(tx) {
     if (!tx) return '';
     return `${tx.call1} ${tx.call2} ${tx.report}`.trim();
   }
 
-  // ── State handlers ──────────────────────────────────────────────────
+  // ── Internal ──────────────────────────────────────────────────────────
 
-  _handleIdle(words, isEven) {
-    // 1. If we have a target DX — check if this is their CQ
-    if (words[0] === 'CQ' && this.dxCall && words.length >= 2) {
+  _autoReport() {
+    const snr = Math.max(-50, Math.min(49, this.rxSnr));
+    return (snr >= 0 ? '+' : '') + String(snr).padStart(2, '0');
+  }
+
+  _tx(call1, call2, report) {
+    const tx = { call1, call2, report };
+    this.onTxReady(tx);
+    return tx;
+  }
+
+  _onIdle(words) {
+    // "CQ [DX] CALL GRID" — someone calling CQ
+    if (words[0] === 'CQ' && this.dxCall) {
       const callPos = words[1] === 'DX' ? 2 : 1;
       if (words[callPos] === this.dxCall) {
         if (words.length > callPos + 1) this.dxGrid = words[callPos + 1];
-        this.txEven = !isEven;
         return this.callStation(this.dxCall);
       }
     }
 
-    // 2. Detect someone calling us: "<MY_CALL> <DX_CALL> <GRID>"
+    // "MYCALL DXCALL GRID" — someone responding to us or calling us
     if (words[0] === this.myCall && words.length >= 3) {
       this.dxCall = words[1];
       this.dxGrid = words[2];
       this.txReport = this._autoReport();
       this.state = QSO_STATE.REPORT;
-      this.txEven = !isEven;
       this.onStateChange(this.state);
-      const tx = { call1: this.dxCall, call2: this.myCall, report: this.txReport };
-      this.onTxReady(tx.call1, tx.call2, tx.report);
-      return tx;
+      return this._tx(this.dxCall, this.myCall, this.txReport);
     }
 
     return null;
   }
 
-  _handleCqSent(words, isEven) {
-    // Look for "<MY_CALL> <DX_CALL> <GRID>"
+  _onCalling(words) {
+    // Waiting for: "MYCALL DXCALL REPORT/GRID"
     if (words[0] === this.myCall && words.length >= 3) {
-      this.dxCall = words[1];
-      this.dxGrid = words[2];
-      this.txReport = this._autoReport();
-      this.state = QSO_STATE.REPORT;
-      this.txEven = !isEven; // TX on the opposite slot
-      this.onStateChange(this.state);
-      const tx = { call1: this.dxCall, call2: this.myCall, report: this.txReport };
-      this.onTxReady(tx.call1, tx.call2, tx.report);
-      return tx;
-    }
-    return null;
-  }
+      const responder = words[1];
+      const field = words[2];
 
-  _handleCalling(words, isEven) {
-    // Look for "<MY_CALL> <DX_CALL> <REPORT>"
-    if (words[0] === this.myCall && words.length >= 3) {
-      if (words[1] === this.dxCall) {
-        this.rxReport = words[2]; // e.g. "-12"
-        // Send R+report
-        const rpt = this.rxReport.startsWith('R') ? this.rxReport : `R${this.rxReport}`;
+      // If we were calling CQ, accept any responder
+      if (!this.dxCall || this.dxCall === responder) {
+        this.dxCall = responder;
+        this.dxGrid = field;
+      }
+
+      // Is this a report? (e.g., "-12", "+05", "R-12")
+      if (field.match(/^R?[+-]\d{2}$/)) {
+        this.rxReport = field;
+        const rpt = field.startsWith('R') ? field : `R${field}`;
         this.txReport = rpt;
-        this.state = QSO_STATE.ROGER;
-        this.txEven = !isEven;
+        this.state = QSO_STATE.REPORT;
         this.onStateChange(this.state);
-        const tx = { call1: this.dxCall, call2: this.myCall, report: this.txReport };
-        this.onTxReady(tx.call1, tx.call2, tx.report);
-        return tx;
+        return this._tx(this.dxCall, this.myCall, this.txReport);
       }
+
+      // Grid response — send our report
+      this.txReport = this._autoReport();
+      this.state = QSO_STATE.REPORT;
+      this.onStateChange(this.state);
+      return this._tx(this.dxCall, this.myCall, this.txReport);
     }
     return null;
   }
 
-  _handleRoger(words, isEven) {
-    // Look for "<MY_CALL> <DX_CALL> RRR" or "RR73"
-    if (words[0] === this.myCall && words.length >= 3 && words[1] === this.dxCall) {
-      if (words[2] === 'RRR' || words[2] === 'RR73') {
-        this.state = QSO_STATE.FINAL;
-        this.onStateChange(this.state);
-        const tx = { call1: this.dxCall, call2: this.myCall, report: '73' };
-        this.onTxReady(tx.call1, tx.call2, tx.report);
-        return tx;
-      }
+  _onReport(words) {
+    if (words[0] !== this.myCall || words[1] !== this.dxCall) return null;
+    if (words.length < 3) return null;
+
+    const field = words[2];
+
+    // RRR or RR73 — move to final
+    if (field === 'RRR' || field === 'RR73') {
+      this.state = QSO_STATE.FINAL;
+      this.onStateChange(this.state);
+      return this._tx(this.dxCall, this.myCall, '73');
     }
+
+    // R+report — they confirmed, send RR73
+    if (field.match(/^R[+-]\d{2}$/)) {
+      this.rxReport = field;
+      this.state = QSO_STATE.FINAL;
+      this.onStateChange(this.state);
+      return this._tx(this.dxCall, this.myCall, 'RR73');
+    }
+
+    // Plain report — send R+report
+    if (field.match(/^[+-]\d{2}$/)) {
+      this.rxReport = field;
+      this.txReport = `R${field}`;
+      this.onStateChange(this.state);
+      return this._tx(this.dxCall, this.myCall, this.txReport);
+    }
+
     return null;
   }
 
-  _handleReport(words, isEven) {
-    // Look for "<MY_CALL> <DX_CALL> R<REPORT>"
-    if (words[0] === this.myCall && words.length >= 3 && words[1] === this.dxCall) {
-      const w2 = words[2];
-      if (w2.startsWith('R+') || w2.startsWith('R-')) {
-        this.rxReport = w2;
-        this.state = QSO_STATE.FINAL;
-        this.onStateChange(this.state);
-        const tx = { call1: this.dxCall, call2: this.myCall, report: 'RR73' };
-        this.onTxReady(tx.call1, tx.call2, tx.report);
-        return tx;
-      }
-    }
-    return null;
-  }
-
-  _handleFinal(words, isEven) {
-    // Look for 73 or RR73 — QSO complete
+  _onFinal(words) {
     if (words[0] === this.myCall && words.length >= 3 && words[1] === this.dxCall) {
       if (words[2] === '73' || words[2] === 'RR73') {
-        this.state = QSO_STATE.COMPLETE;
+        // QSO complete
+        const result = {
+          dxCall: this.dxCall, dxGrid: this.dxGrid,
+          txReport: this.txReport, rxReport: this.rxReport,
+        };
+        this.state = QSO_STATE.IDLE;
         this.onStateChange(this.state);
-        return null; // No more TX
+        return null; // No more TX — return null but state changed
       }
     }
     return null;

@@ -68,7 +68,8 @@ const qso = new QsoManager({
     qsoStateEl.textContent = state;
     const tx = qso.getNextTx();
     qsoTxMsgEl.textContent = tx ? qso.formatTx(tx) : '';
-    if (state === QSO_STATE.COMPLETE) {
+    // Log when QSO completes (FINAL → IDLE with dxCall still set)
+    if (state === QSO_STATE.IDLE && qso.dxCall) {
       qsoLog.add({
         dxCall: qso.dxCall, dxGrid: qso.dxGrid,
         txReport: qso.txReport, rxReport: qso.rxReport,
