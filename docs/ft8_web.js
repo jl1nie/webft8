@@ -155,13 +155,6 @@ export function decode_wav_subtract(samples) {
 
 /**
  * Encode an FT8 message to audio waveform (12 kHz f32 PCM).
- *
- * `call1` — first callsign (e.g. "CQ", "JA1ABC")
- * `call2` — second callsign (e.g. "3Y0Z")
- * `report` — grid, report, or response (e.g. "PM95", "-12", "R-12", "RRR", "RR73", "73")
- * `freq_hz` — carrier frequency in Hz (e.g. 1000.0)
- *
- * Returns 151,680 f32 samples (12.64 seconds at 12 kHz).
  * @param {string} call1
  * @param {string} call2
  * @param {string} report

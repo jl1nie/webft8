@@ -11,8 +11,10 @@
 //! - Type 4       : One non-standard call + one hashed call
 //!
 //! For message types that require a hash table (22-bit hashed callsigns),
-//! `<...>` is returned as a placeholder because we have no runtime call-sign
-//! database.
+//! `<...>` is returned as a placeholder unless a [`CallsignHashTable`] is
+//! provided via [`unpack77_with_hash`].
+
+use crate::hash_table::CallsignHashTable;
 
 // ── Character sets (match WSJT-X packjt77.f90) ──────────────────────────────
 
@@ -115,6 +117,30 @@ fn unpack28(n28: u32) -> String {
         .map(|&b| b as char)
         .collect();
     s.trim().to_string()
+}
+
+/// Decode a 28-bit packed callsign token, with hash table lookup.
+fn unpack28_h(n28: u32, ht: &CallsignHashTable) -> String {
+    if n28 >= NTOKENS {
+        let n = n28 - NTOKENS;
+        if n < MAX22 {
+            // 22-bit hash — try table lookup
+            if let Some(resolved) = ht.lookup22(n) {
+                return resolved;
+            }
+            return "<...>".to_string();
+        }
+    }
+    unpack28(n28)
+}
+
+/// Decode a 12-bit hash with table lookup.
+fn resolve_hash12(n12: u32, ht: &CallsignHashTable) -> String {
+    if let Some(call) = ht.lookup12(n12) {
+        format!("<{}>", call)
+    } else {
+        "<...>".to_string()
+    }
 }
 
 /// Decode a 15-bit Maidenhead grid square index.
@@ -297,6 +323,148 @@ pub fn unpack77(msg: &[u8; 77]) -> Option<String> {
                 ("<...>".to_string(), nonstd)
             } else {
                 (nonstd, "<...>".to_string())
+            };
+
+            match nrpt {
+                0 => Some(format!("{} {}", c1, c2)),
+                1 => Some(format!("{} {} RRR", c1, c2)),
+                2 => Some(format!("{} {} RR73", c1, c2)),
+                3 => Some(format!("{} {} 73", c1, c2)),
+                _ => None,
+            }
+        }
+
+        _ => None,
+    }
+}
+
+/// Decode a 77-bit FT8 message, resolving hashed callsigns via a lookup table.
+///
+/// Behaves identically to [`unpack77`] but replaces `<...>` placeholders with
+/// actual callsigns when they are found in the hash table.
+pub fn unpack77_with_hash(msg: &[u8; 77], ht: &CallsignHashTable) -> Option<String> {
+    let n3 = read_bits(msg, 71, 3);
+    let i3 = read_bits(msg, 74, 3);
+
+    match i3 {
+        0 => match n3 {
+            0 => {
+                let text = unpack_free_text(msg);
+                if text.is_empty() { None } else { Some(text) }
+            }
+            1 => {
+                // DXpedition: CALL1 RR73; CALL2 <hash10> REPORT
+                let n28a = read_bits(msg, 0, 28);
+                let n28b = read_bits(msg, 28, 28);
+                let n10  = read_bits(msg, 56, 10);
+                let n5   = read_bits(msg, 66, 5);
+                let irpt = 2 * n5 as i32 - 30;
+                let crpt = if irpt >= 0 {
+                    format!("+{:02}", irpt)
+                } else {
+                    format!("{:03}", irpt)
+                };
+                let c1 = unpack28_h(n28a, ht);
+                let c2 = unpack28_h(n28b, ht);
+                let c3 = if let Some(call) = ht.lookup10(n10) {
+                    format!("<{}>", call)
+                } else {
+                    "<...>".to_string()
+                };
+                Some(format!("{} RR73; {} {} {}", c1, c2, c3, crpt))
+            }
+            3 | 4 => {
+                let c1 = unpack28_h(read_bits(msg, 0, 28), ht);
+                let c2 = unpack28_h(read_bits(msg, 28, 28), ht);
+                Some(format!("{} {} [FD]", c1, c2))
+            }
+            _ => None,
+        },
+
+        1 | 2 => {
+            let n28a  = read_bits(msg, 0, 28);
+            let ipa   = msg[28] & 1;
+            let n28b  = read_bits(msg, 29, 28);
+            let ipb   = msg[57] & 1;
+            let ir    = msg[58] & 1;
+            let igrid = read_bits(msg, 59, 15);
+
+            let mut c1 = unpack28_h(n28a, ht);
+            let mut c2 = unpack28_h(n28b, ht);
+
+            if ipa == 1 && !c1.starts_with('<') && !c1.starts_with("CQ") {
+                c1.push_str(if i3 == 1 { "/R" } else { "/P" });
+            }
+            if ipb == 1 && !c2.starts_with('<') {
+                c2.push_str(if i3 == 1 { "/R" } else { "/P" });
+            }
+
+            let report = if igrid <= MAX_GRID4 {
+                let grid = to_grid4(igrid)?;
+                if ir == 0 { grid } else { format!("R {}", grid) }
+            } else {
+                let irpt = igrid - MAX_GRID4;
+                match irpt {
+                    1 => String::new(),
+                    2 => "RRR".to_string(),
+                    3 => "RR73".to_string(),
+                    4 => "73".to_string(),
+                    n => {
+                        let mut isnr = n as i32 - 35;
+                        if isnr > 50 { isnr -= 101; }
+                        let sign = if isnr >= 0 { "+" } else { "" };
+                        if ir == 1 {
+                            format!("R{}{:02}", sign, isnr)
+                        } else {
+                            format!("{}{:02}", sign, isnr)
+                        }
+                    }
+                }
+            };
+
+            if report.is_empty() {
+                Some(format!("{} {}", c1, c2))
+            } else {
+                Some(format!("{} {} {}", c1, c2, report))
+            }
+        }
+
+        3 => {
+            let _itu  = msg[0] & 1;
+            let n28a  = read_bits(msg, 1, 28);
+            let n28b  = read_bits(msg, 29, 28);
+            let c1 = unpack28_h(n28a, ht);
+            let c2 = unpack28_h(n28b, ht);
+            Some(format!("{} {} [RTTY]", c1, c2))
+        }
+
+        4 => {
+            let n12   = read_bits(msg, 0, 12);
+            let n58   = read_bits_u64(msg, 12, 58);
+            let iflip = msg[70] & 1;
+            let nrpt  = read_bits(msg, 71, 2);
+            let icq   = msg[73] & 1;
+
+            let mut n = n58;
+            let mut buf = [b' '; 11];
+            for i in (0..11).rev() {
+                buf[i] = C38[(n % 38) as usize];
+                n /= 38;
+            }
+            let nonstd = String::from_utf8(buf.to_vec())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+
+            if icq == 1 {
+                return Some(format!("CQ {}", nonstd));
+            }
+
+            let hashed = resolve_hash12(n12, ht);
+            let (c1, c2) = if iflip == 0 {
+                (hashed, nonstd)
+            } else {
+                (nonstd, hashed)
             };
 
             match nrpt {

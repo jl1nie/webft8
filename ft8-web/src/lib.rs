@@ -1,6 +1,15 @@
 use wasm_bindgen::prelude::*;
 use ft8_core::decode::{decode_frame, decode_frame_subtract, DecodeDepth};
-use ft8_core::message::{unpack77, is_plausible_message};
+use ft8_core::hash_table::CallsignHashTable;
+use ft8_core::message::{unpack77_with_hash, is_plausible_message};
+
+use std::cell::RefCell;
+
+thread_local! {
+    /// Global callsign hash table, persists across decode calls.
+    /// Populated as callsigns are decoded; used to resolve `<...>` placeholders.
+    static HASH_TABLE: RefCell<CallsignHashTable> = RefCell::new(CallsignHashTable::new());
+}
 
 /// Single decoded FT8 message (returned to JS).
 #[wasm_bindgen]
@@ -23,26 +32,65 @@ impl DecodedMessage {
 }
 
 fn to_decoded(r: ft8_core::decode::DecodeResult) -> Option<DecodedMessage> {
-    let text = unpack77(&r.message77)?;
-    if text.is_empty() { return None; }
-    if !is_plausible_message(&text) { return None; }
-    Some(DecodedMessage {
-        freq_hz: r.freq_hz,
-        dt_sec: r.dt_sec,
-        snr_db: r.snr_db,
-        hard_errors: r.hard_errors,
-        pass: r.pass,
-        message: text,
+    HASH_TABLE.with(|ht| {
+        let ht = ht.borrow();
+        let text = unpack77_with_hash(&r.message77, &ht)?;
+        if text.is_empty() { return None; }
+        if !is_plausible_message(&text) { return None; }
+        Some(DecodedMessage {
+            freq_hz: r.freq_hz,
+            dt_sec: r.dt_sec,
+            snr_db: r.snr_db,
+            hard_errors: r.hard_errors,
+            pass: r.pass,
+            message: text,
+        })
     })
+}
+
+/// Register decoded callsigns in the hash table.
+fn register_callsigns(text: &str) {
+    HASH_TABLE.with(|ht| {
+        let mut ht = ht.borrow_mut();
+        for word in text.split_whitespace() {
+            if matches!(word, "CQ" | "DE" | "QRZ" | "DX" | "RRR" | "RR73" | "73" | "R" | "") {
+                continue;
+            }
+            if word.starts_with("CQ") { continue; }
+            if word.starts_with('<') || word.starts_with('+') || word.starts_with('-')
+                || word.starts_with("R+") || word.starts_with("R-") { continue; }
+            // 4-char grid locator
+            if word.len() == 4 {
+                let b = word.as_bytes();
+                if b[0].is_ascii_uppercase() && b[1].is_ascii_uppercase()
+                    && b[2].is_ascii_digit() && b[3].is_ascii_digit() {
+                    continue;
+                }
+            }
+            // Tags like [FD], [RTTY]
+            if word.starts_with('[') { continue; }
+            ht.insert(word);
+        }
+    });
+}
+
+fn decode_and_register(results: Vec<ft8_core::decode::DecodeResult>) -> Vec<DecodedMessage> {
+    let mut out = Vec::new();
+    for r in results {
+        if let Some(dm) = to_decoded(r) {
+            register_callsigns(&dm.message);
+            out.push(dm);
+        }
+    }
+    out
 }
 
 /// Decode FT8 from 12 kHz 16-bit mono PCM samples (single-pass).
 #[wasm_bindgen]
 pub fn decode_wav(samples: &[i16]) -> Vec<DecodedMessage> {
-    decode_frame(samples, 200.0, 2800.0, 1.5, None, DecodeDepth::BpAllOsd, 200)
-        .into_iter()
-        .filter_map(to_decoded)
-        .collect()
+    decode_and_register(
+        decode_frame(samples, 200.0, 2800.0, 1.5, None, DecodeDepth::BpAllOsd, 200)
+    )
 }
 
 /// Sniper-mode decode: ±250 Hz around target_freq, with optional EQ + AP.
@@ -59,23 +107,15 @@ pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str) -> Vec<D
         Some(ApHint::new().with_call2(callsign))
     };
 
-    decode_sniper_ap(
-        samples, target_freq, DecodeDepth::BpAllOsd, 20,
-        EqMode::Adaptive, ap.as_ref(),
+    decode_and_register(
+        decode_sniper_ap(
+            samples, target_freq, DecodeDepth::BpAllOsd, 20,
+            EqMode::Adaptive, ap.as_ref(),
+        )
     )
-        .into_iter()
-        .filter_map(to_decoded)
-        .collect()
 }
 
 /// Encode an FT8 message to audio waveform (12 kHz f32 PCM).
-///
-/// `call1` — first callsign (e.g. "CQ", "JA1ABC")
-/// `call2` — second callsign (e.g. "3Y0Z")
-/// `report` — grid, report, or response (e.g. "PM95", "-12", "R-12", "RRR", "RR73", "73")
-/// `freq_hz` — carrier frequency in Hz (e.g. 1000.0)
-///
-/// Returns 151,680 f32 samples (12.64 seconds at 12 kHz).
 #[wasm_bindgen]
 pub fn encode_ft8(call1: &str, call2: &str, report: &str, freq_hz: f32) -> Result<Vec<f32>, JsValue> {
     use ft8_core::message::pack77;
@@ -90,8 +130,7 @@ pub fn encode_ft8(call1: &str, call2: &str, report: &str, freq_hz: f32) -> Resul
 /// Decode FT8 with multi-pass signal subtraction (3-pass).
 #[wasm_bindgen]
 pub fn decode_wav_subtract(samples: &[i16]) -> Vec<DecodedMessage> {
-    decode_frame_subtract(samples, 200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200)
-        .into_iter()
-        .filter_map(to_decoded)
-        .collect()
+    decode_and_register(
+        decode_frame_subtract(samples, 200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200)
+    )
 }
