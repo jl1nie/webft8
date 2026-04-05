@@ -1052,6 +1052,57 @@ fn run_extreme_sweep() {
     }
 
     // ── (3) Write extreme WAVs for WSJT-X comparison ────────────────────────
+    // ── (3) QSO scenario sweep: test 77-bit AP with matching messages ──────
+    {
+        use ft8_core::message::pack77;
+        println!("\n--- QSO scenario: BPF edge, EQ+AP ({N_SEEDS} seeds) ---");
+        println!("  {:>6}  {:>12}  {:>12}  {:>12}", "SNR", "CQ(61bit)", "REPORT(61b)", "RR73(77bit)");
+
+        // Messages that would occur during a QSO between JA1ABC and 3Y0Z:
+        let msg_cq     = pack77_type1("CQ", "3Y0Z", "JD34").unwrap();        // CQ from DX
+        let msg_report = pack77("JA1ABC", "3Y0Z", "R-12").unwrap();          // DX sends R-report
+        let msg_rr73   = pack77("JA1ABC", "3Y0Z", "RR73").unwrap();          // DX sends RR73
+
+        let ap_cq   = ApHint::new().with_call1("CQ").with_call2("3Y0Z");
+        let ap_dir  = ApHint::new().with_call1("JA1ABC").with_call2("3Y0Z"); // 61-bit for directed
+        let ap_rr73 = ApHint::new().with_call1("JA1ABC").with_call2("3Y0Z"); // 77-bit (pass 9-11 auto)
+
+        let scenarios: Vec<(&str, [u8; 77], &ApHint)> = vec![
+            ("CQ(61bit)",    msg_cq,     &ap_cq),
+            ("REPORT(61b)",  msg_report, &ap_dir),
+            ("RR73(77bit)",  msg_rr73,   &ap_rr73),
+        ];
+
+        for snr in [-18, -20, -22, -24, -26] {
+            let mut results = Vec::new();
+            for (label, target_msg_qso, ap_hint) in &scenarios {
+                let mut ok = 0usize;
+                for seed in 0..N_SEEDS {
+                    let cfg = simulator::SimConfig {
+                        signals: vec![simulator::SimSignal {
+                            message77: *target_msg_qso,
+                            freq_hz: TARGET_FREQ,
+                            snr_db: snr as f32,
+                            dt_sec: 0.0,
+                        }],
+                        noise_seed: Some(seed),
+                    };
+                    let mix = simulator::generate_frame_f32(&cfg);
+                    let mut bpf = bpf::ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+                    let filt = bpf.filter(&mix);
+                    let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+                    let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+                    let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+                    let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(ap_hint));
+                    if r.iter().any(|r| r.message77 == *target_msg_qso) { ok += 1; }
+                }
+                results.push(format!("{:>4}/{:<4}", ok, N_SEEDS));
+            }
+            println!("  {:+4} dB  {}  {}  {}", snr, results[0], results[1], results[2]);
+        }
+    }
+
+    // ── (4) Write extreme WAVs for WSJT-X comparison ────────────────────────
     // hard_mixed at -20 dB (near our subtract limit)
     {
         let mut signals: Vec<simulator::SimSignal> = crowd_data.iter().enumerate().map(|(i, (call, grid))| {
