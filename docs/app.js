@@ -144,6 +144,7 @@ function setSnipePhase(phase) {
   }
   // Clear RX list when switching phases
   document.getElementById('snipe-rx-list').innerHTML = '';
+  updateSnipeOverlay();
 }
 
 // ── Settings panel ──────────────────────────────────────────────────────────
@@ -164,7 +165,7 @@ if (!myCallInput.value) setTimeout(openSettings, 500);
 
 // ── Snipe overlay on waterfall ──────────────────────────────────────────────
 function updateSnipeOverlay() {
-  if (currentMode !== 'snipe') {
+  if (currentMode !== 'snipe' || snipePhase === 'watch') {
     snipeOverlay.style.display = 'none';
     snipeFreqLabel.style.display = 'none';
     return;
