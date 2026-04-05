@@ -915,10 +915,9 @@ init().then(async () => {
     const savedOut = localStorage.getItem('rs-ft8n-audio-out');
     if (savedOut) outputDeviceSelect.value = savedOut;
 
-    // Auto-start if callsign and audio device are configured
+    // Ready — tap logo to start
     if (myCallInput.value && deviceSelect.value) {
-      // Small delay to let browser settle after permission grant
-      setTimeout(() => toggleAudio(), 300);
+      setStatus('Tap logo to start');
     }
   } catch (e) { console.warn('Audio devices:', e); }
   updateTxActions();
