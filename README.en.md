@@ -85,6 +85,8 @@ BPF passband with 4 crowd stations (@ +8 dB) masking target (@ -14 dB):
 
 ### Performance (100 stations, release build)
 
+Environment: AMD Ryzen 9 9900X (12C/24T), 32 GB RAM, rustc 1.94.0, WSL2 Linux 5.15
+
 | Mode | Decoded | Mean time | Budget (2.4 s) |
 |------|---------|-----------|----------------|
 | decode_frame (single) | 82 | 19 ms | 0.8% |
