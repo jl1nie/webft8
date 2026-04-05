@@ -165,13 +165,7 @@ function setSnipePhase(phase) {
   if (phase === 'watch') {
     snipePhaseHint.textContent = 'full-band — tap WF to set DF';
   } else {
-    snipePhaseHint.textContent = `narrow ${snipeFreq} Hz — calling`;
-    // Auto-start calling if we have a target
-    if (apCall && qso.state === QSO_STATE.IDLE) {
-      qso.setMyInfo(myCallInput.value, myGridInput.value);
-      const tx = qso.callStation(apCall);
-      if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
-    }
+    snipePhaseHint.textContent = `narrow ${snipeFreq} Hz`;
   }
   updateSnipeOverlay();
 }
