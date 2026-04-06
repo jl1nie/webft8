@@ -27,9 +27,15 @@ export class BleTransport {
   }
 
   async connect() {
-    // Request device with IC-705 BLE service filter
+    // Request device — IC-705 may not include service UUID in advertisement,
+    // so filter by name prefix and declare the service as optional.
     this.device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SERVICE_UUID] }],
+      filters: [
+        { namePrefix: 'ICOM' },
+        { namePrefix: 'IC-705' },
+        { services: [SERVICE_UUID] },
+      ],
+      optionalServices: [SERVICE_UUID],
     });
 
     this.device.addEventListener('gattserverdisconnected', () => {
