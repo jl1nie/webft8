@@ -249,7 +249,7 @@ function snipeDialHz() {
   return baseHz + (snipeBpf - FILTER_CENTER);
 }
 
-function setSnipePhase(phase) {
+async function setSnipePhase(phase) {
   snipePhase = phase;
   btnWatch.classList.toggle('active', phase === 'watch');
   btnCall.classList.toggle('active', phase === 'call');
@@ -257,14 +257,13 @@ function setSnipePhase(phase) {
   snipeView.classList.toggle('snipe-call-phase', phase === 'call');
   if (phase === 'watch') {
     snipePhaseHint.textContent = `full-band  DF ${snipeDf} Hz`;
-    cat.setFilter(false);
-    // Restore original dial frequency
+    await cat.setFilter(false);
     const baseHz = Math.round(parseFloat(bandSelect.value) * 1e6);
-    cat.setFreq(baseHz);
+    await cat.setFreq(baseHz);
   } else {
     snipePhaseHint.textContent = `BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`;
-    cat.setFilter(true);
-    cat.setFreq(snipeDialHz());
+    await cat.setFilter(true);
+    await cat.setFreq(snipeDialHz());
   }
   updateSnipeOverlay();
 }
@@ -313,7 +312,7 @@ function updateSnipeOverlay() {
   snipeFreqLabel.textContent = `${snipeBpf} Hz`;
 }
 
-wfWrap.addEventListener('click', (e) => {
+wfWrap.addEventListener('click', async (e) => {
   const rect = wfCanvas.getBoundingClientRect();
   const freq = Math.round(FREQ_MIN + ((e.clientX - rect.left) / rect.width) * (FREQ_MAX - FREQ_MIN));
   if (currentMode === 'snipe') {
@@ -325,7 +324,7 @@ wfWrap.addEventListener('click', (e) => {
     } else {
       // Call: set BPF window center — narrow receive + VFO shift
       snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq));
-      cat.setFreq(snipeDialHz());
+      await cat.setFreq(snipeDialHz());
       setStatus(`BPF: ${snipeBpf} Hz`);
     }
     updateSnipeOverlay();
@@ -852,12 +851,12 @@ periodMgr.callbacks.onTxFire = async (tx) => {
 // ── Halt / Reset (progressive: 1st tap = halt TX, 2nd tap = reset QSO) ─────
 let halted = false;
 
-btnHalt.addEventListener('click', () => {
+btnHalt.addEventListener('click', async () => {
   if (!halted) {
     // First tap: cancel TX, stop audio output, but keep QSO state
     periodMgr.cancelTx();
     audioOut.stop();
-    cat.safePttOff();
+    await cat.safePttOff();
     txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
     timerEl.classList.remove('tx-on');
     halted = true;
