@@ -43,8 +43,7 @@ const myCallInput = document.getElementById('my-call');
 const myGridInput = document.getElementById('my-grid');
 const deviceSelect = document.getElementById('audio-device');
 const outputDeviceSelect = document.getElementById('audio-output-device');
-const bandSelect = document.getElementById('band-freq');
-const bandHeader = document.getElementById('band-header');
+const bandSelect = document.getElementById('band-header');
 const subtractCheck = document.getElementById('subtract-mode');
 const apCheck = document.getElementById('ap-mode');
 const btnCat = document.getElementById('btn-cat');
@@ -157,30 +156,18 @@ myGridInput.addEventListener('change', () => {
   myGridInput.value = myGridInput.value.toUpperCase();
   localStorage.setItem('rs-ft8n-mygrid', myGridInput.value);
 });
-// Sync header band selector from settings band selector
-for (const opt of bandSelect.options) {
-  const o = document.createElement('option');
-  o.value = opt.value;
-  o.textContent = opt.value; // short label in header
-  bandHeader.appendChild(o);
-}
 const savedBand = localStorage.getItem('rs-ft8n-band');
-if (savedBand) { bandSelect.value = savedBand; bandHeader.value = savedBand; }
-async function syncBand(src) {
-  bandSelect.value = src.value;
-  bandHeader.value = src.value;
-  localStorage.setItem('rs-ft8n-band', src.value);
-  // Set rig VFO to new band frequency and mode (sequential to avoid write collision)
-  const baseHz = Math.round(parseFloat(src.value) * 1e6);
+if (savedBand) bandSelect.value = savedBand;
+bandSelect.addEventListener('change', async () => {
+  localStorage.setItem('rs-ft8n-band', bandSelect.value);
+  const baseHz = Math.round(parseFloat(bandSelect.value) * 1e6);
   if (currentMode === 'snipe' && snipePhase === 'call') {
     await cat.setFreq(baseHz + (snipeBpf - FILTER_CENTER));
   } else {
     await cat.setFreq(baseHz);
   }
   await cat.setModeData();
-}
-bandSelect.addEventListener('change', () => syncBand(bandSelect));
-bandHeader.addEventListener('change', () => syncBand(bandHeader));
+});
 deviceSelect.addEventListener('change', () => localStorage.setItem('rs-ft8n-audio-in', deviceSelect.value));
 outputDeviceSelect.addEventListener('change', () => localStorage.setItem('rs-ft8n-audio-out', outputDeviceSelect.value));
 
