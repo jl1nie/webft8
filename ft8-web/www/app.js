@@ -202,18 +202,6 @@ txGainSlider.addEventListener('input', () => {
   localStorage.setItem('rs-ft8n-tx-gain', pct);
 });
 
-// RX level meter from AudioWorklet peak reports
-capture.onPeak = (level) => {
-  const pct = Math.min(level * 100, 100);
-  rxMeter.style.width = pct + '%';
-  if (level > 0.95) {
-    rxMeter.classList.add('clip');
-    rxClip.classList.add('active');
-  } else {
-    rxMeter.classList.remove('clip');
-    rxClip.classList.remove('active');
-  }
-};
 
 const qso = new QsoManager({
   myCall: myCallInput.value,
@@ -254,6 +242,18 @@ capture._onDisconnect = () => {
   updateLiveUI();
   setStatus('Audio disconnected');
   showToast('Audio disconnected');
+};
+// RX level meter from AudioWorklet peak reports
+capture.onPeak = (level) => {
+  const pct = Math.min(level * 100, 100);
+  rxMeter.style.width = pct + '%';
+  if (level > 0.95) {
+    rxMeter.classList.add('clip');
+    rxClip.classList.add('active');
+  } else {
+    rxMeter.classList.remove('clip');
+    rxClip.classList.remove('active');
+  }
 };
 cat.onDisconnect = () => {
   btnCat.textContent = 'Connect CAT';
