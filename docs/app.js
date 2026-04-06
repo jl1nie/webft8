@@ -200,7 +200,21 @@ txGainSlider.addEventListener('input', () => {
   txGainVal.textContent = pct + '%';
   audioOut.setGain(pct / 100);
   localStorage.setItem('rs-ft8n-tx-gain', pct);
+  updateTxMeter();
 });
+
+function updateTxMeter() {
+  if (!audioOut.playing) return;
+  const pct = Math.min(audioOut.gain * 100, 100);
+  txMeter.style.width = pct + '%';
+  if (audioOut.gain > 0.95) {
+    txMeter.classList.add('clip');
+    txClip.classList.add('active');
+  } else {
+    txMeter.classList.remove('clip');
+    txClip.classList.remove('active');
+  }
+}
 
 
 const qso = new QsoManager({
@@ -1005,13 +1019,7 @@ btnTestTone.addEventListener('click', async () => {
     const df = currentMode === 'snipe' ? snipeDf : scoutDf;
     await audioOut.startTone(df, outputDeviceSelect.value || undefined);
     btnTestTone.textContent = `Stop (${df} Hz)`;
-    // Show TX level
-    const pct = Math.min(audioOut.gain * 100, 100);
-    txMeter.style.width = pct + '%';
-    if (audioOut.gain > 0.95) {
-      txMeter.classList.add('clip');
-      txClip.classList.add('active');
-    }
+    updateTxMeter();
   }
 });
 
