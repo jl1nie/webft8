@@ -5,9 +5,10 @@
     "baud": 38400,
     "pttOn": "TX1;",
     "pttOff": "TX0;",
+    "modeData": "MD0C;",
     "filterNarrow": "RF04;SH0010;",
     "filterWide": "RF02;SH0014;",
-    "note": "RF04=500Hz roofing, SH0010=500Hz DSP (CW/DATA)"
+    "note": "RF04=500Hz roofing, SH0010=500Hz DSP. MD0C=DATA-USB"
   },
   "ftdx101mp": {
     "label": "Yaesu FTDX101MP",
@@ -15,9 +16,10 @@
     "baud": 38400,
     "pttOn": "TX1;",
     "pttOff": "TX0;",
+    "modeData": "MD0C;",
     "filterNarrow": "RF04;SH0010;",
     "filterWide": "RF02;SH0014;",
-    "note": "RF04=600Hz roofing (closest to 500Hz), SH0010=500Hz DSP"
+    "note": "RF04=600Hz roofing (closest to 500Hz), SH0010=500Hz DSP. MD0C=DATA-USB"
   },
   "ft891": {
     "label": "Yaesu FT-891",
@@ -25,9 +27,10 @@
     "baud": 38400,
     "pttOn": "TX1;",
     "pttOff": "TX0;",
+    "modeData": "MD0C;",
     "filterNarrow": "SH0110;",
     "filterWide": "SH0000;",
-    "note": "DSP only (no roofing filter). SH01xx=enable, SH00xx=off"
+    "note": "DSP only (no roofing filter). SH01xx=enable, SH00xx=off. MD0C=DATA-USB"
   },
   "ic7300": {
     "label": "Icom IC-7300",
@@ -36,9 +39,10 @@
     "civAddr": "0x94",
     "pttOn": "1C 00 01",
     "pttOff": "1C 00 00",
+    "modeData": "06 01 02 01",
     "filterNarrow": "1A 03 09",
     "filterWide": "1A 03 28",
-    "note": "SDR — DSP filter only (no roofing). 09=500Hz, 28=2400Hz"
+    "note": "SDR — DSP filter only. 06=set mode, 01=USB, 02=FIL2, 01=data. 09=500Hz, 28=2400Hz"
   },
   "ic705": {
     "label": "Icom IC-705",
@@ -48,9 +52,10 @@
     "ble": true,
     "pttOn": "1C 00 01",
     "pttOff": "1C 00 00",
+    "modeData": "06 01 02 01",
     "filterNarrow": "1A 03 09",
     "filterWide": "1A 03 28",
-    "note": "SDR — DSP filter only (no roofing). 09=500Hz, 28=2400Hz. BLE supported."
+    "note": "SDR — DSP filter only. 06=set mode, 01=USB, 02=FIL2, 01=data. BLE supported."
   },
   "ic7851": {
     "label": "Icom IC-7851",
@@ -59,6 +64,7 @@
     "civAddr": "0x8E",
     "pttOn": "1C 00 01",
     "pttOff": "1C 00 00",
+    "modeData": "06 01 02 01",
     "filterNarrow": "1A 03 09",
     "filterWide": "1A 03 28",
     "note": "1.2kHz roofing (auto-selected). DSP 09=500Hz, 28=2400Hz"

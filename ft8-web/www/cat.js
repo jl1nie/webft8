@@ -154,6 +154,21 @@ export class CatController {
     }
   }
 
+  async setModeData() {
+    if (!this.connected || !this.rig) return;
+    try {
+      const cmd = this.rig.modeData;
+      if (!cmd) return;
+      if (this.rig.protocol === 'civ') {
+        await this._civSendHex(cmd);
+      } else {
+        await this._sendText(cmd);
+      }
+    } catch (e) {
+      this._handleDisconnect();
+    }
+  }
+
   async setFreq(freqHz) {
     if (!this.connected || !this.rig) return;
     try {
