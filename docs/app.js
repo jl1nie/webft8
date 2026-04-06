@@ -160,18 +160,18 @@ for (const opt of bandSelect.options) {
 }
 const savedBand = localStorage.getItem('rs-ft8n-band');
 if (savedBand) { bandSelect.value = savedBand; bandHeader.value = savedBand; }
-function syncBand(src) {
+async function syncBand(src) {
   bandSelect.value = src.value;
   bandHeader.value = src.value;
   localStorage.setItem('rs-ft8n-band', src.value);
-  // Set rig VFO to new band frequency and mode
+  // Set rig VFO to new band frequency and mode (sequential to avoid write collision)
   const baseHz = Math.round(parseFloat(src.value) * 1e6);
   if (currentMode === 'snipe' && snipePhase === 'call') {
-    cat.setFreq(baseHz + (snipeBpf - FILTER_CENTER));
+    await cat.setFreq(baseHz + (snipeBpf - FILTER_CENTER));
   } else {
-    cat.setFreq(baseHz);
+    await cat.setFreq(baseHz);
   }
-  cat.setModeData();
+  await cat.setModeData();
 }
 bandSelect.addEventListener('change', () => syncBand(bandSelect));
 bandHeader.addEventListener('change', () => syncBand(bandHeader));
