@@ -188,9 +188,14 @@
   #settings-panel .field { margin-bottom: var(--sp-sm); }
   #settings-panel label { font-size: var(--fs-sm); color: var(--c-text2); display: block;
     margin-bottom: var(--sp-xs); }
-  #settings-panel input, #settings-panel select { font-size: var(--fs-base); padding: var(--sp-xs) var(--sp-sm);
+  #settings-panel input:not([type="checkbox"]), #settings-panel select {
+    font-size: var(--fs-base); padding: var(--sp-xs) var(--sp-sm);
     background: var(--c-surface2); color: var(--c-text); border: 1px solid var(--c-border);
     border-radius: var(--radius-sm); width: 100%; min-height: 36px; }
+  #settings-panel label:has(input[type="checkbox"]) {
+    display: flex; align-items: center; gap: var(--sp-xs);
+    font-size: var(--fs-sm); color: var(--c-text2); margin-bottom: var(--sp-xs); }
+  #settings-panel input[type="checkbox"] { width: auto; min-height: auto; margin: 0; }
   #settings-panel button { font-size: var(--fs-base); padding: var(--sp-xs) var(--sp-sm);
     border-radius: var(--radius-sm); border: 1px solid var(--c-border); background: var(--c-surface2);
     color: var(--c-text); cursor: pointer; width: 100%; margin-bottom: var(--sp-xs); min-height: 36px; }
