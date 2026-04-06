@@ -72,6 +72,29 @@ export class AudioOutput {
     return peak;
   }
 
+  /**
+   * Start a continuous test tone at the given frequency.
+   * @param {number} freqHz — tone frequency in Hz
+   * @param {string} [deviceId] — output device ID (optional)
+   */
+  async startTone(freqHz, deviceId) {
+    this.stop();
+    this.ctx = new AudioContext();
+    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    if (deviceId && this.ctx.setSinkId) {
+      try { await this.ctx.setSinkId(deviceId); } catch (_) {}
+    }
+    this.sourceNode = this.ctx.createOscillator();
+    this.sourceNode.type = 'sine';
+    this.sourceNode.frequency.value = freqHz;
+    this.gainNode = this.ctx.createGain();
+    this.gainNode.gain.value = this.gain;
+    this.sourceNode.connect(this.gainNode);
+    this.gainNode.connect(this.ctx.destination);
+    this.sourceNode.start();
+    this.playing = true;
+  }
+
   /** Stop playback immediately. */
   stop() {
     if (this.sourceNode) {

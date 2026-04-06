@@ -992,6 +992,29 @@ async function toggleAudio() {
 btnStart.addEventListener('click', toggleAudio);
 logoEl.addEventListener('click', toggleAudio);
 
+// ── Test tone ─────────────────────────────────────────────────────────────
+const btnTestTone = document.getElementById('btn-test-tone');
+btnTestTone.addEventListener('click', async () => {
+  if (audioOut.playing) {
+    audioOut.stop();
+    btnTestTone.textContent = 'Test Tone';
+    txMeter.style.width = '0%';
+    txMeter.classList.remove('clip');
+    txClip.classList.remove('active');
+  } else {
+    const df = currentMode === 'snipe' ? snipeDf : scoutDf;
+    await audioOut.startTone(df, outputDeviceSelect.value || undefined);
+    btnTestTone.textContent = `Stop (${df} Hz)`;
+    // Show TX level
+    const pct = Math.min(audioOut.gain * 100, 100);
+    txMeter.style.width = pct + '%';
+    if (audioOut.gain > 0.95) {
+      txMeter.classList.add('clip');
+      txClip.classList.add('active');
+    }
+  }
+});
+
 // ── CAT ─────────────────────────────────────────────────────────────────────
 btnCat.addEventListener('click', async () => {
   if (cat.connected) {
