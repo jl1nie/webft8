@@ -10,7 +10,7 @@ rs-ft8n is a browser-based FT8 QSO application -- decode, transmit, CAT control,
 
 ```
 +--------------------------------------+
-| rs-ft8n [Scout][Snipe]        12s  * | <- Header (logo/mode/secs/settings)
+| rs-ft8n [Scout][Snipe] 14.074  12s * | <- Header (mode/band/secs/settings)
 |--------------------------------------|
 | ::::::::: Waterfall ::::::::::::::::: | <- Waterfall (tap to set DF)
 | ::::::::|::::::::::::::::::::::::::::: |    Red dashed line = current DF
@@ -32,29 +32,29 @@ rs-ft8n is a browser-based FT8 QSO application -- decode, transmit, CAT control,
 1. Open the [app](https://jl1nie.github.io/rs-ft8n/)
 2. The settings panel (gear icon) opens automatically (first time only)
 3. Enter the following:
-   - **My Callsign** -- your callsign (e.g., `W1AW`)
-   - **My Grid** -- your grid locator (e.g., `FN31`)
-   - **Band (MHz)** -- select operating band (e.g., `14.074 (20m)`)
+   - **My Callsign** -- your callsign (e.g., `W1AW`). Auto-converted to uppercase
+   - **My Grid** -- your grid locator (e.g., `FN31`). Auto-converted to uppercase
    - **Audio Input** -- select your USB audio interface (receive side)
    - **Audio Output** -- select TX audio output device (transmit side)
-4. **Tap the logo (rs-ft8n)** to start live decoding (logo turns blue)
+   - **RX / TX Gain** -- adjust input/output levels with sliders (see below)
+4. Select operating band from the **Band** selector in the header (e.g., `14.074 (20m)`)
+5. **Tap the logo (rs-ft8n)** to start live decoding (logo turns blue)
 
 > Audio device selections are saved in localStorage and automatically restored on next visit. After initial setup, just tap the logo to start.
-
-> For CAT control, select your Rig Model in the CAT section and tap **Connect CAT**. Requires Chrome or Edge (Web Serial API).
 
 ---
 
 ## Header
 
 ```
-rs-ft8n [Scout][Snipe]   12s  *
+rs-ft8n [Scout][Snipe]  14.074(20m)  12s  *
 ```
 
 | Element | Description |
 |---------|-------------|
 | **rs-ft8n logo** | Tap to toggle Audio Start/Stop. Dimmed = stopped, blue = live |
 | **Mode tabs** | Scout / Snipe toggle |
+| **Band selector** | Operating band. On change, sets rig VFO frequency and mode (DATA-USB) when CAT is connected |
 | **Seconds remaining** | Integer seconds until next period boundary |
 | **Gear icon** | Open settings panel |
 
@@ -139,13 +139,13 @@ Find the target and choose the **transmit frequency (DF)**. Receive is full-band
 - **Message list**: DF / DT / SNR / Message in unified format (with period separators)
 - **QSO progress dots**: filled-circle empty-circle empty-circle empty-circle -> all filled
 
-#### Call Phase (Keep Calling)
+#### Call Phase (Narrow-Filter Receive)
 
-Once you've set the DF in Watch, switch to **Call**. When CAT is connected, the rig's 500 Hz narrow filter is automatically engaged.
+Once you've set the DF in Watch, switch to **Call**. When CAT is connected, the rig's DSP narrow filter (FIL3) is automatically engaged, and the VFO frequency shifts to track the BPF window center.
 
 | Action | Effect |
 |--------|--------|
-| **Tap waterfall** | Set **BPF (RX window center)**. DF (TX frequency) remains as set in Watch |
+| **Tap waterfall** | Set **BPF (RX window center)**. DF (TX frequency) remains as set in Watch. VFO tracks BPF when CAT is connected |
 
 **Phase hint:** Status shows `BPF 1050 Hz  DF 1200 Hz`
 
@@ -156,9 +156,13 @@ Once you've set the DF in Watch, switch to **Call**. When CAT is connected, the 
 - QSO failure (retry limit reached) -- auto-reverts to Watch, rig filter restored to wide
 - You can manually switch back to Watch to change DF
 
+**VFO tracking (when CAT is connected):**
+
+Moving the BPF window automatically shifts the rig's VFO frequency so the physical filter covers the target signal. Returning to Watch restores the VFO to the original band frequency.
+
 **Switching Watch / Call:**
 
-Use the `[Watch] [Call]` tabs at the top of the Snipe view. The message list is preserved when switching. Returning to Watch automatically restores the CAT filter to wide (2400 Hz).
+Use the `[Watch] [Call]` tabs at the top of the Snipe view. The message list is preserved when switching. Returning to Watch automatically restores the CAT filter to wide (FIL2).
 
 ---
 
@@ -241,6 +245,24 @@ The table accumulates during the WASM session (max 1000 entries, LRU eviction) a
 
 ---
 
+## Audio Level Controls
+
+The Station section in the settings panel provides RX / TX level adjustment.
+
+| Item | Description |
+|------|-------------|
+| **RX gain slider** | Receive input level (0--200%). Adjusts GainNode before the decoder |
+| **RX level meter** | Real-time peak level display (green = normal, red = clipping) |
+| **TX gain slider** | Transmit output level (0--200%) |
+| **TX level meter** | Peak level display during transmission |
+| **CLIP indicator** | Red **CLIP** text lights up when level exceeds 95% |
+
+**Important:** Excessive input levels are a major cause of decode failure. If the RX meter is constantly red (CLIP), reduce the RX gain or lower the rig's audio output level. TX clipping will transmit a distorted signal.
+
+Gain settings are saved to localStorage and restored on next launch.
+
+---
+
 ## Settings Panel
 
 Open/close with the gear icon. Organized as an accordion with 4 sections.
@@ -249,11 +271,11 @@ Open/close with the gear icon. Organized as an accordion with 4 sections.
 
 | Item | Description |
 |------|-------------|
-| **My Callsign** | Your callsign |
-| **My Grid** | Grid locator (4 characters) |
-| **Band (MHz)** | Operating band selector (160m--23cm, 16 bands). Used for ADIF log frequency |
+| **My Callsign** | Your callsign (auto-uppercase on input) |
+| **My Grid** | Grid locator (4 characters, auto-uppercase) |
 | **Audio Input** | Receive audio device (selection auto-saved) |
 | **Audio Output** | TX audio output device (selection auto-saved) |
+| **RX / TX Gain** | Input/output level sliders + level meters + CLIP indicators |
 | **Start Audio** | Start or stop live decoding (also via logo tap) |
 
 ### CAT
@@ -261,7 +283,8 @@ Open/close with the gear icon. Organized as an accordion with 4 sections.
 | Item | Description |
 |------|-------------|
 | **Rig Model** | Rig selector dropdown (dynamically populated from rig-profiles.json) |
-| **Connect CAT** | Connect to rig via Web Serial (PTT + filter control) |
+| **Connect CAT** | Connect to rig via Web Serial. Desktop Chrome / Edge only |
+| **Connect BLE** | Connect to IC-705 via Web Bluetooth. Mobile supported (see below) |
 
 ### Decode
 
@@ -319,21 +342,16 @@ Drag & drop a WAV file onto the waterfall, or use **Open WAV File** in the setti
 
 ## CAT Control
 
-Uses the Web Serial API to control rig PTT and filters from the browser.
+### Web Serial (Desktop)
 
-**Supported rigs (rig profiles):**
+Uses the Web Serial API to control rig PTT, filter, frequency, and mode via USB.
+
+**Supported rigs:**
 
 | Protocol | Supported rigs |
 |----------|---------------|
 | **Yaesu text CAT** | FTDX10, FTDX101MP, FT-891 |
 | **Icom CI-V** | IC-7300, IC-705, IC-7851 |
-
-Rig profiles are defined in `rig-profiles.json` with per-rig baud rate, PTT commands, and filter switching commands.
-
-**Automatic filter control (Snipe mode):**
-
-- **Entering Call phase**: Narrow filter (500 Hz) automatically applied
-- **Returning to Watch phase**: Wide filter (2400 Hz) automatically restored
 
 **Connection steps:**
 
@@ -341,7 +359,45 @@ Rig profiles are defined in `rig-profiles.json` with per-rig baud rate, PTT comm
 2. Select **Rig Model** in the CAT section of the settings panel
 3. **Connect CAT** -- browser serial port selection dialog opens
 4. Select the port -- connected
-5. PTT is automatically controlled during TX; filter is auto-switched on Snipe phase changes
+
+### Web Bluetooth / IC-705 BLE (Mobile)
+
+Mobile browsers do not support Web Serial, but the IC-705 supports BLE (Bluetooth Low Energy) for CI-V commands. Web Bluetooth API enables CAT control of the IC-705 from a smartphone.
+
+**IC-705 BLE connection steps:**
+
+1. **Pair IC-705 in your phone's OS Bluetooth settings** (standard Bluetooth pairing)
+2. On IC-705: MENU -> Set -> Connectors -> Bluetooth -> **Pairing Reception = ON** (put radio in pairing-wait state)
+3. **Turn on Location (GPS)** on your phone (required for Android BLE scanning)
+4. In the app settings, tap **Connect BLE**
+5. Select IC-705 from the browser's device selection dialog
+6. The app connects via BLE GATT and automatically performs the application-level pairing sequence
+7. IC-705 grants CI-V bus access -- connected
+
+**Notes:**
+
+- The Connect BLE button only appears in browsers that support Web Bluetooth
+- Tested on Android Chrome. iOS Safari does not support Web Bluetooth (use Bluefy or similar)
+- BLE connection auto-selects IC-705 as the rig model
+- If already paired, skip step 1 (start from step 2 on subsequent connections)
+
+### Automatic CAT Functions
+
+| Function | Trigger |
+|----------|---------|
+| **PTT ON/OFF** | Automatic on TX start/end |
+| **Mode setting** | Sets DATA-USB (FIL2) on band change |
+| **Narrow filter** | FIL3 (500 Hz) auto-engaged on Snipe Call phase |
+| **Wide filter** | FIL2 (2400 Hz) auto-restored on Snipe Watch phase |
+| **VFO frequency** | Auto-set on band change. Tracks BPF window in Snipe Call phase |
+
+**Icom rig filter setup (prerequisite):**
+
+CI-V commands switch between FIL2 and FIL3. Configure the filter widths on the radio:
+- **FIL2**: 2400 Hz (wide)
+- **FIL3**: 500 Hz (narrow)
+
+Setup: MENU -> Set -> Filter -> DATA-USB -> adjust FIL2 / FIL3 widths
 
 > Web Serial API is only available in Chrome / Edge. Safari / Firefox are not supported.
 
@@ -352,9 +408,12 @@ Rig profiles are defined in `rig-profiles.json` with per-rig baud rate, PTT comm
 | Symptom | Solution |
 |---------|----------|
 | Logo stays dimmed | Tap logo to start audio. Check Audio Input is selected in settings |
-| 0 decodes | Check antenna, audio level, and frequency (e.g., 14.074 MHz) |
+| 0 decodes | Check antenna, audio level (verify no CLIP), and frequency (e.g., 14.074 MHz) |
+| RX meter always shows CLIP | Lower RX gain or reduce rig audio output level |
 | WAV drop error | Verify 12 kHz / 16-bit / mono format. 48 kHz WAV is not supported |
 | CAT won't connect | Use Chrome / Edge. Restart browser and retry |
+| IC-705 not found via BLE | Ensure phone Location is ON. Ensure IC-705 Pairing Reception is ON. Pair in OS settings first |
+| CAT disconnected appears | Command write collision. Restart browser and reconnect |
 | Waterfall is black | Verify the correct Audio Input device. Tap logo to restart |
 | QSO not progressing | Check that Auto is ON. Tap an RX message to select the target station |
 | `[-sub]` `[-sub,AP]` shown | Decode is too heavy; features auto-paused. Will recover when budget allows |
@@ -386,7 +445,8 @@ After installation, launch from your home screen / app list as a standalone app.
 | Item | Requirement |
 |------|-------------|
 | **Browser** | Chrome 90+, Edge 90+, Safari 15+ |
-| **Web Serial** | Chrome / Edge only (required for CAT control) |
+| **Web Serial** | Chrome / Edge only (desktop CAT control) |
+| **Web Bluetooth** | Chrome Android (IC-705 BLE connection) |
 | **Audio** | getUserMedia support (HTTPS or localhost) |
 | **WASM** | WebAssembly support (all modern browsers) |
 | **Display** | Mobile-friendly (responsive layout) |
