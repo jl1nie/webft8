@@ -414,6 +414,17 @@
         <option value="2">Deep (max sensitivity)</option>
       </select>
     </div>
+    <div class="field">
+      <label>Equalizer</label>
+      <select id="eq-mode">
+        <option value="off">Off</option>
+        <option value="adaptive" selected>Adaptive</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Retry limit</label>
+      <input type="number" id="retry-limit" min="1" max="30" value="15">
+    </div>
     <label><input type="checkbox" id="subtract-mode" checked> Multi-pass subtract</label>
     <label><input type="checkbox" id="ap-mode" checked> A Priori (AP)</label>
     <label class="toggle"><input type="checkbox" id="cq-best-snr" checked><span class="toggle-track"></span><span id="cq-reply-label">CQ reply: best SNR</span></label>

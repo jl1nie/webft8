@@ -105,23 +105,23 @@ pub fn decode_wav(samples: &[i16], strictness: u8) -> Vec<DecodedMessage> {
 ///   mycall + dxcall → 61-bit lock (pass 8)
 ///   dxcall only → 33-bit lock (pass 6)
 #[wasm_bindgen]
-pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str, mycall: &str) -> Vec<DecodedMessage> {
+pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str, mycall: &str, eq_on: bool) -> Vec<DecodedMessage> {
     use ft8_core::decode::{decode_sniper_ap, EqMode, ApHint};
+
+    let eq_mode = if eq_on { EqMode::Adaptive } else { EqMode::Off };
 
     let ap = if callsign.is_empty() {
         None
     } else if mycall.is_empty() {
-        // No mycall → CQ + call2 (core handles pass 6 & 7 internally)
         Some(ApHint::new().with_call1("CQ").with_call2(callsign))
     } else {
-        // mycall available → full AP (core handles passes 6-11 internally)
         Some(ApHint::new().with_call1(mycall).with_call2(callsign))
     };
 
     decode_and_register(
         decode_sniper_ap(
             samples, target_freq, DecodeDepth::BpAllOsd, 20,
-            EqMode::Adaptive, ap.as_ref(),
+            eq_mode, ap.as_ref(),
         )
     )
 }

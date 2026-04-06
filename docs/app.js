@@ -166,6 +166,19 @@ const cqReplyLabel = document.getElementById('cq-reply-label');
 const updateCqLabel = () => { cqReplyLabel.textContent = cqBestSnrCheck.checked ? 'CQ reply: best SNR' : 'CQ reply: first decoded'; };
 cqBestSnrCheck.addEventListener('change', updateCqLabel);
 updateCqLabel();
+const eqModeSelect = document.getElementById('eq-mode');
+const savedEq = localStorage.getItem('rs-ft8n-eq-mode');
+if (savedEq) eqModeSelect.value = savedEq;
+eqModeSelect.addEventListener('change', () => localStorage.setItem('rs-ft8n-eq-mode', eqModeSelect.value));
+const retryLimitInput = document.getElementById('retry-limit');
+const savedRetry = localStorage.getItem('rs-ft8n-retry-limit');
+if (savedRetry) retryLimitInput.value = savedRetry;
+retryLimitInput.addEventListener('change', () => {
+  const v = Math.max(1, Math.min(30, parseInt(retryLimitInput.value, 10) || 15));
+  retryLimitInput.value = v;
+  localStorage.setItem('rs-ft8n-retry-limit', v);
+  qso.maxRetries = v;
+});
 const savedBand = localStorage.getItem('rs-ft8n-band');
 if (savedBand) bandSelect.value = savedBand;
 bandSelect.addEventListener('change', async () => {
@@ -245,6 +258,7 @@ const qso = new QsoManager({
   },
   onTxReady: () => updateQsoDisplay(),
 });
+qso.maxRetries = parseInt(retryLimitInput.value, 10) || 15;
 
 myCallInput.addEventListener('input', () => {
   myCallInput.value = myCallInput.value.toUpperCase();
@@ -566,7 +580,8 @@ function runDecode(samples) {
     if (!found) {
       const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
       const myCall = myCallInput.value.trim().toUpperCase();
-      const ap = decode_sniper(samples, freq, apTarget, myCall);
+      const eqOn = eqModeSelect.value === 'adaptive';
+      const ap = decode_sniper(samples, freq, apTarget, myCall, eqOn);
       for (const r of ap) {
         if (!results.some(x => Math.abs(x.freq_hz - r.freq_hz) < 10)) {
           results.push(r);
