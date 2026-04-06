@@ -161,10 +161,10 @@ myGridInput.addEventListener('change', () => {
 const savedStrictness = localStorage.getItem('rs-ft8n-strictness');
 if (savedStrictness !== null) strictnessSelect.value = savedStrictness;
 strictnessSelect.addEventListener('change', () => localStorage.setItem('rs-ft8n-strictness', strictnessSelect.value));
-const cqFirstCheck = document.getElementById('cq-first-decoded');
+const cqBestSnrCheck = document.getElementById('cq-best-snr');
 const cqReplyLabel = document.getElementById('cq-reply-label');
-const updateCqLabel = () => { cqReplyLabel.textContent = cqFirstCheck.checked ? 'CQ reply: first decoded' : 'CQ reply: best SNR'; };
-cqFirstCheck.addEventListener('change', updateCqLabel);
+const updateCqLabel = () => { cqReplyLabel.textContent = cqBestSnrCheck.checked ? 'CQ reply: best SNR' : 'CQ reply: first decoded'; };
+cqBestSnrCheck.addEventListener('change', updateCqLabel);
 updateCqLabel();
 const savedBand = localStorage.getItem('rs-ft8n-band');
 if (savedBand) bandSelect.value = savedBand;
@@ -774,7 +774,7 @@ const periodMgr = new FT8PeriodManager({
 
     // CQ response handling: sort by SNR, feed strongest to SM
     if (qso.state === QSO_STATE.CALLING && !qso.dxCall && callers.length > 0) {
-      const useSNR = !document.getElementById('cq-first-decoded')?.checked;
+      const useSNR = cqBestSnrCheck.checked;
       if (useSNR) callers.sort((a, b) => b.snr - a.snr);
       // Feed strongest (or first) caller to SM
       const best = callers[0];
