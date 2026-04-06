@@ -1,5 +1,7 @@
-// CAT (Computer Aided Transceiver) control via Web Serial API.
+// CAT (Computer Aided Transceiver) control via Web Serial / Web Bluetooth.
 // Rig profiles loaded from rig-profiles.json (editable/extensible).
+
+import { BleTransport } from './ble-transport.js';
 
 let rigProfiles = {};
 
@@ -33,8 +35,10 @@ function parseAddr(s) {
 
 export class CatController {
   constructor() {
-    this.port = null;
-    this.writer = null;
+    this.transport = null;  // { write(Uint8Array), disconnect() }
+    this.transportType = ''; // 'serial' | 'ble'
+    this.port = null;       // Web Serial port (serial mode only)
+    this.writer = null;     // Web Serial writer (serial mode only)
     this.connected = false;
     this.rig = null;
     this.rigId = '';
@@ -43,15 +47,42 @@ export class CatController {
     this.onDisconnect = null;
   }
 
-  static isSupported() { return 'serial' in navigator; }
+  static isSerialSupported() { return 'serial' in navigator; }
+  static isBleSupported() { return BleTransport.isSupported(); }
+  /** @deprecated Use isSerialSupported() */
+  static isSupported() { return CatController.isSerialSupported(); }
 
   async requestPort() {
-    if (!CatController.isSupported()) throw new Error('Web Serial API not supported');
+    if (!CatController.isSerialSupported()) throw new Error('Web Serial API not supported');
     this.port = await navigator.serial.requestPort();
+    this.transportType = 'serial';
     return this.port;
   }
 
+  async connectBle(rigId) {
+    const rig = rigProfiles[rigId];
+    if (!rig) throw new Error(`Unknown rig: ${rigId}`);
+    if (!rig.ble) throw new Error(`${rig.label} does not support BLE`);
+
+    const ble = new BleTransport();
+    ble.onDisconnect = () => this._handleDisconnect();
+    await ble.connect();
+
+    this.transport = ble;
+    this.transportType = 'ble';
+    this.rig = rig;
+    this.rigId = rigId;
+    this.connected = true;
+    this.pttOn = false;
+    this.narrowOn = false;
+  }
+
   async connect(rigId) {
+    if (this.transportType === 'ble') {
+      // BLE path — already connected via connectBle()
+      return;
+    }
+    // Serial path
     if (!this.port) throw new Error('No port selected');
     const rig = rigProfiles[rigId];
     if (!rig) throw new Error(`Unknown rig: ${rigId}`);
@@ -60,6 +91,8 @@ export class CatController {
     this.rigId = rigId;
     await this.port.open({ baudRate: rig.baud });
     this.writer = this.port.writable.getWriter();
+    this.transportType = 'serial';
+    this.transport = { write: (data) => this.writer.write(data) };
     this.connected = true;
     this.pttOn = false;
     this.narrowOn = false;
@@ -71,8 +104,14 @@ export class CatController {
 
   async disconnect() {
     await this.safePttOff();
-    if (this.writer) { this.writer.releaseLock(); this.writer = null; }
-    try { if (this.port) await this.port.close(); } catch (_) {}
+    if (this.transportType === 'ble') {
+      if (this.transport) await this.transport.disconnect();
+    } else {
+      if (this.writer) { this.writer.releaseLock(); this.writer = null; }
+      try { if (this.port) await this.port.close(); } catch (_) {}
+    }
+    this.transport = null;
+    this.transportType = '';
     this.connected = false;
     this.pttOn = false;
     this.narrowOn = false;
@@ -139,14 +178,14 @@ export class CatController {
   }
 
   async _sendText(cmd) {
-    await this.writer.write(new TextEncoder().encode(cmd));
+    await this.transport.write(new TextEncoder().encode(cmd));
   }
 
   async _civSendHex(hexStr) {
     const addr = parseAddr(this.rig.civAddr || '0x94');
     const data = hexToBytes(hexStr);
     const frame = new Uint8Array([0xFE, 0xFE, addr, 0xE0, ...data, 0xFD]);
-    await this.writer.write(frame);
+    await this.transport.write(frame);
   }
 
   async _civSetFreq(freqHz) {
@@ -159,6 +198,6 @@ export class CatController {
     }
     const addr = parseAddr(this.rig.civAddr || '0x94');
     const frame = new Uint8Array([0xFE, 0xFE, addr, 0xE0, 0x05, ...bcd, 0xFD]);
-    await this.writer.write(frame);
+    await this.transport.write(frame);
   }
 }

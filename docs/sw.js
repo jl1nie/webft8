@@ -1,5 +1,5 @@
 // Service Worker for rs-ft8n PWA — offline cache
-const CACHE_NAME = 'rs-ft8n-v3';
+const CACHE_NAME = 'rs-ft8n-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   './waterfall.js',
   './qso-log.js',
   './cat.js',
+  './ble-transport.js',
   './ft8-period.js',
   './audio-capture.js',
   './audio-output.js',

@@ -48,6 +48,7 @@ const bandHeader = document.getElementById('band-header');
 const subtractCheck = document.getElementById('subtract-mode');
 const apCheck = document.getElementById('ap-mode');
 const btnCat = document.getElementById('btn-cat');
+const btnCatBle = document.getElementById('btn-cat-ble');
 const catStatusEl = document.getElementById('cat-status');
 const btnStart = document.getElementById('btn-start');
 
@@ -67,6 +68,7 @@ let lastPeriodIndex = -1; // track period changes for separator
 let apDisabledAuto = false; // true if AP was auto-disabled due to timeout
 let subDisabledAuto = false; // true if subtract was auto-disabled due to timeout
 const FREQ_MIN = 100, FREQ_MAX = 3000;
+const FILTER_CENTER = 1000; // audio offset where 500Hz DSP filter is centered
 
 // ── Status display ─────────────────────────────────────────────────────────
 function setStatus(text) {
@@ -203,6 +205,9 @@ capture._onDisconnect = () => {
   showToast('Audio disconnected');
 };
 cat.onDisconnect = () => {
+  btnCat.textContent = 'Connect CAT';
+  btnCatBle.textContent = 'Connect BLE';
+  catStatusEl.textContent = 'disconnected';
   setStatus('CAT disconnected');
   showToast('CAT disconnected');
 };
@@ -231,6 +236,12 @@ const snipeCallersEl = document.getElementById('snipe-callers');
 btnWatch.addEventListener('click', () => setSnipePhase('watch'));
 btnCall.addEventListener('click', () => setSnipePhase('call'));
 
+/** Compute shifted dial frequency so the physical filter covers snipeBpf. */
+function snipeDialHz() {
+  const baseHz = Math.round(parseFloat(bandSelect.value) * 1e6);
+  return baseHz + (snipeBpf - FILTER_CENTER);
+}
+
 function setSnipePhase(phase) {
   snipePhase = phase;
   btnWatch.classList.toggle('active', phase === 'watch');
@@ -239,10 +250,14 @@ function setSnipePhase(phase) {
   snipeView.classList.toggle('snipe-call-phase', phase === 'call');
   if (phase === 'watch') {
     snipePhaseHint.textContent = `full-band  DF ${snipeDf} Hz`;
-    cat.setFilter(false); // restore wide filter
+    cat.setFilter(false);
+    // Restore original dial frequency
+    const baseHz = Math.round(parseFloat(bandSelect.value) * 1e6);
+    cat.setFreq(baseHz);
   } else {
     snipePhaseHint.textContent = `BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`;
-    cat.setFilter(true); // engage narrow filter
+    cat.setFilter(true);
+    cat.setFreq(snipeDialHz());
   }
   updateSnipeOverlay();
 }
@@ -301,8 +316,9 @@ wfWrap.addEventListener('click', (e) => {
       waterfall.dfLine = snipeDf;
       setStatus(`DF: ${snipeDf} Hz`);
     } else {
-      // Call: set BPF window center — narrow receive
+      // Call: set BPF window center — narrow receive + VFO shift
       snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq));
+      cat.setFreq(snipeDialHz());
       setStatus(`BPF: ${snipeBpf} Hz`);
     }
     updateSnipeOverlay();
@@ -920,7 +936,7 @@ btnCat.addEventListener('click', async () => {
     catStatusEl.textContent = 'disconnected';
     return;
   }
-  if (!CatController.isSupported()) {
+  if (!CatController.isSerialSupported()) {
     catStatusEl.textContent = 'Web Serial not supported';
     return;
   }
@@ -935,6 +951,28 @@ btnCat.addEventListener('click', async () => {
     localStorage.setItem('rs-ft8n-rig', rigId);
   } catch (e) {
     catStatusEl.textContent = `error: ${e.message || e}`;
+  }
+});
+
+// ── CAT BLE ───────────────────────────────────────────────────────────────
+btnCatBle.addEventListener('click', async () => {
+  if (cat.connected) {
+    await cat.disconnect();
+    btnCatBle.textContent = 'Connect BLE';
+    catStatusEl.textContent = 'disconnected';
+    return;
+  }
+  try {
+    // BLE is IC-705 only — auto-select rig profile
+    const rigId = 'ic705';
+    document.getElementById('rig-model').value = rigId;
+    catStatusEl.textContent = 'pairing...';
+    await cat.connectBle(rigId);
+    btnCatBle.textContent = 'Disconnect';
+    catStatusEl.textContent = 'BLE connected (IC-705)';
+    localStorage.setItem('rs-ft8n-rig', rigId);
+  } catch (e) {
+    catStatusEl.textContent = `BLE error: ${e.message || e}`;
   }
 });
 
@@ -1047,6 +1085,16 @@ init().then(async () => {
   }
   const savedRig = localStorage.getItem('rs-ft8n-rig');
   if (savedRig) rigSelect.value = savedRig;
+
+  // Show CAT / BLE buttons based on browser support
+  if (CatController.isSerialSupported()) {
+    btnCat.style.display = '';
+  } else {
+    btnCat.style.display = 'none';
+  }
+  if (CatController.isBleSupported()) {
+    btnCatBle.style.display = '';
+  }
 
   try {
     const devices = await capture.enumerateDevices();

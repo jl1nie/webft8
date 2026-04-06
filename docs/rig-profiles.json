@@ -45,11 +45,12 @@
     "protocol": "civ",
     "baud": 19200,
     "civAddr": "0xA4",
+    "ble": true,
     "pttOn": "1C 00 01",
     "pttOff": "1C 00 00",
     "filterNarrow": "1A 03 09",
     "filterWide": "1A 03 28",
-    "note": "SDR — DSP filter only (no roofing). 09=500Hz, 28=2400Hz"
+    "note": "SDR — DSP filter only (no roofing). 09=500Hz, 28=2400Hz. BLE supported."
   },
   "ic7851": {
     "label": "Icom IC-7851",
