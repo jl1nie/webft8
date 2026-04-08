@@ -1343,7 +1343,7 @@ init().then(async () => {
     // Ready — tap logo to start
     splashStep('Ready', 100);
     if (myCallInput.value && deviceSelect.value) {
-      setStatus('Tap logo to start');
+      setStatus('Ready');
     }
   } catch (e) { console.warn('Audio devices:', e); }
   updateTxActions();
