@@ -1191,9 +1191,16 @@ async function handleFile(file) {
 const splashEl = document.getElementById('splash');
 const splashStatus = document.getElementById('splash-status');
 const splashProgress = document.getElementById('splash-progress');
+const splashDiag = document.getElementById('splash-diag');
 function splashStep(text, pct) {
   if (splashStatus) splashStatus.textContent = text;
   if (splashProgress) splashProgress.style.width = pct + '%';
+}
+function diagLine(label, value, cls) {
+  if (!splashDiag) return;
+  const line = document.createElement('div');
+  line.innerHTML = `${label}: <span class="${cls || 'val'}">${value}</span>`;
+  splashDiag.appendChild(line);
 }
 function splashDismiss() {
   if (splashEl) {
@@ -1206,27 +1213,68 @@ function splashDismiss() {
 splashStep('Loading WASM...', 10);
 init().then(async () => {
   wasmReady = true;
-  splashStep('Benchmarking...', 40);
-
-  // Mini-benchmark: decode a short silent buffer to measure device speed
+  splashStep('Benchmarking...', 30);
+  diagLine('WASM', 'loaded', 'ok');
   await new Promise(r => setTimeout(r, 0)); // yield to render splash
+
+  // ── 1. Decode benchmark ──────────────────────────────────────────
   const benchSamples = new Int16Array(180000); // 15s silence at 12kHz
   const bt0 = performance.now();
   decode_wav(benchSamples, 1, 12000);
   const benchMs = performance.now() - bt0;
   console.log(`Bench: decode silence = ${benchMs.toFixed(0)} ms`);
 
-  // Pre-shed heavy features on slow devices
+  const benchCls = benchMs > 1500 ? 'bad' : benchMs > 800 ? 'warn' : 'ok';
+  diagLine('Decode bench', `${benchMs.toFixed(0)} ms`, benchCls);
+
   if (benchMs > 1500) {
     subDisabledAuto = true;
     apDisabledAuto = true;
-    console.log('Slow device detected — subtract & AP auto-disabled');
+    diagLine('Shedding', 'sub + AP off', 'warn');
   } else if (benchMs > 800) {
     subDisabledAuto = true;
-    console.log('Moderate device — subtract auto-disabled');
+    diagLine('Shedding', 'sub off', 'warn');
+  } else {
+    diagLine('Shedding', 'none', 'ok');
   }
 
-  splashStep('Initializing...', 70);
+  // ── 2. Audio system probe ────────────────────────────────────────
+  splashStep('Probing audio...', 55);
+  await new Promise(r => setTimeout(r, 0));
+
+  // 2a. Native sample rate (default AudioContext)
+  let nativeRate = '?';
+  try {
+    const probeCtx = new AudioContext();
+    nativeRate = probeCtx.sampleRate;
+    await probeCtx.close();
+  } catch (e) {
+    nativeRate = 'error';
+  }
+  diagLine('Native rate', `${nativeRate} Hz`);
+
+  // 2b. 12 kHz AudioContext — does browser honor the request?
+  let ctx12kRate = '?';
+  try {
+    const ctx12k = new AudioContext({ sampleRate: 12000 });
+    ctx12kRate = ctx12k.sampleRate;
+    await ctx12k.close();
+  } catch (e) {
+    ctx12kRate = 'error';
+  }
+  const rate12kCls = ctx12kRate === 12000 ? 'ok' : 'bad';
+  diagLine('12 kHz ctx', `${ctx12kRate} Hz`, rate12kCls);
+
+  // 2c. Navigator / UA info
+  const ua = navigator.userAgent;
+  const isMobile = /Android|iPhone|iPad/i.test(ua);
+  const browserMatch = ua.match(/(Chrome|Firefox|Safari|Edg)\/(\d+)/);
+  const browserTag = browserMatch ? `${browserMatch[1]}/${browserMatch[2]}` : 'unknown';
+  diagLine('Browser', browserTag);
+  diagLine('Platform', isMobile ? 'mobile' : 'desktop');
+
+  splashStep('Ready', 90);
+  await new Promise(r => setTimeout(r, 0));
   setStatus('Ready');
 
   // Load rig profiles and populate selector

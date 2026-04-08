@@ -264,6 +264,15 @@
     height: 100%; width: 0%; background: var(--c-accent);
     border-radius: 2px; transition: width 0.3s ease;
   }
+  #splash-diag {
+    margin-top: var(--sp-md); font: var(--fs-sm) monospace;
+    color: var(--c-text2); text-align: left; min-width: 260px;
+    line-height: 1.6;
+  }
+  #splash-diag .val { color: var(--c-accent); }
+  #splash-diag .warn { color: #ffa726; }
+  #splash-diag .ok { color: #66bb6a; }
+  #splash-diag .bad { color: #ef5350; }
   @keyframes pulse-glow {
     0%, 100% { text-shadow: 0 0 8px rgba(79,195,247,0.3); }
     50% { text-shadow: 0 0 20px rgba(79,195,247,0.7), 0 0 40px rgba(79,195,247,0.3); }
@@ -277,6 +286,7 @@
   <div class="logo-text">rs-ft8n</div>
   <div class="sub-text" id="splash-status">Loading WASM...</div>
   <div class="progress-bar"><div class="progress-fill" id="splash-progress"></div></div>
+  <div id="splash-diag"></div>
 </div>
 
 <!-- Header -->
