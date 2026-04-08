@@ -239,9 +239,45 @@
     #scout-status .dot, .qso-progress .dot { width: 12px; height: 12px; }
     #settings-panel { width: 100%; }
   }
+  /* ── Splash overlay ─────────────────────────────────────────────── */
+  #splash {
+    position: fixed; inset: 0; z-index: 9999;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: var(--c-bg);
+    transition: opacity 0.5s ease-out;
+  }
+  #splash.fade-out { opacity: 0; pointer-events: none; }
+  #splash .logo-text {
+    font-size: 2.5rem; font-weight: bold; color: var(--c-accent);
+    letter-spacing: 0.1em;
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+  #splash .sub-text {
+    font-size: var(--fs-sm); color: var(--c-text2);
+    margin-top: var(--sp-sm);
+  }
+  #splash .progress-bar {
+    width: 200px; height: 3px; background: var(--c-border);
+    border-radius: 2px; margin-top: var(--sp-md); overflow: hidden;
+  }
+  #splash .progress-fill {
+    height: 100%; width: 0%; background: var(--c-accent);
+    border-radius: 2px; transition: width 0.3s ease;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { text-shadow: 0 0 8px rgba(79,195,247,0.3); }
+    50% { text-shadow: 0 0 20px rgba(79,195,247,0.7), 0 0 40px rgba(79,195,247,0.3); }
+  }
 </style>
 </head>
 <body class="scout-mode">
+
+<!-- Splash -->
+<div id="splash">
+  <div class="logo-text">rs-ft8n</div>
+  <div class="sub-text" id="splash-status">Loading WASM...</div>
+  <div class="progress-bar"><div class="progress-fill" id="splash-progress"></div></div>
+</div>
 
 <!-- Header -->
 <div class="header">

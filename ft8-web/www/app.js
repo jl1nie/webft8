@@ -1187,10 +1187,46 @@ async function handleFile(file) {
   }
 }
 
+// ── Splash helpers ──────────────────────────────────────────────────────────
+const splashEl = document.getElementById('splash');
+const splashStatus = document.getElementById('splash-status');
+const splashProgress = document.getElementById('splash-progress');
+function splashStep(text, pct) {
+  if (splashStatus) splashStatus.textContent = text;
+  if (splashProgress) splashProgress.style.width = pct + '%';
+}
+function splashDismiss() {
+  if (splashEl) {
+    splashEl.classList.add('fade-out');
+    setTimeout(() => splashEl.remove(), 600);
+  }
+}
+
 // ── WASM init ───────────────────────────────────────────────────────────────
-setStatus('Loading...');
+splashStep('Loading WASM...', 10);
 init().then(async () => {
   wasmReady = true;
+  splashStep('Benchmarking...', 40);
+
+  // Mini-benchmark: decode a short silent buffer to measure device speed
+  await new Promise(r => setTimeout(r, 0)); // yield to render splash
+  const benchSamples = new Int16Array(180000); // 15s silence at 12kHz
+  const bt0 = performance.now();
+  decode_wav(benchSamples, 1, 12000);
+  const benchMs = performance.now() - bt0;
+  console.log(`Bench: decode silence = ${benchMs.toFixed(0)} ms`);
+
+  // Pre-shed heavy features on slow devices
+  if (benchMs > 1500) {
+    subDisabledAuto = true;
+    apDisabledAuto = true;
+    console.log('Slow device detected — subtract & AP auto-disabled');
+  } else if (benchMs > 800) {
+    subDisabledAuto = true;
+    console.log('Moderate device — subtract auto-disabled');
+  }
+
+  splashStep('Initializing...', 70);
   setStatus('Ready');
 
   // Load rig profiles and populate selector
@@ -1252,9 +1288,12 @@ init().then(async () => {
     if (savedOut) outputDeviceSelect.value = savedOut;
 
     // Ready — tap logo to start
+    splashStep('Ready', 100);
     if (myCallInput.value && deviceSelect.value) {
       setStatus('Tap logo to start');
     }
   } catch (e) { console.warn('Audio devices:', e); }
   updateTxActions();
-}).catch(e => { setStatus(`Load failed: ${e}`); });
+  // Dismiss splash after a brief pause to show 100%
+  setTimeout(splashDismiss, 400);
+}).catch(e => { setStatus(`Load failed: ${e}`); splashDismiss(); });
