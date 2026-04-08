@@ -1203,6 +1203,11 @@ function diagLine(label, value, cls) {
   splashDiag.appendChild(line);
 }
 function splashDismiss() {
+  // Copy diagnostics to empty-state before removing splash
+  const diagDst = document.getElementById('diag-info');
+  if (diagDst && splashDiag) {
+    diagDst.innerHTML = splashDiag.innerHTML;
+  }
   if (splashEl) {
     splashEl.classList.add('fade-out');
     setTimeout(() => splashEl.remove(), 600);
@@ -1342,6 +1347,6 @@ init().then(async () => {
     }
   } catch (e) { console.warn('Audio devices:', e); }
   updateTxActions();
-  // Dismiss splash — hold long enough to read diagnostics
-  setTimeout(splashDismiss, 2500);
+  // Dismiss splash — diagnostics persist in empty-state
+  setTimeout(splashDismiss, 400);
 }).catch(e => { setStatus(`Load failed: ${e}`); splashDismiss(); });
