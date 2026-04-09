@@ -1,40 +1,55 @@
 // AudioWorklet processor for FT8 audio capture.
 // Runs on the audio rendering thread — no ES module imports allowed.
 //
-// Dual-rate design:
-//   • Snapshot/period buffer: kept at the AudioContext native rate (typically
-//     48 kHz). The decode pipeline (ft8-core) resamples this offline to 12 kHz
-//     via resample_to_12k. Avoiding a live MediaStream resampler is what kills
-//     the wavy/sinusoidal spectrum artifact on Atom-class tablets.
-//   • Waterfall path: boxcar-decimated in this worklet down to ~6 kHz so the
-//     main-thread JS FFT load is independent of the native rate. FT8 only
-//     needs 100–3000 Hz of display, and 6 kHz Nyquist covers it exactly.
+// Dual-rate design (both target rates handled INSIDE the worklet so we
+// never depend on Chrome's live MediaStream resampler, which slips on
+// high-rate / weak-clock setups):
+//
+//   • Snapshot/period buffer: boxcar-decimated to `snapshotTargetRate`
+//     (default 48 kHz). The decode pipeline (ft8-core) resamples this
+//     offline to 12 kHz via resample_to_12k.
+//   • Waterfall path: boxcar-decimated to `waterfallTargetRate`
+//     (default 6 kHz) so the main-thread JS FFT load is independent of
+//     the AudioContext native rate.
+//
+// If the AudioContext rate is below a target, we passthrough at native
+// (boxcar can only decimate, not upsample).
 
 class FT8AudioProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
-    this.outputRate = sampleRate; // AudioWorklet global — native AudioContext rate
+    this.outputRate = sampleRate; // AudioWorklet global — actual AudioContext rate
 
     const opts = options?.processorOptions || {};
-    this.waterfallTargetRate = opts.waterfallTargetRate || 6000;
+    const snapshotTargetRate  = opts.snapshotTargetRate  || 48000;
+    const waterfallTargetRate = opts.waterfallTargetRate || 6000;
 
-    // Snapshot/period buffer at native rate (15 seconds worth)
-    this.bufferSize = Math.round(this.outputRate * 15);
+    // Effective rates: target unless native is lower (then passthrough).
+    this.snapshotRate  = Math.min(this.outputRate, snapshotTargetRate);
+    this.waterfallRate = Math.min(this.outputRate, waterfallTargetRate);
+
+    // Snapshot/period buffer at the *snapshot* rate (15 seconds worth).
+    this.bufferSize = Math.round(this.snapshotRate * 15);
     this.buffer = new Float32Array(this.bufferSize);
     this.writePos = 0;
     this.recording = false;
 
-    // Waterfall path: boxcar averager + phase-accumulator decimator.
-    // Works for both integer (48k/6k = 8) and non-integer (44.1k/6k ≈ 7.35) ratios.
-    this.decimRatio = this.outputRate / this.waterfallTargetRate;
-    this.decimPhase = 0;
-    this.boxSum = 0;
-    this.boxN = 0;
+    // Snapshot path decimator state (boxcar averager + phase accumulator).
+    this.snapDecimRatio = this.outputRate / this.snapshotRate;  // 1.0 if native ≤ target
+    this.snapDecimPhase = 0;
+    this.snapBoxSum = 0;
+    this.snapBoxN = 0;
+
+    // Waterfall path decimator state (same approach).
+    this.wfDecimRatio = this.outputRate / this.waterfallRate;
+    this.wfDecimPhase = 0;
+    this.wfBoxSum = 0;
+    this.wfBoxN = 0;
     this.waterfallChunkSize = 1024; // → 1024/6000 ≈ 170 ms per chunk
     this.waterfallAccum = new Float32Array(this.waterfallChunkSize);
     this.waterfallPos = 0;
 
-    // Peak level tracking — based on native rate so cadence is rate-independent
+    // Peak level tracking — based on native rate so cadence is rate-independent.
     this.peakLevel = 0;
     this.peakFrameCount = 0;
     this.peakReportInterval = Math.round(this.outputRate / 128 * 0.1); // ~100 ms
@@ -42,11 +57,7 @@ class FT8AudioProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (e) => {
       if (e.data.type === 'start') {
         this.recording = true;
-        this.writePos = 0;
-        this.waterfallPos = 0;
-        this.boxSum = 0;
-        this.boxN = 0;
-        this.decimPhase = 0;
+        this._resetState();
       } else if (e.data.type === 'stop') {
         this.recording = false;
       } else if (e.data.type === 'snapshot') {
@@ -55,30 +66,42 @@ class FT8AudioProcessor extends AudioWorkletProcessor {
           type: 'snapshot',
           samples: snapshot,
           length: this.writePos,
-          sampleRate: this.outputRate,
+          sampleRate: this.snapshotRate,
         });
-        this.writePos = 0;
-        this.waterfallPos = 0;
-        this.boxSum = 0;
-        this.boxN = 0;
-        this.decimPhase = 0;
+        this._resetState();
       }
     };
 
-    // Report rates to main thread
+    // Report rates to main thread.
+    // nativeRate    = what Chrome ended up using for the AudioContext
+    // snapshotRate  = what we hand to the WASM decoder (boxcar-decimated)
+    // waterfallRate = what the spectrogram FFT runs at
     this.port.postMessage({
       type: 'info',
       nativeRate: this.outputRate,
-      waterfallRate: this.waterfallTargetRate,
+      snapshotRate: this.snapshotRate,
+      waterfallRate: this.waterfallRate,
       bufferSize: this.bufferSize,
     });
+  }
+
+  _resetState() {
+    this.writePos = 0;
+    this.snapDecimPhase = 0;
+    this.snapBoxSum = 0;
+    this.snapBoxN = 0;
+    this.wfDecimPhase = 0;
+    this.wfBoxSum = 0;
+    this.wfBoxN = 0;
+    this.waterfallPos = 0;
   }
 
   process(inputs) {
     const input = inputs[0]?.[0];
     if (!input || !this.recording) return true;
 
-    // Track peak level
+    // Track peak level across the raw input (pre-decimation, so the meter
+    // reflects what's actually arriving on the wire).
     for (let i = 0; i < input.length; i++) {
       const abs = Math.abs(input[i]);
       if (abs > this.peakLevel) this.peakLevel = abs;
@@ -90,45 +113,96 @@ class FT8AudioProcessor extends AudioWorkletProcessor {
       this.peakFrameCount = 0;
     }
 
+    // Hot-loop locals (V8 prefers these to repeated `this.` lookups).
     const buffer = this.buffer;
     const bufferSize = this.bufferSize;
     const wfAccum = this.waterfallAccum;
     const wfChunk = this.waterfallChunkSize;
-    const decimRatio = this.decimRatio;
+    const snapDecimRatio = this.snapDecimRatio;
+    const wfDecimRatio = this.wfDecimRatio;
 
-    for (let i = 0; i < input.length; i++) {
-      const sample = input[i];
+    // Fast path: both ratios are 1.0 (native rate equals both targets,
+    // i.e. native ≤ 6 kHz, which won't happen in practice but keep the
+    // path consistent). Skipped — fall through to general path.
 
-      // (1) Snapshot/period buffer at native rate
-      if (this.writePos < bufferSize) {
-        buffer[this.writePos++] = sample;
+    // Fast path: snapshot ratio == 1.0 (native equals snapshot target,
+    // typical for 48 kHz mics). memcpy snapshot, per-sample boxcar for
+    // waterfall.
+    if (snapDecimRatio === 1.0) {
+      const remaining = bufferSize - this.writePos;
+      const copyLen = Math.min(input.length, remaining);
+      if (copyLen > 0) {
+        buffer.set(input.subarray(0, copyLen), this.writePos);
+        this.writePos += copyLen;
       }
-
-      // (2) Waterfall path: boxcar accumulate, emit one decimated sample
-      //     whenever the phase accumulator crosses decimRatio.
-      this.boxSum += sample;
-      this.boxN++;
-      this.decimPhase += 1;
-      if (this.decimPhase >= decimRatio) {
-        this.decimPhase -= decimRatio;
-        const avg = this.boxSum / this.boxN;
-        this.boxSum = 0;
-        this.boxN = 0;
-
-        if (this.waterfallPos < wfChunk) {
-          wfAccum[this.waterfallPos++] = avg;
+      // Waterfall boxcar decim
+      for (let i = 0; i < input.length; i++) {
+        const sample = input[i];
+        this.wfBoxSum += sample;
+        this.wfBoxN++;
+        this.wfDecimPhase += 1;
+        if (this.wfDecimPhase >= wfDecimRatio) {
+          this.wfDecimPhase -= wfDecimRatio;
+          const avg = this.wfBoxSum / this.wfBoxN;
+          this.wfBoxSum = 0;
+          this.wfBoxN = 0;
+          if (this.waterfallPos < wfChunk) {
+            wfAccum[this.waterfallPos++] = avg;
+          }
+          if (this.waterfallPos >= wfChunk) {
+            this.port.postMessage({
+              type: 'waterfall',
+              samples: new Float32Array(wfAccum),
+            });
+            this.waterfallPos = 0;
+          }
         }
-        if (this.waterfallPos >= wfChunk) {
-          this.port.postMessage({
-            type: 'waterfall',
-            samples: new Float32Array(wfAccum),
-          });
-          this.waterfallPos = 0;
+      }
+    } else {
+      // General path: dual boxcar decimators (snapshot AND waterfall).
+      // Used when AudioContext is at a high native rate (e.g. 384 kHz on
+      // a system with a high-end DAC) and we need to fold it down to the
+      // 48 kHz snapshot target.
+      for (let i = 0; i < input.length; i++) {
+        const sample = input[i];
+
+        // Snapshot decimation
+        this.snapBoxSum += sample;
+        this.snapBoxN++;
+        this.snapDecimPhase += 1;
+        if (this.snapDecimPhase >= snapDecimRatio) {
+          this.snapDecimPhase -= snapDecimRatio;
+          const avg = this.snapBoxSum / this.snapBoxN;
+          this.snapBoxSum = 0;
+          this.snapBoxN = 0;
+          if (this.writePos < bufferSize) {
+            buffer[this.writePos++] = avg;
+          }
+        }
+
+        // Waterfall decimation
+        this.wfBoxSum += sample;
+        this.wfBoxN++;
+        this.wfDecimPhase += 1;
+        if (this.wfDecimPhase >= wfDecimRatio) {
+          this.wfDecimPhase -= wfDecimRatio;
+          const avg = this.wfBoxSum / this.wfBoxN;
+          this.wfBoxSum = 0;
+          this.wfBoxN = 0;
+          if (this.waterfallPos < wfChunk) {
+            wfAccum[this.waterfallPos++] = avg;
+          }
+          if (this.waterfallPos >= wfChunk) {
+            this.port.postMessage({
+              type: 'waterfall',
+              samples: new Float32Array(wfAccum),
+            });
+            this.waterfallPos = 0;
+          }
         }
       }
     }
 
-    // Notify when buffer is full
     if (this.writePos >= bufferSize) {
       this.port.postMessage({ type: 'buffer-full' });
     }

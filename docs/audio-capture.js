@@ -44,18 +44,7 @@ export class AudioCapture {
   async start(deviceId) {
     if (this.running) return;
 
-    // Get audio stream FIRST so we can read the mic's actual sample rate.
-    //
-    // Why: `new AudioContext()` (no args) defaults to the system OUTPUT
-    // device's rate. On a machine with a high-end USB DAC playing at
-    // 384 kHz, AudioContext opens at 384 kHz, while the rig's USB-CDC mic
-    // input is still at 48 kHz. Chrome then live-upsamples 48→384 between
-    // MediaStream and AudioContext, and the live resampler's slip
-    // correction creates the same wavy/sinusoidal spectrum we just
-    // eliminated for Atom tablets.
-    //
-    // Solution: open the AudioContext at the *mic's* native rate, not the
-    // output device's. Then no live resampling happens.
+    // Get audio stream first.
     const constraints = {
       audio: {
         deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -65,15 +54,20 @@ export class AudioCapture {
       }
     };
     this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-    // Read the mic's actual sample rate from the track.
     const tracks = this.stream.getAudioTracks();
     const trackSettings = tracks[0]?.getSettings?.() || {};
-    const micRate = trackSettings.sampleRate || 48000;
+    const micRate = trackSettings.sampleRate || 'unknown';
 
-    this.audioCtx = new AudioContext({ sampleRate: micRate });
+    // Open the AudioContext. We do NOT pin a sampleRate here because Chrome's
+    // honoring of the hint is unreliable on Windows (the WASAPI shared-mode
+    // mixer rate wins, regardless of what we ask). Instead, the AudioWorklet
+    // boxcar-decimates whatever Chrome gives it down to 48 kHz (snapshot)
+    // and 6 kHz (waterfall). This makes us completely rate-independent.
+    this.audioCtx = new AudioContext();
     this.actualSampleRate = this.audioCtx.sampleRate;
-    console.log(`AudioCapture: mic=${micRate} Hz, AudioContext=${this.actualSampleRate} Hz`);
+    console.log(
+      `AudioCapture: mic device reports ${micRate} Hz, AudioContext native = ${this.actualSampleRate} Hz`
+    );
 
     // Detect device disconnection
     for (const track of tracks) {
@@ -91,23 +85,32 @@ export class AudioCapture {
     const processorUrl = new URL('audio-processor.js', import.meta.url).href;
     await this.audioCtx.audioWorklet.addModule(processorUrl);
 
-    // Worklet runs at the AudioContext's native rate. The waterfall path is
-    // boxcar-decimated inside the worklet to 6 kHz (FT8 only needs 100-3000 Hz)
-    // to keep the main-thread FFT load constant regardless of native rate.
+    // Both the snapshot and waterfall paths are boxcar-decimated inside
+    // the worklet so we never depend on Chrome's live MediaStream resampler
+    // — that resampler slips on weak-clock devices and on systems where
+    // AudioContext ends up at a high rate (e.g. 384 kHz when a high-end
+    // DAC is the default output).
     this.workletNode = new AudioWorkletNode(this.audioCtx, 'ft8-audio-processor', {
-      processorOptions: { waterfallTargetRate: 6000 },
+      processorOptions: {
+        snapshotTargetRate: 48000,
+        waterfallTargetRate: 6000,
+      },
     });
 
     // Handle messages from worklet
     this.workletNode.port.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'info') {
-        // Snapshot path is at native rate (msg.nativeRate); waterfall path is
-        // decimated to msg.waterfallRate. Consumers (decode) should use native.
-        this.actualSampleRate = msg.nativeRate;
+        // The worklet handles both snapshot and waterfall decimation, so the
+        // rate exposed to JS consumers is the snapshot rate (= what we hand
+        // to the WASM decoder), not the AudioContext native rate.
+        this.nativeRate = msg.nativeRate;
+        this.actualSampleRate = msg.snapshotRate;
         this.waterfallRate = msg.waterfallRate;
-        console.log(`Audio: native=${msg.nativeRate} Hz, waterfall=${msg.waterfallRate} Hz`);
-        if (this.onSampleRate) this.onSampleRate(msg.nativeRate, msg.waterfallRate);
+        console.log(
+          `Audio: native=${msg.nativeRate} Hz, snapshot=${msg.snapshotRate} Hz, waterfall=${msg.waterfallRate} Hz`
+        );
+        if (this.onSampleRate) this.onSampleRate(msg.nativeRate, msg.snapshotRate, msg.waterfallRate);
       } else if (msg.type === 'waterfall' && this.callbacks.onWaterfall) {
         this.callbacks.onWaterfall(msg.samples);
       } else if (msg.type === 'buffer-full' && this.callbacks.onBufferFull) {

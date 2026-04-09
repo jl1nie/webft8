@@ -280,9 +280,17 @@ const capture = new AudioCapture({
   onWaterfall: (samples) => waterfall.pushSamples(samples),
   onBufferFull: () => {},
 });
-capture.onSampleRate = (nativeRate, waterfallRate) => {
+capture.onSampleRate = (nativeRate, snapshotRate, waterfallRate) => {
   // Waterfall renders the boxcar-decimated stream from the worklet.
   if (waterfallRate) waterfall.setSampleRate(waterfallRate);
+  // Surface the actual rates in the empty-state diagnostics so the user
+  // can see them after splash dismisses.
+  const diagDst = document.getElementById('diag-info');
+  if (diagDst) {
+    const line = document.createElement('div');
+    line.innerHTML = `Audio: native=<span class="val">${nativeRate}</span> Hz, snapshot=<span class="val">${snapshotRate}</span> Hz, wf=<span class="val">${waterfallRate}</span> Hz`;
+    diagDst.appendChild(line);
+  }
 };
 capture._onDisconnect = () => {
   periodMgr.stop();
