@@ -90,21 +90,24 @@ export class CatController {
     this.rig = rig;
     this.rigId = rigId;
     // port.open() can hang indefinitely on Windows when another application
-    // (e.g. WSJT-X) is holding the same COM port. Race against a 500 ms
-    // timeout so the UI never gets wedged. Normal USB-CDC opens in <50 ms,
-    // FTDI/Silabs in <300 ms — 500 ms covers the slowest legitimate case
-    // with margin.
+    // (e.g. WSJT-X) is holding the same COM port. Race against a 10-second
+    // timeout so the UI never gets permanently wedged. Legitimate slow
+    // openings (USB serial bridge first init, BT-serial dongle wake-up) can
+    // take 1-5 s, so anything shorter false-alarms on healthy systems.
     const timeout = (ms) => new Promise((_, rej) =>
-      setTimeout(() => rej(new Error('timeout')), ms));
+      setTimeout(() => rej(new Error(`open timeout after ${ms}ms`)), ms));
     try {
       await Promise.race([
         this.port.open({ baudRate: rig.baud }),
-        timeout(500),
+        timeout(10000),
       ]);
     } catch (e) {
+      // The port is in an unknown state — best-effort close and force a
+      // fresh requestPort() on the next attempt by clearing this.port.
       try { await this.port.close(); } catch (_) {}
+      this.port = null;
       throw new Error(
-        `port busy or unresponsive (${e.message}). Close WSJT-X or other CAT software and retry.`
+        `port open failed (${e.message}). If WSJT-X or another CAT app is running, close it and retry.`
       );
     }
     this.writer = this.port.writable.getWriter();
