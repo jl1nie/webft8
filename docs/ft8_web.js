@@ -132,6 +132,29 @@ export function decode_sniper(samples, target_freq, callsign, mycall, eq_on, sam
 }
 
 /**
+ * f32 variant of `decode_sniper`. See `decode_sniper` for parameters.
+ * @param {Float32Array} samples
+ * @param {number} target_freq
+ * @param {string} callsign
+ * @param {string} mycall
+ * @param {boolean} eq_on
+ * @param {number} sample_rate
+ * @returns {DecodedMessage[]}
+ */
+export function decode_sniper_f32(samples, target_freq, callsign, mycall, eq_on, sample_rate) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(callsign, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(mycall, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_sniper_f32(ptr0, len0, target_freq, ptr1, len1, ptr2, len2, eq_on, sample_rate);
+    var v4 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v4;
+}
+
+/**
  * Decode a 15-second FT8 audio frame (wide-band scan).
  *
  * `sample_rate` — input PCM sample rate in Hz (e.g. 12000, 44100, 48000).
@@ -151,6 +174,22 @@ export function decode_wav(samples, strictness, sample_rate) {
 }
 
 /**
+ * f32 variant of `decode_wav`. See `decode_wav` for parameters.
+ * @param {Float32Array} samples
+ * @param {number} strictness
+ * @param {number} sample_rate
+ * @returns {DecodedMessage[]}
+ */
+export function decode_wav_f32(samples, strictness, sample_rate) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_wav_f32(ptr0, len0, strictness, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
  * Decode with iterative signal subtraction.
  *
  * `sample_rate` — input PCM sample rate in Hz. Non-12 000 Hz input is
@@ -164,6 +203,22 @@ export function decode_wav_subtract(samples, strictness, sample_rate) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.decode_wav_subtract(ptr0, len0, strictness, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * f32 variant of `decode_wav_subtract`. See `decode_wav_subtract` for parameters.
+ * @param {Float32Array} samples
+ * @param {number} strictness
+ * @param {number} sample_rate
+ * @returns {DecodedMessage[]}
+ */
+export function decode_wav_subtract_f32(samples, strictness, sample_rate) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_wav_subtract_f32(ptr0, len0, strictness, sample_rate);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
@@ -283,6 +338,13 @@ function getUint8ArrayMemory0() {
 function passArray16ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 2, 2) >>> 0;
     getUint16ArrayMemory0().set(arg, ptr / 2);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArrayF32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getFloat32ArrayMemory0().set(arg, ptr / 4);
     WASM_VECTOR_LEN = arg.length;
     return ptr;
 }

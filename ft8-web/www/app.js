@@ -1,4 +1,8 @@
-import init, { decode_wav, decode_wav_subtract, decode_sniper, encode_ft8 } from '../pkg/ft8_web.js';
+import init, {
+  decode_wav, decode_wav_subtract, decode_sniper,
+  decode_wav_f32, decode_wav_subtract_f32, decode_sniper_f32,
+  encode_ft8,
+} from '../pkg/ft8_web.js';
 import { Waterfall } from './waterfall.js';
 import { AudioCapture } from './audio-capture.js';
 import { AudioOutput } from './audio-output.js';
@@ -568,11 +572,19 @@ const BUDGET_MS = 2400;
 function runDecode(samples, sampleRate) {
   const t0 = performance.now();
 
+  // Dispatch to f32 or i16 entry points based on the input array type.
+  // Live capture passes Float32Array directly from the AudioWorklet (no JS
+  // conversion loop); WAV file drops still arrive as Int16Array.
+  const isF32 = samples instanceof Float32Array;
+  const fnDecode    = isF32 ? decode_wav_f32          : decode_wav;
+  const fnSubtract  = isF32 ? decode_wav_subtract_f32 : decode_wav_subtract;
+  const fnSniper    = isF32 ? decode_sniper_f32       : decode_sniper;
+
   // Subtract: use if enabled and not auto-disabled
   const useSub = subtractCheck.checked && !subDisabledAuto;
   const strict = parseInt(strictnessSelect.value, 10);
   const sr = sampleRate || capture.getSampleRate();
-  const results = useSub ? decode_wav_subtract(samples, strict, sr) : decode_wav(samples, strict, sr);
+  const results = useSub ? fnSubtract(samples, strict, sr) : fnDecode(samples, strict, sr);
   const baseMs = performance.now() - t0;
 
   // AP supplement: enabled by checkbox, auto-disabled by budget
@@ -589,7 +601,7 @@ function runDecode(samples, sampleRate) {
       const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
       const myCall = myCallInput.value.trim().toUpperCase();
       const eqOn = eqModeSelect.value === 'adaptive';
-      const ap = decode_sniper(samples, freq, apTarget, myCall, eqOn, sr);
+      const ap = fnSniper(samples, freq, apTarget, myCall, eqOn, sr);
       for (const r of ap) {
         if (!results.some(x => Math.abs(x.freq_hz - r.freq_hz) < 10)) {
           results.push(r);
@@ -697,13 +709,10 @@ const periodMgr = new FT8PeriodManager({
     // Sanity check: need at least 1 second of audio (rate-independent).
     if (float32.length < capture.getSampleRate()) return;
 
-    // Convert to i16
-    const samples = new Int16Array(float32.length);
-    for (let i = 0; i < float32.length; i++) {
-      samples[i] = Math.round(Math.max(-32768, Math.min(32767, float32[i] * 32767)));
-    }
-
-    const results = runDecode(samples);
+    // Pass Float32Array directly — runDecode dispatches to the f32 WASM
+    // entry points, which do scaling + resample in one Rust pass. The old
+    // JS i16 conversion loop here was costing ~5-10 ms per period on Atom.
+    const results = runDecode(float32);
     const n = results.length;
     const utc = new Date(periodIndex * 15000).toISOString().substr(11, 5);
     // Period separator with UTC (skip if no decodes)

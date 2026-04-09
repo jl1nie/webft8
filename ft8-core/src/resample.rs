@@ -32,6 +32,44 @@ pub fn resample_to_12k(samples: &[i16], src_rate: u32) -> Vec<i16> {
     out
 }
 
+/// f32 → 12 000 Hz i16 in a single pass (linear interpolation + scaling).
+///
+/// Used by the WASM live-capture path so the JS side can hand a Float32Array
+/// straight from the AudioWorklet without an intermediate i16 conversion loop.
+/// Float samples in [-1.0, 1.0] are scaled by 32767 and clamped before being
+/// interpolated and stored as i16.
+///
+/// If `src_rate == 12000`, this still allocates and converts (no zero-copy)
+/// because the output is i16 and the input is f32. The cost is one pass over
+/// the data, which is much cheaper in WASM than the equivalent JS loop.
+pub fn resample_f32_to_12k(samples: &[f32], src_rate: u32) -> Vec<i16> {
+    let ratio = TARGET_RATE / src_rate as f64;
+    let out_len = (samples.len() as f64 * ratio).ceil() as usize;
+    let mut out = Vec::with_capacity(out_len);
+
+    for i in 0..out_len {
+        let src_pos = i as f64 / ratio;
+        let idx = src_pos as usize;
+        let frac = src_pos - idx as f64;
+
+        let v = if idx + 1 < samples.len() {
+            let a = samples[idx] as f64;
+            let b = samples[idx + 1] as f64;
+            a + (b - a) * frac
+        } else if idx < samples.len() {
+            samples[idx] as f64
+        } else {
+            continue;
+        };
+
+        // Scale [-1.0, 1.0] → i16 with clamp.
+        let scaled = (v * 32767.0).clamp(-32768.0, 32767.0);
+        out.push(scaled.round() as i16);
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +169,29 @@ mod tests {
 
         let results = decode_frame(&resampled, 800.0, 1200.0, 1.0, None, DecodeDepth::BpAllOsd, 50);
         assert!(!results.is_empty(), "resample 48k decode failed at -18 dB SNR");
+        assert_eq!(results[0].message77, msg);
+    }
+
+    /// f32 input → resample → decode at 48 kHz, weak signal.
+    /// Mirrors the live-capture path (AudioWorklet → WASM directly in f32).
+    #[test]
+    fn resample_f32_decode_48k_weak_signal() {
+        use crate::decode::{decode_frame, DecodeDepth};
+        use crate::params::{MSG_BITS, NMAX};
+
+        let msg = [1u8; MSG_BITS];
+        let audio_12k_i16 = make_noisy_frame(&msg, 1000.0, -18.0);
+        // Upsample i16 → 48 kHz, convert to f32 (live capture format).
+        let audio_48k_i16 = upsample(&audio_12k_i16, 48000);
+        let audio_48k_f32: Vec<f32> = audio_48k_i16.iter()
+            .map(|&s| s as f32 / 32768.0)
+            .collect();
+
+        let resampled = resample_f32_to_12k(&audio_48k_f32, 48000);
+        assert!((resampled.len() as i32 - NMAX as i32).abs() <= 1);
+
+        let results = decode_frame(&resampled, 800.0, 1200.0, 1.0, None, DecodeDepth::BpAllOsd, 50);
+        assert!(!results.is_empty(), "f32 resample 48k decode failed at -18 dB SNR");
         assert_eq!(results[0].message77, msg);
     }
 
