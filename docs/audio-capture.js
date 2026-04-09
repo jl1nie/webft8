@@ -44,7 +44,17 @@ export class AudioCapture {
   async start(deviceId) {
     if (this.running) return;
 
-    // Get audio stream first.
+    // Force AudioContext to 12 kHz. Empirically (across Atom tablets, Ryzen 9
+    // with high-end DAC at 384 kHz mixer, and a generic 48 kHz mic input),
+    // this is the *least bad* configuration: Chrome's polyphase resampler
+    // produces a clean 48k → 12k stream, while every other rate combination
+    // we tried (native rate, mic rate, in-worklet boxcar at 48 kHz) produced
+    // a wavy/sinusoidal spectrum. The 12 kHz path engages Chrome's offline
+    // SINC resampler which smooths out source-side clock jitter, whereas a
+    // matched rate just hands us whatever the source delivers (jitter and all).
+    this.audioCtx = new AudioContext({ sampleRate: 12000 });
+    this.actualSampleRate = this.audioCtx.sampleRate;
+
     const constraints = {
       audio: {
         deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -57,16 +67,8 @@ export class AudioCapture {
     const tracks = this.stream.getAudioTracks();
     const trackSettings = tracks[0]?.getSettings?.() || {};
     const micRate = trackSettings.sampleRate || 'unknown';
-
-    // Open the AudioContext. We do NOT pin a sampleRate here because Chrome's
-    // honoring of the hint is unreliable on Windows (the WASAPI shared-mode
-    // mixer rate wins, regardless of what we ask). Instead, the AudioWorklet
-    // boxcar-decimates whatever Chrome gives it down to 48 kHz (snapshot)
-    // and 6 kHz (waterfall). This makes us completely rate-independent.
-    this.audioCtx = new AudioContext();
-    this.actualSampleRate = this.audioCtx.sampleRate;
     console.log(
-      `AudioCapture: mic device reports ${micRate} Hz, AudioContext native = ${this.actualSampleRate} Hz`
+      `AudioCapture: mic device reports ${micRate} Hz, AudioContext = ${this.actualSampleRate} Hz`
     );
 
     // Detect device disconnection
@@ -85,14 +87,13 @@ export class AudioCapture {
     const processorUrl = new URL('audio-processor.js', import.meta.url).href;
     await this.audioCtx.audioWorklet.addModule(processorUrl);
 
-    // Both the snapshot and waterfall paths are boxcar-decimated inside
-    // the worklet so we never depend on Chrome's live MediaStream resampler
-    // — that resampler slips on weak-clock devices and on systems where
-    // AudioContext ends up at a high rate (e.g. 384 kHz when a high-end
-    // DAC is the default output).
+    // AudioContext is forced to 12 kHz (see above), so the worklet receives
+    // 12 kHz samples. snapshot path passes them straight through, and the
+    // waterfall path boxcar-decimates 12k → 6k (factor 2) just to halve the
+    // main-thread FFT cost vs running at 12k.
     this.workletNode = new AudioWorkletNode(this.audioCtx, 'ft8-audio-processor', {
       processorOptions: {
-        snapshotTargetRate: 48000,
+        snapshotTargetRate: 12000,
         waterfallTargetRate: 6000,
       },
     });

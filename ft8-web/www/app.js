@@ -750,6 +750,9 @@ const periodMgr = new FT8PeriodManager({
       const freq = r.freq_hz;
       const snr = r.snr_db;
       const dt = r.dt_sec;
+      // Quality gating now happens in ft8-core via DecodeStrictness; the
+      // legacy `suspect` flag is gone. Keep the references neutral.
+      const suspect = false;
       msgs.push({ freq_hz: freq, dt_sec: dt, snr_db: snr, message: msg });
 
       // Log RX to persistent store
@@ -1243,11 +1246,17 @@ function splashDismiss() {
   }
 }
 
+// Build version — bumped on every commit-worthy change so the splash makes
+// it obvious which build the user is actually running (catches stale PWA
+// caches and helps when triaging "I refreshed but it didn't update").
+const APP_VERSION = '2026-04-10-a';
+
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);
 init().then(async () => {
   wasmReady = true;
   splashStep('Benchmarking...', 30);
+  diagLine('Version', APP_VERSION, 'ok');
   diagLine('WASM', 'loaded', 'ok');
   await new Promise(r => setTimeout(r, 0)); // yield to render splash
 
