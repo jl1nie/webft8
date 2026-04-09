@@ -138,7 +138,10 @@ function resizeCanvas() {
 }
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
-const waterfall = new Waterfall(wfCanvas);
+// Waterfall runs at 6 kHz / fftSize 1024 → 5.86 Hz/bin (matches old 12k/2048).
+// The audio worklet boxcar-decimates the live capture down to 6 kHz so the
+// main-thread FFT load is independent of the AudioContext native rate.
+const waterfall = new Waterfall(wfCanvas, { sampleRate: 6000, fftSize: 1024 });
 waterfall.dfLine = scoutDf; // show DF line on startup
 
 // ── Core modules ────────────────────────────────────────────────────────────
@@ -273,7 +276,10 @@ const capture = new AudioCapture({
   onWaterfall: (samples) => waterfall.pushSamples(samples),
   onBufferFull: () => {},
 });
-capture.onSampleRate = (rate) => waterfall.setSampleRate(rate);
+capture.onSampleRate = (nativeRate, waterfallRate) => {
+  // Waterfall renders the boxcar-decimated stream from the worklet.
+  if (waterfallRate) waterfall.setSampleRate(waterfallRate);
+};
 capture._onDisconnect = () => {
   periodMgr.stop();
   liveMode = false;
@@ -688,7 +694,8 @@ const periodMgr = new FT8PeriodManager({
 
     waterfall.drawPeriodLine();
     const float32 = await capture.snapshot();
-    if (float32.length < 12000) return;
+    // Sanity check: need at least 1 second of audio (rate-independent).
+    if (float32.length < capture.getSampleRate()) return;
 
     // Convert to i16
     const samples = new Int16Array(float32.length);
@@ -1229,14 +1236,17 @@ init().then(async () => {
   const benchMs = performance.now() - bt0;
   console.log(`Bench: decode silence = ${benchMs.toFixed(0)} ms`);
 
-  const benchCls = benchMs > 1500 ? 'bad' : benchMs > 800 ? 'warn' : 'ok';
+  // Static shedding thresholds — tuned so Atom-class tablets (~400 ms) get
+  // `sub off` preemptively instead of relying on runtime adaptive shedding,
+  // which would otherwise miss the first 1-2 decodes after startup.
+  const benchCls = benchMs > 800 ? 'bad' : benchMs > 300 ? 'warn' : 'ok';
   diagLine('Decode bench', `${benchMs.toFixed(0)} ms`, benchCls);
 
-  if (benchMs > 1500) {
+  if (benchMs > 800) {
     subDisabledAuto = true;
     apDisabledAuto = true;
     diagLine('Shedding', 'sub + AP off', 'warn');
-  } else if (benchMs > 800) {
+  } else if (benchMs > 300) {
     subDisabledAuto = true;
     diagLine('Shedding', 'sub off', 'warn');
   } else {
@@ -1258,17 +1268,10 @@ init().then(async () => {
   }
   diagLine('Native rate', `${nativeRate} Hz`);
 
-  // 2b. 12 kHz AudioContext — does browser honor the request?
-  let ctx12kRate = '?';
-  try {
-    const ctx12k = new AudioContext({ sampleRate: 12000 });
-    ctx12kRate = ctx12k.sampleRate;
-    await ctx12k.close();
-  } catch (e) {
-    ctx12kRate = 'error';
-  }
-  const rate12kCls = ctx12kRate === 12000 ? 'ok' : 'bad';
-  diagLine('12 kHz ctx', `${ctx12kRate} Hz`, rate12kCls);
+  // 2b. Capture rate — AudioContext is now opened at the device's native rate
+  // (no live MediaStream resampler), so this should equal Native rate.
+  diagLine('Capture rate', `${nativeRate} Hz`, 'ok');
+  diagLine('Waterfall rate', '6000 Hz (decimated)', 'ok');
 
   // 2c. Navigator / UA info
   const ua = navigator.userAgent;

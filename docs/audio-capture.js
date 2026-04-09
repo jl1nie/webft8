@@ -44,9 +44,14 @@ export class AudioCapture {
   async start(deviceId) {
     if (this.running) return;
 
-    // Request 12kHz AudioContext — browser resamples from native rate internally
-    this.audioCtx = new AudioContext({ sampleRate: 12000 });
-    this.actualSampleRate = 12000;
+    // Open AudioContext at the device's native rate. Forcing 12 kHz here
+    // makes Chrome insert a live MediaStream resampler whose periodic slip
+    // correction shows up as wavy/sinusoidal spectrum on weak-clock devices
+    // (e.g. Atom tablets). Native rate avoids the resampler entirely; the
+    // 48k→12k conversion happens later, offline, inside ft8-core's
+    // resample_to_12k (called from the WASM decode entry points).
+    this.audioCtx = new AudioContext();
+    this.actualSampleRate = this.audioCtx.sampleRate;
 
     // Get audio stream — disable all processing for clean radio audio
     const constraints = {
@@ -55,7 +60,6 @@ export class AudioCapture {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
-        sampleRate: { ideal: 12000 },
       }
     };
 
@@ -77,19 +81,23 @@ export class AudioCapture {
     const processorUrl = new URL('audio-processor.js', import.meta.url).href;
     await this.audioCtx.audioWorklet.addModule(processorUrl);
 
-    // If we need resampling (native rate != 12kHz), insert an OfflineAudioContext
-    // resampler. For simplicity, we handle 48kHz → 12kHz (factor 4) in the worklet.
-    // For now, if AudioContext is at 12kHz, the worklet gets 12kHz samples directly.
-
-    this.workletNode = new AudioWorkletNode(this.audioCtx, 'ft8-audio-processor');
+    // Worklet runs at the AudioContext's native rate. The waterfall path is
+    // boxcar-decimated inside the worklet to 6 kHz (FT8 only needs 100-3000 Hz)
+    // to keep the main-thread FFT load constant regardless of native rate.
+    this.workletNode = new AudioWorkletNode(this.audioCtx, 'ft8-audio-processor', {
+      processorOptions: { waterfallTargetRate: 6000 },
+    });
 
     // Handle messages from worklet
     this.workletNode.port.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'info') {
-        this.actualSampleRate = msg.outputRate;
-        console.log(`Audio: native=${msg.nativeRate} Hz, output=${msg.outputRate} Hz, decimation=${msg.decimation}`);
-        if (this.onSampleRate) this.onSampleRate(msg.outputRate);
+        // Snapshot path is at native rate (msg.nativeRate); waterfall path is
+        // decimated to msg.waterfallRate. Consumers (decode) should use native.
+        this.actualSampleRate = msg.nativeRate;
+        this.waterfallRate = msg.waterfallRate;
+        console.log(`Audio: native=${msg.nativeRate} Hz, waterfall=${msg.waterfallRate} Hz`);
+        if (this.onSampleRate) this.onSampleRate(msg.nativeRate, msg.waterfallRate);
       } else if (msg.type === 'waterfall' && this.callbacks.onWaterfall) {
         this.callbacks.onWaterfall(msg.samples);
       } else if (msg.type === 'buffer-full' && this.callbacks.onBufferFull) {

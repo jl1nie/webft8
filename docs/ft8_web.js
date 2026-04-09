@@ -114,42 +114,56 @@ if (Symbol.dispose) DecodedMessage.prototype[Symbol.dispose] = DecodedMessage.pr
  * @param {number} target_freq
  * @param {string} callsign
  * @param {string} mycall
+ * @param {boolean} eq_on
+ * @param {number} sample_rate
  * @returns {DecodedMessage[]}
  */
-export function decode_sniper(samples, target_freq, callsign, mycall) {
+export function decode_sniper(samples, target_freq, callsign, mycall, eq_on, sample_rate) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(callsign, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ptr2 = passStringToWasm0(mycall, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_sniper(ptr0, len0, target_freq, ptr1, len1, ptr2, len2);
+    const ret = wasm.decode_sniper(ptr0, len0, target_freq, ptr1, len1, ptr2, len2, eq_on, sample_rate);
     var v4 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v4;
 }
 
 /**
+ * Decode a 15-second FT8 audio frame (wide-band scan).
+ *
+ * `sample_rate` — input PCM sample rate in Hz (e.g. 12000, 44100, 48000).
+ * Non-12 000 Hz input is automatically resampled before decoding.
  * @param {Int16Array} samples
+ * @param {number} strictness
+ * @param {number} sample_rate
  * @returns {DecodedMessage[]}
  */
-export function decode_wav(samples) {
+export function decode_wav(samples, strictness, sample_rate) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_wav(ptr0, len0);
+    const ret = wasm.decode_wav(ptr0, len0, strictness, sample_rate);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
 }
 
 /**
+ * Decode with iterative signal subtraction.
+ *
+ * `sample_rate` — input PCM sample rate in Hz. Non-12 000 Hz input is
+ * automatically resampled before decoding.
  * @param {Int16Array} samples
+ * @param {number} strictness
+ * @param {number} sample_rate
  * @returns {DecodedMessage[]}
  */
-export function decode_wav_subtract(samples) {
+export function decode_wav_subtract(samples, strictness, sample_rate) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_wav_subtract(ptr0, len0);
+    const ret = wasm.decode_wav_subtract(ptr0, len0, strictness, sample_rate);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;

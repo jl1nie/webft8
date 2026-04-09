@@ -5,14 +5,14 @@
 
 function fft(re, im) {
   const n = re.length;
-  // Bit-reversal permutation
+  // Bit-reversal permutation (manual swap — destructuring allocates a temp array)
   for (let i = 1, j = 0; i < n; i++) {
     let bit = n >> 1;
     while (j & bit) { j ^= bit; bit >>= 1; }
     j ^= bit;
     if (i < j) {
-      [re[i], re[j]] = [re[j], re[i]];
-      [im[i], im[j]] = [im[j], im[i]];
+      const tr = re[i]; re[i] = re[j]; re[j] = tr;
+      const ti = im[i]; im[i] = im[j]; im[j] = ti;
     }
   }
   // Butterfly
@@ -101,6 +101,12 @@ export class Waterfall {
 
     this.window = hannWindow(this.fftSize);
     this.colorLut = buildColorLut();
+
+    // Pre-allocated FFT scratch buffers (reused across frames). Float32 is
+    // plenty for visualization — Float64 was overkill and the per-frame
+    // allocation was contributing GC pressure on slow CPUs.
+    this._re = new Float32Array(this.fftSize);
+    this._im = new Float32Array(this.fftSize);
 
     // Frequency bin indices for display range
     this.binMin = Math.floor(this.freqMin / this.sampleRate * this.fftSize);
@@ -235,8 +241,8 @@ export class Waterfall {
 
   _renderRow(samples, offset) {
     const n = this.fftSize;
-    const re = new Float64Array(n);
-    const im = new Float64Array(n);
+    const re = this._re;
+    const im = this._im;
 
     // Apply window and copy
     for (let i = 0; i < n; i++) {
