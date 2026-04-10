@@ -89,6 +89,10 @@ export class CatController {
 
     this.rig = rig;
     this.rigId = rigId;
+    // If the port was left open by a previous session (e.g. tab crash, PWA
+    // close without disconnect), close it first so the next open() succeeds.
+    try { await this.port.close(); } catch (_) {}
+
     // port.open() can hang indefinitely on Windows when another application
     // (e.g. WSJT-X) is holding the same COM port. Race against a 10-second
     // timeout so the UI never gets permanently wedged.
@@ -116,7 +120,7 @@ export class CatController {
       this.transport = null;
       this.transportType = '';
       throw new Error(
-        `port open failed (${e.message}). If WSJT-X or another CAT app is running, close it and retry.`
+        `port open failed (${e.message}). Check: (1) rig is powered on and USB cable connected, (2) no other CAT app (WSJT-X etc.) is using the port.`
       );
     }
   }
@@ -134,6 +138,7 @@ export class CatController {
         this.writer = null;
       }
       try { if (this.port) await this.port.close(); } catch (_) {}
+      this.port = null;
     }
     this.transport = null;
     this.transportType = '';
