@@ -91,11 +91,19 @@ export class CatController {
     this.rigId = rigId;
     // If the port was left open by a previous session (e.g. tab crash, PWA
     // close without disconnect), close it first so the next open() succeeds.
-    try { await this.port.close(); } catch (_) {}
+    if (this.port.readable || this.port.writable) {
+      try { await this.port.close(); } catch (_) {}
+    }
 
     const info = this.port.getInfo();
     console.log('[CAT] port info:', JSON.stringify(info),
                 'baud:', rig.baud, 'rig:', rigId);
+    console.log('[CAT] port state before open: readable=', this.port.readable,
+                'writable=', this.port.writable);
+
+    const openOpts = { baudRate: rig.baud };
+    if (rig.stopBits) openOpts.stopBits = rig.stopBits;
+    console.log('[CAT] calling port.open() with:', JSON.stringify(openOpts));
 
     // port.open() can hang indefinitely on Windows when another application
     // (e.g. WSJT-X) is holding the same COM port. Race against a 10-second
@@ -104,16 +112,20 @@ export class CatController {
       setTimeout(() => rej(new Error(`open timeout after ${ms}ms`)), ms));
     try {
       await Promise.race([
-        this.port.open({ baudRate: rig.baud }),
+        this.port.open(openOpts),
         timeout(10000),
       ]);
+      console.log('[CAT] port.open() succeeded, readable=', this.port.readable,
+                  'writable=', this.port.writable);
       this.writer = this.port.writable.getWriter();
+      console.log('[CAT] writer acquired');
       this.transportType = 'serial';
       this.transport = { write: (data) => this.writer.write(data) };
       this.connected = true;
       this.pttOn = false;
       this.narrowOn = false;
     } catch (e) {
+      console.error('[CAT] open failed:', e.name, e.message, e);
       // Clean up partially-opened port and force fresh requestPort() next time
       if (this.writer) {
         try { this.writer.releaseLock(); } catch (_) {}
@@ -125,7 +137,7 @@ export class CatController {
       this.transportType = '';
       const pi = info ? `VID:${info.usbVendorId} PID:${info.usbProductId}` : 'unknown';
       throw new Error(
-        `port open failed [${pi}, ${rig.baud} baud] (${e.message}). Check: (1) rig is powered on and USB cable connected, (2) no other CAT app (WSJT-X etc.) is using the port.`
+        `port open failed [${pi}, ${rig.baud} baud] (${e.name}: ${e.message}). Check: (1) rig is powered on and USB cable connected, (2) no other CAT app (WSJT-X etc.) is using the port.`
       );
     }
   }
