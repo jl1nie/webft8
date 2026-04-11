@@ -556,11 +556,16 @@ pub fn is_plausible_message(text: &str) -> bool {
     }
 
     // Check each token that looks like it should be a callsign
-    for &w in words.iter() {
+    let is_cq = words.first().map_or(false, |&w| w == "CQ");
+    for (idx, &w) in words.iter().enumerate() {
         // Skip known non-callsign tokens
         if matches!(w, "CQ" | "DE" | "QRZ" | "RRR" | "RR73" | "73"
             | "R" | "" | "DX") { continue; }
         if w.starts_with("CQ") { continue; } // "CQ NNN" patterns
+        // CQ suffix (e.g., "POTA", "NA", "DX") — word after CQ, all letters, ≤4 chars
+        if is_cq && idx == 1 && w.len() <= 4 && w.bytes().all(|b| b.is_ascii_uppercase()) {
+            continue;
+        }
         if w.starts_with('<') && w.ends_with('>') { continue; } // <...> hash
         if w.starts_with("R+") || w.starts_with("R-") { continue; } // R-report
         if w.starts_with('+') || w.starts_with('-') {
@@ -576,7 +581,10 @@ pub fn is_plausible_message(text: &str) -> bool {
             }
         }
 
-        // This token should be a callsign — validate it
+        // This token should be a callsign — validate it.
+        // Non-standard callsigns (Type 4) may contain '/' with digits
+        // (e.g., "NFW/0811", "JR1UJX/P") — accept them too.
+        if w.contains('/') { continue; }
         if !is_standard_callsign(w) {
             return false;
         }
@@ -849,8 +857,20 @@ mod tests {
         assert!(is_plausible_message("CQ 3Y0Z JD34"));
         assert!(is_plausible_message("OH3NIV ZS6S R-12"));
 
-        // False positives from noise
-        assert!(!is_plausible_message("NFW/0811 73"));
+        // Type 4 non-standard callsigns with '/'
+        assert!(is_plausible_message("<...> NFW/0811 73"));
+        assert!(is_plausible_message("JR1UJX/P JH1GIN PM96"));
+        assert!(is_plausible_message("<...> JH4IUV/P RR73"));
+        assert!(is_plausible_message("CQ JR9ECD/P"));
+
+        // Hashed callsigns alone
+        assert!(is_plausible_message("<...> JA1ABC -12"));
+        assert!(is_plausible_message("JA1ABC <...> RRR"));
+
+        // CQ with suffix (POTA, SOTA, DX, etc.)
+        assert!(is_plausible_message("CQ POTA JA1ABC PM95"));
+        assert!(is_plausible_message("CQ NA W1AW FN31"));
+        assert!(is_plausible_message("CQ SOTA JL1NIE/P"));
     }
 
     #[test]
