@@ -469,7 +469,7 @@ btnSettings.addEventListener('click', openSettings);
 
 // Mobile detection: NTP Sync is only useful on Android/iOS where the OS
 // may not keep perfect time.  Desktop OS and Tauri native sync via NTP automatically.
-const isMobile = !isTauriMode && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+const isMobile = !isTauriMode() && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 if (!isMobile) btnNtp.style.display = 'none';
 
 function applyDtAutoCorrectUi() {
