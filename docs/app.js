@@ -1035,6 +1035,7 @@ const periodMgr = new FT8PeriodManager({
       const pileCallers = []; // who is calling DX, with their freq
 
       for (const m of msgs) {
+        try {
         const upper = m.message.toUpperCase();
         const isTarget = apCall && upper.includes(apCall);
 
@@ -1057,10 +1058,14 @@ const periodMgr = new FT8PeriodManager({
         div.className = 'chat-msg rx';
         if (isTarget) div.classList.add('qso-active');
         const snrV = Math.round(m.snr_db);
+        // Escape HTML special chars so FT8 hash messages like "R065Z <...> RR73"
+        // are not parsed as HTML tags (critical for EdgeWebView2 / Tauri)
+        const safeMsg = m.message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const dtStr = m.dt_sec != null ? `${m.dt_sec >= 0 ? '+' : ''}${m.dt_sec.toFixed(1)}` : '';
         div.innerHTML = `<span class="col-freq">${Math.round(m.freq_hz)}</span>
-          <span class="col-dt">${m.dt_sec >= 0 ? '+' : ''}${m.dt_sec.toFixed(1)}</span>
+          <span class="col-dt">${dtStr}</span>
           <span class="col-snr">${snrV >= 0 ? '+' : ''}${snrV}</span>
-          <span class="text">${m.message}</span>`;
+          <span class="text">${safeMsg}</span>`;
         div.style.cursor = 'pointer';
         div.addEventListener('click', () => {
           const words = m.message.split(/\s+/);
@@ -1093,6 +1098,9 @@ const periodMgr = new FT8PeriodManager({
         div.classList.add('new');
         div.addEventListener('animationend', () => div.classList.remove('new'), { once: true });
         snipeRxList.appendChild(div);
+        } catch (err) {
+          console.error('snipe render error:', err, m);
+        }
       }
 
       if (msgs.length > 0) {
@@ -1479,7 +1487,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.2.1';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);
