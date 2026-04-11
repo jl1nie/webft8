@@ -839,7 +839,7 @@ const periodMgr = new FT8PeriodManager({
         const msg = r.message;
         const freq = r.freq_hz;
         const snr = r.snr_db;
-        const dt = r.dt_sec - periodMgr.clockOffsetMs / 1000;
+        const dt = r.dt_sec;
         msgs.push({ freq_hz: freq, dt_sec: dt, snr_db: snr, message: msg });
 
         qsoLog.addRx({ message: msg, freq_hz: freq, snr_db: snr });
@@ -909,26 +909,11 @@ const periodMgr = new FT8PeriodManager({
       pushResults(results.slice(shownCount));
     }
 
-    // ── DT auto-calibration ─────────────────────────────────────────────────
-    if (n >= 2) {
-      const minDt = results.reduce((m, r) => Math.min(m, r.dt_sec), Infinity);
-      const EXPECTED_MIN_DT = 0.1;
-      const drift = minDt - EXPECTED_MIN_DT;
-      if (Math.abs(drift) > 0.05) {
-        periodMgr.clockOffsetMs = Math.max(0, Math.min(5000,
-          periodMgr.clockOffsetMs + 0.3 * drift * 1000
-        ));
-      }
-    }
-    // ── end DT calibration ──────────────────────────────────────────────────
-
     lastPeriodIndex = periodIndex;
 
     const shed = [subDisabledAuto && 'sub', apDisabledAuto && 'AP'].filter(Boolean);
     const shedTag = shed.length ? ` [-${shed.join(',')}]` : '';
-    const dtOffSec = periodMgr.clockOffsetMs / 1000;
-    const dtOffTag = dtOffSec > 0.1 ? ` DT-cal:${dtOffSec.toFixed(1)}s` : '';
-    setStatus(`${n}d ${lastDecodeMs}ms${shedTag}${dtOffTag}`);
+    setStatus(`${n}d ${lastDecodeMs}ms${shedTag}`);
 
     // AP target: use QSO dxCall if available, or last Snipe target
     if (qso.dxCall) apCall = qso.dxCall;

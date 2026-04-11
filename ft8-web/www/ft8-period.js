@@ -17,18 +17,6 @@ export class FT8PeriodManager {
 
     // TX queue: { call1, call2, report, freq, txEven }
     this.txQueue = null;
-
-    // Estimated PC clock offset relative to real UTC (ms).
-    // Positive = Date.now() is ahead of real UTC (clock fast).
-    // Updated by app.js from decoded DT statistics each period.
-    // Applied to all Date.now() calls so the period timer fires at
-    // the correct real-UTC boundary regardless of NTP jumps.
-    this.clockOffsetMs = 0;
-  }
-
-  /** Returns the estimated real-UTC time in ms (Date.now() minus clock offset). */
-  _now() {
-    return Date.now() - this.clockOffsetMs;
   }
 
   start() {
@@ -46,7 +34,7 @@ export class FT8PeriodManager {
   }
 
   getCurrentPeriod() {
-    const now = this._now();
+    const now = Date.now();
     const periodIndex = Math.floor(now / 15000);
     const isEven = periodIndex % 2 === 0;
     const periodStartMs = periodIndex * 15000;
@@ -85,10 +73,9 @@ export class FT8PeriodManager {
 
   _scheduleBoundary() {
     if (!this.running) return;
-    const now = this._now();
+    const now = Date.now();
     const currentPeriod = Math.floor(now / 15000);
-    // nextBoundaryMs is in adjusted (real-UTC) time; convert back to wall-clock
-    // setTimeout delay so the timer fires at the correct real moment.
+    // Schedule setTimeout so it fires at the next UTC-aligned 15s boundary.
     const nextBoundaryMs = (currentPeriod + 1) * 15000;
     const delay = nextBoundaryMs - now;
 
