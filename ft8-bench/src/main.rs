@@ -5,7 +5,7 @@ mod simulator;
 
 use std::path::PathBuf;
 use real_data::evaluate_real_data;
-use ft8_core::decode::{decode_sniper_eq, decode_sniper_ap, EqMode, ApHint};
+use ft8_core::decode::{decode_sniper_eq, decode_sniper_ap, decode_sniper_sic, EqMode, ApHint};
 use simulator::{make_busy_band_scenario, build_cq_messages};
 
 fn main() {
@@ -615,7 +615,7 @@ fn run_bpf_subtract_scenario() {
     }
 
     // Subtract-pass (multi-pass decode with signal subtraction)
-    use ft8_core::decode::{decode_frame_subtract, DecodeStrictness};
+    use ft8_core::decode::{decode_frame_subtract, decode_sniper_sic, DecodeStrictness};
     let results_sub = decode_frame_subtract(
         &audio, BPF_LO as f32, BPF_HI as f32, 0.8, None, DecodeDepth::BpAllOsd, 20, DecodeStrictness::Normal,
     );
@@ -626,6 +626,23 @@ fn run_bpf_subtract_scenario() {
         if target_sub { "DECODED" } else { "missed" }
     );
     for r in &results_sub {
+        if let Some(text) = unpack77(&r.message77) {
+            let tag = if r.message77 == target_msg { " ★" } else { "" };
+            println!("    {:+5.1} dB  {:7.1} Hz  pass={}  {}{tag}", r.snr_db, r.freq_hz, r.pass, text);
+        }
+    }
+
+    // Sniper-SIC (in-band successive interference cancellation)
+    let results_sic = decode_sniper_sic(
+        &audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, None,
+    );
+    let target_sic = results_sic.iter().any(|r| r.message77 == target_msg);
+    println!(
+        "  [sniper-SIC ] decoded: {:2}  target: {}",
+        results_sic.len(),
+        if target_sic { "DECODED ★" } else { "missed" }
+    );
+    for r in &results_sic {
         if let Some(text) = unpack77(&r.message77) {
             let tag = if r.message77 == target_msg { " ★" } else { "" };
             println!("    {:+5.1} dB  {:7.1} Hz  pass={}  {}{tag}", r.snr_db, r.freq_hz, r.pass, text);

@@ -121,7 +121,7 @@ pub fn decode_wav(samples: &[i16], strictness: u8, sample_rate: u32) -> Vec<Deco
 ///   dxcall only → 33-bit lock (pass 6)
 #[wasm_bindgen]
 pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str, mycall: &str, eq_on: bool, sample_rate: u32) -> Vec<DecodedMessage> {
-    use ft8_core::decode::{decode_sniper_ap, EqMode, ApHint};
+    use ft8_core::decode::{decode_sniper_sic, EqMode, ApHint};
 
     let eq_mode = if eq_on { EqMode::Adaptive } else { EqMode::Off };
 
@@ -135,7 +135,7 @@ pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str, mycall: 
 
     let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
     decode_and_register(
-        decode_sniper_ap(
+        decode_sniper_sic(
             &audio, target_freq, DecodeDepth::BpAllOsd, 20,
             eq_mode, ap.as_ref(),
         )
@@ -208,7 +208,7 @@ pub fn decode_wav_subtract_f32(samples: &[f32], strictness: u8, sample_rate: u32
 /// f32 variant of `decode_sniper`. See `decode_sniper` for parameters.
 #[wasm_bindgen]
 pub fn decode_sniper_f32(samples: &[f32], target_freq: f32, callsign: &str, mycall: &str, eq_on: bool, sample_rate: u32) -> Vec<DecodedMessage> {
-    use ft8_core::decode::{decode_sniper_ap, EqMode, ApHint};
+    use ft8_core::decode::{decode_sniper_sic, EqMode, ApHint};
 
     let eq_mode = if eq_on { EqMode::Adaptive } else { EqMode::Off };
 
@@ -222,7 +222,7 @@ pub fn decode_sniper_f32(samples: &[f32], target_freq: f32, callsign: &str, myca
 
     let audio = resample_f32_to_12k(samples, sample_rate);
     decode_and_register(
-        decode_sniper_ap(
+        decode_sniper_sic(
             &audio, target_freq, DecodeDepth::BpAllOsd, 20,
             eq_mode, ap.as_ref(),
         )

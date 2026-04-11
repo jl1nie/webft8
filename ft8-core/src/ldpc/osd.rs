@@ -141,7 +141,21 @@ pub struct OsdResult {
 ///
 /// Higher order recovers weaker signals at the cost of runtime.
 pub fn osd_decode_deep(llr: &[f32; LDPC_N], ndeep: u8) -> Option<OsdResult> {
-    osd_decode_impl(llr, ndeep)
+    osd_decode_impl(llr, ndeep, LDPC_K)
+}
+
+/// OSD order-4 decode with Top-K LLR pruning.
+///
+/// Runs the standard order-3 search (all 91 MRB bits) plus an order-4
+/// extension limited to the `k4_limit` *least* reliable MRB bits.
+/// Because errors concentrate in low-|LLR| bits, restricting k4 to the
+/// tail (e.g. k4_limit=30) gives C(30,4)=27,405 extra candidates —
+/// comparable cost to order-3 — while catching the 4-bit-error cases
+/// that order-3 misses.
+///
+/// Recommended k4_limit: 30 (empirically chosen).
+pub fn osd_decode_deep4(llr: &[f32; LDPC_N], k4_limit: usize) -> Option<OsdResult> {
+    osd_decode_impl(llr, 4, k4_limit)
 }
 
 /// OSD order-2 decode (default).
@@ -152,10 +166,12 @@ pub fn osd_decode_deep(llr: &[f32; LDPC_N], ndeep: u8) -> Option<OsdResult> {
 /// single-bit flips and all C(91,2) = 4,095 two-bit flips.
 /// Returns the minimum-weighted CRC-passing codeword, or `None` if none passes.
 pub fn osd_decode(llr: &[f32; LDPC_N]) -> Option<OsdResult> {
-    osd_decode_impl(llr, 2)
+    osd_decode_impl(llr, 2, LDPC_K)
 }
 
-fn osd_decode_impl(llr: &[f32; LDPC_N], ndeep: u8) -> Option<OsdResult> {
+/// `k4_limit`: upper bound (exclusive) on bit indices used in the order-4
+/// extension.  For ndeep < 4 this parameter is ignored.
+fn osd_decode_impl(llr: &[f32; LDPC_N], ndeep: u8, k4_limit: usize) -> Option<OsdResult> {
     // ── Step 1: sort bit indices by |LLR| descending ─────────────────────
     let mut perm = [0usize; LDPC_N];
     for i in 0..LDPC_N {
@@ -313,6 +329,20 @@ fn osd_decode_impl(llr: &[f32; LDPC_N], ndeep: u8) -> Option<OsdResult> {
                 }
                 if let Some((d, cw, wd)) = try_candidate(&c3) {
                     update_best(d, cw, wd);
+                }
+                // Order-4: flip a fourth bit k4 > k3, restricted to k4 < k4_limit.
+                // Errors cluster in low-|LLR| (high index) bits; limiting k4_limit
+                // to ~30 gives C(30,4)≈27k candidates at depth-3 cost.
+                if ndeep >= 4 && k3 + 1 < k4_limit {
+                    for k4 in (k3 + 1)..k4_limit.min(LDPC_K) {
+                        let mut c4 = c3;
+                        for col in 0..LDPC_N {
+                            c4[col] ^= g[k4][col];
+                        }
+                        if let Some((d, cw, wd)) = try_candidate(&c4) {
+                            update_best(d, cw, wd);
+                        }
+                    }
                 }
             }
         }

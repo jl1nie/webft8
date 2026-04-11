@@ -8,7 +8,7 @@ pub use crate::equalizer::EqMode;
 use crate::{
     downsample::{build_fft_cache, downsample},
     equalizer,
-    ldpc::{bp::bp_decode, osd::{osd_decode, osd_decode_deep}},
+    ldpc::{bp::bp_decode, osd::{osd_decode, osd_decode_deep, osd_decode_deep4}},
     llr::{compute_llr, compute_snr_db, symbol_spectra, sync_quality},
     message::pack28,
     params::{BP_MAX_ITER, LDPC_N},
@@ -62,12 +62,15 @@ impl DecodeStrictness {
         match (self, osd_depth) {
             // Strict: high-confidence OSD (e19 real → keep, e23+ → cut)
             (Self::Strict, 3) => 20,
+            (Self::Strict, 4) => 24,
             (Self::Strict, _) => 22,
             // Normal: catches errors=29 FP, keeps errors=23 real decode
             (Self::Normal, 3) => 26,
+            (Self::Normal, 4) => 30,
             (Self::Normal, _) => 29,
             // Deep: previous defaults — maximum sensitivity
             (Self::Deep,   3) => 30,
+            (Self::Deep,   4) => 36,
             (Self::Deep,   _) => 40,
         }
     }
@@ -387,6 +390,28 @@ fn process_candidate(
                             sync_cv,
                             snr_db,
                         });
+                    }
+                }
+                // OSD depth-4 (Top-K pruning): same sync gate as depth-3.
+                // k4_limit=30 → C(30,4)=27,405 extra candidates at depth-3 cost.
+                if nsync >= 18 {
+                    for llr_osd in [&llr_set.llra, &llr_set.llrb, &llr_set.llrc, &llr_set.llrd] {
+                        if let Some(osd4) = osd_decode_deep4(llr_osd, 30) {
+                            let max_errors = strictness.osd_max_errors(4);
+                            if osd4.hard_errors >= max_errors { continue; }
+                            let itone = message_to_tones(&osd4.message77);
+                            let snr_db = compute_snr_db(cs, &itone);
+                            return Some(DecodeResult {
+                                message77: osd4.message77,
+                                freq_hz: cand.freq_hz,
+                                dt_sec: refined.dt_sec,
+                                hard_errors: osd4.hard_errors,
+                                sync_score: refined.score,
+                                pass: 13,
+                                sync_cv,
+                                snr_db,
+                            });
+                        }
                     }
                 }
             }
@@ -746,9 +771,70 @@ pub fn decode_sniper_ap(
     eq_mode: EqMode,
     ap_hint: Option<&ApHint>,
 ) -> Vec<DecodeResult> {
+    decode_sniper_inner(audio, target_freq, depth, max_cand, eq_mode, ap_hint, 0.8)
+}
+
+/// Sniper-mode decode with in-band Successive Interference Cancellation (SIC).
+///
+/// Pass 1 decodes all signals in ±250 Hz.  Any decoded signal more than 25 Hz
+/// away from `target_freq` is subtracted from the audio.  Pass 2 then
+/// re-decodes the residual with a relaxed sync threshold, recovering targets
+/// that were masked by in-band interferers.
+///
+/// This is particularly effective when 2–3 stronger stations reside within the
+/// 500 Hz BPF window alongside the target.  Falls back to a single-pass result
+/// when no interferers are found (zero extra cost).
+pub fn decode_sniper_sic(
+    audio: &[i16],
+    target_freq: f32,
+    depth: DecodeDepth,
+    max_cand: usize,
+    eq_mode: EqMode,
+    ap_hint: Option<&ApHint>,
+) -> Vec<DecodeResult> {
+    // Pass 1: decode everything in ±250 Hz at normal sync threshold.
+    let pass1 = decode_sniper_inner(audio, target_freq, depth, max_cand, eq_mode, ap_hint, 0.8);
+
+    // Subtract non-target signals (those > 25 Hz away from target_freq).
+    let mut residual: Vec<i16> = audio.to_vec();
+    let mut subtracted = false;
+    for r in &pass1 {
+        if (r.freq_hz - target_freq).abs() > 25.0 {
+            // QSB gate: partial subtraction for time-varying channels.
+            let gain = if r.sync_cv > 0.3 { 0.5 } else { 1.0 };
+            subtract_signal_weighted(&mut residual, r, gain);
+            subtracted = true;
+        }
+    }
+
+    if !subtracted {
+        return pass1;
+    }
+
+    // Pass 2: re-decode residual with relaxed sync_min to catch the target.
+    let pass2 = decode_sniper_inner(&residual, target_freq, depth, max_cand, eq_mode, ap_hint, 0.6);
+
+    // Merge, deduplicating by message77.
+    let mut results = pass1;
+    for r in pass2 {
+        if !results.iter().any(|x| x.message77 == r.message77) {
+            results.push(r);
+        }
+    }
+    results
+}
+
+fn decode_sniper_inner(
+    audio: &[i16],
+    target_freq: f32,
+    depth: DecodeDepth,
+    max_cand: usize,
+    eq_mode: EqMode,
+    ap_hint: Option<&ApHint>,
+    sync_min: f32,
+) -> Vec<DecodeResult> {
     let freq_min = (target_freq - 250.0).max(100.0);
     let freq_max = (target_freq + 250.0).min(5900.0);
-    let sync_min = 0.8;
 
     let candidates = coarse_sync(audio, freq_min, freq_max, sync_min, Some(target_freq), max_cand);
     if candidates.is_empty() {
