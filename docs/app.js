@@ -483,7 +483,6 @@ function applyDtAutoCorrectUi() {
   }
 }
 dtAutoCorrectCheck.addEventListener('change', applyDtAutoCorrectUi);
-applyDtAutoCorrectUi();  // apply initial state
 
 btnNtp.addEventListener('click', async () => {
   btnNtp.disabled = true;
@@ -1223,6 +1222,9 @@ const periodMgr = new FT8PeriodManager({
     if (qso.dxCall) apCall = qso.dxCall;
   },
 });
+
+// Apply DT auto-correct initial UI state (periodMgr now initialized)
+applyDtAutoCorrectUi();
 
 // TX fire from period manager
 periodMgr.callbacks.onTxFire = async (tx) => {
