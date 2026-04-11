@@ -1,6 +1,6 @@
-# WebFT8 — FT8 in Your Browser
+# WebFT8 — ブラウザで動く FT8
 
-**[日本語版](README.md)** | **[Open App](https://jl1nie.github.io/webft8/)** | **[Manual](docs/manual.en.md)**
+**[English](README.md)** | **[アプリを開く](https://jl1nie.github.io/webft8/)** | **[マニュアル](docs/manual.md)**
 
 > Pure Rust FT8 decoder running as a WASM PWA.
 > No install, no Java — just open and operate.
