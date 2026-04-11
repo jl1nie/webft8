@@ -1,7 +1,7 @@
 // Main thread keeps WASM init for encode_ft8 (TX waveform synthesis).
 // Decode runs in a Web Worker (decode-worker.js) so a 200-400 ms decode
 // call doesn't freeze the waterfall or the UI.
-import init, { encode_ft8, encode_free_text } from './ft8_web.js';
+import init, { encode_ft8, encode_free_text } from '../pkg/ft8_web.js';
 
 // ── Decode worker (off-main-thread WASM) ───────────────────────────────────
 const decodeWorker = new Worker(
@@ -928,16 +928,7 @@ const periodMgr = new FT8PeriodManager({
 
     const shed = [subDisabledAuto && 'sub', apDisabledAuto && 'AP'].filter(Boolean);
     const shedTag = shed.length ? ` [-${shed.join(',')}]` : '';
-    // Diagnostic: buffer samples (expected 180000) and median DT
-    const bufSamples = float32.length;
-    const bufTag = bufSamples !== 180000 ? ` buf:${bufSamples}` : '';
-    let mdtTag = '';
-    if (n >= 2) {
-      const dts = results.map(r => r.dt_sec).sort((a, b) => a - b);
-      const mdt = dts[Math.floor(dts.length / 2)];
-      mdtTag = ` mDT:${mdt >= 0 ? '+' : ''}${mdt.toFixed(1)}`;
-    }
-    setStatus(`${n}d ${lastDecodeMs}ms${shedTag}${bufTag}${mdtTag}`);
+    setStatus(`${n}d ${lastDecodeMs}ms${shedTag}`);
 
     // AP target: use QSO dxCall if available, or last Snipe target
     if (qso.dxCall) apCall = qso.dxCall;
