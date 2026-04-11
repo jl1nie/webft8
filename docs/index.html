@@ -128,8 +128,10 @@
   .snipe-target .dx-msg { font-size: var(--fs-base); color: var(--c-warn); margin-top: var(--sp-xs); }
   .snipe-target .dx-info { font-size: var(--fs-sm); color: var(--c-text2); }
   .qso-progress { display: flex; align-items: center; gap: var(--sp-xs); margin: var(--sp-xs) 0;
-    font-size: var(--fs-base); }
+    font-size: var(--fs-base); overflow: hidden; }
   .qso-progress .label { margin-left: var(--sp-xs); }
+  .qso-progress .decode-info { color: var(--c-text2); font-size: var(--fs-xs); margin-left: auto;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
   .snipe-band { font-size: var(--fs-sm); color: var(--c-text2); margin-top: var(--sp-xs); }
   .snipe-band span { margin-right: var(--sp-sm); }
   .snipe-phase-tabs { display: flex; gap: 0; }
