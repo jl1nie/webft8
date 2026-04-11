@@ -682,6 +682,67 @@ function updateTxActions() {
     queueTxMsg(cqTx.call1, cqTx.call2, cqTx.report);
   });
   txActionsEl.appendChild(cqBtn);
+
+  // ── State nav: manual desync recovery ───────────────────────────────────
+  const nav = document.createElement('div');
+  nav.className = 'state-nav';
+
+  const fwdLabel = { [QSO_STATE.CALLING]: '→ REPORT', [QSO_STATE.REPORT]: '→ FINAL' };
+  const bwdLabel = { [QSO_STATE.REPORT]: '← CALLING', [QSO_STATE.FINAL]: '← REPORT' };
+
+  if (bwdLabel[state]) {
+    const bwd = document.createElement('button');
+    bwd.className = 'state-nav-btn';
+    bwd.textContent = bwdLabel[state];
+    const tgt = state === QSO_STATE.REPORT ? QSO_STATE.CALLING : QSO_STATE.REPORT;
+    bwd.addEventListener('click', () => {
+      const t = qso.forceState(tgt);
+      if (t) queueTxMsg(t.call1, t.call2, t.report);
+      updateTxActions(); updateQsoDisplay();
+    });
+    nav.appendChild(bwd);
+  }
+
+  if (fwdLabel[state]) {
+    const fwd = document.createElement('button');
+    fwd.className = 'state-nav-btn';
+    fwd.textContent = fwdLabel[state];
+    const tgt = state === QSO_STATE.CALLING ? QSO_STATE.REPORT : QSO_STATE.FINAL;
+    fwd.addEventListener('click', () => {
+      const t = qso.forceState(tgt);
+      if (t) queueTxMsg(t.call1, t.call2, t.report);
+      updateTxActions(); updateQsoDisplay();
+    });
+    nav.appendChild(fwd);
+  }
+
+  if (state === QSO_STATE.FINAL) {
+    const done = document.createElement('button');
+    done.className = 'state-nav-btn complete';
+    done.textContent = '✓ Complete';
+    done.addEventListener('click', () => {
+      if (qso.dxCall) {
+        qsoLog.add({ dxCall: qso.dxCall, dxGrid: qso.dxGrid,
+          txReport: qso.txReport, rxReport: qso.rxReport,
+          freq: currentMode === 'snipe' ? snipeDf : scoutDf,
+          bandMHz: bandSelect.value, state: QSO_STATE.FINAL });
+      }
+      qso.reset(); periodMgr.cancelTx(); rxSlotEven = null;
+      updateTxActions(); updateQsoDisplay(); setStatus('QSO complete');
+    });
+    nav.appendChild(done);
+  }
+
+  const rst = document.createElement('button');
+  rst.className = 'state-nav-btn reset';
+  rst.textContent = '↺ Reset';
+  rst.addEventListener('click', () => {
+    qso.reset(); periodMgr.cancelTx(); rxSlotEven = null;
+    updateTxActions(); updateQsoDisplay(); setStatus('QSO reset');
+  });
+  nav.appendChild(rst);
+
+  txActionsEl.appendChild(nav);
 }
 
 autoCheck.addEventListener('change', updateTxActions);

@@ -238,6 +238,16 @@
   /* ── Waterfall drop highlight ──────────────────────────────────────── */
   #waterfall-wrap.drop-over { outline: 2px dashed var(--c-accent); outline-offset: -2px; }
 
+  /* ── QSO state nav (desync recovery) ────────────────────────────────── */
+  .state-nav { display: flex; gap: var(--sp-xs); flex-wrap: wrap; width: 100%;
+    margin-top: var(--sp-xs); padding-top: var(--sp-xs); border-top: 1px solid var(--c-border); }
+  .state-nav-btn { font-size: var(--fs-xs); padding: 3px 10px; min-height: 28px;
+    border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+    background: transparent; color: var(--c-text2); cursor: pointer; }
+  .state-nav-btn:hover { border-color: var(--c-text); color: var(--c-text); }
+  .state-nav-btn.reset  { color: var(--c-danger); border-color: var(--c-danger); margin-left: auto; }
+  .state-nav-btn.complete { color: var(--c-success); border-color: var(--c-success); }
+
   /* ── Responsive: mobile ────────────────────────────────────────────── */
   @media (max-width: 600px) {
     :root {
