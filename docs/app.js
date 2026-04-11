@@ -360,20 +360,9 @@ capture._onDisconnect = () => {
   showToast('Audio disconnected');
 };
 // RX level meter from AudioWorklet peak reports.
-// The worklet sees post-GainNode levels; divide by gain to estimate the
-// raw input level so OVL reflects actual ADC clipping, not software gain.
 capture.onPeak = (level) => {
-  const gain = capture.gainNode?.gain.value || 1;
-  const rawLevel = gain > 0 ? level / gain : level;
   const pct = Math.min(level * 100, 100);
   rxMeter.style.width = pct + '%';
-  if (rawLevel > 1.5) {
-    rxMeter.classList.add('clip');
-    rxClip.classList.add('active');
-  } else {
-    rxMeter.classList.remove('clip');
-    rxClip.classList.remove('active');
-  }
 };
 cat.onDisconnect = () => {
   btnCat.textContent = 'Connect CAT';
