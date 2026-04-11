@@ -380,7 +380,7 @@ capture.onPeak = (level) => {
   rxMeter.style.width = pct + '%';
 };
 cat.onDisconnect = () => {
-  btnCat.textContent = 'Connect CAT';
+  btnCat.textContent = 'Connect Rig';
   btnCatBle.textContent = 'Connect BLE';
   catStatusEl.textContent = 'disconnected';
   setStatus('CAT disconnected');
@@ -1176,6 +1176,24 @@ async function toggleAudio() {
       const es = document.getElementById('empty-state');
       if (es) es.remove();
       closeSettings();
+      // Auto-connect rig if saved model exists and port was previously granted
+      if (!cat.connected) {
+        const rigId = localStorage.getItem('webft8-rig');
+        if (rigId && document.getElementById('rig-model').value) {
+          try {
+            if ('serial' in navigator) {
+              const ports = await navigator.serial.getPorts();
+              if (ports.length === 1) {
+                cat.port = ports[0];
+                cat.transportType = 'serial';
+                await cat.connect(rigId);
+                btnCat.textContent = 'Disconnect';
+                catStatusEl.textContent = 'connected (auto)';
+              }
+            }
+          } catch (_) { /* silent — user can connect manually */ }
+        }
+      }
     } catch (e) {
       setStatus(`Audio error: ${e.message || e}`);
     }
@@ -1242,7 +1260,7 @@ if (isTauriMode()) {
 btnCat.addEventListener('click', async () => {
   if (cat.connected) {
     await cat.disconnect();
-    btnCat.textContent = 'Connect CAT';
+    btnCat.textContent = 'Connect Rig';
     catStatusEl.textContent = 'disconnected';
     return;
   }
@@ -1270,7 +1288,7 @@ btnCat.addEventListener('click', async () => {
     localStorage.setItem('webft8-rig', rigId);
   } catch (e) {
     await cat.disconnect();
-    btnCat.textContent = 'Connect CAT';
+    btnCat.textContent = 'Connect Rig';
     catStatusEl.textContent = `error: ${e.message || e}`;
   }
 });

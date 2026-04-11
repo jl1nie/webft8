@@ -419,6 +419,9 @@
       <label>My Grid</label>
       <input type="text" id="my-grid" placeholder="PM95" style="text-transform:uppercase;width:5em">
     </div>
+  </details>
+  <details class="accordion">
+    <summary>Rig</summary>
     <div class="field">
       <label>Audio Input</label>
       <select id="audio-device"><option>-- select --</option></select>
@@ -449,9 +452,6 @@
     </div>
     <button id="btn-test-tone">Test Tone</button>
     <button id="btn-start">Start Audio</button>
-  </details>
-  <details class="accordion">
-    <summary>CAT</summary>
     <div class="field">
       <label>Rig Model</label>
       <select id="rig-model"></select>
@@ -461,9 +461,28 @@
       <select id="cat-port"></select>
       <button id="btn-cat-refresh" style="font-size:var(--fs-xs);padding:2px 6px">&#x21bb;</button>
     </div>
-    <button id="btn-cat">Connect CAT</button>
+    <button id="btn-cat">Connect Rig</button>
     <button id="btn-cat-ble" style="display:none">Connect BLE</button>
     <span class="cat-status" id="cat-status" style="font-size:var(--fs-xs);color:var(--c-text2);display:block;margin-bottom:var(--sp-sm)">not connected</span>
+  </details>
+  <details class="accordion">
+    <summary>Log</summary>
+    <button id="btn-export-zip">Export ZIP (ADIF + RX)</button>
+    <button id="btn-clear-log" style="color:var(--c-danger);border-color:var(--c-danger)">Clear All Logs</button>
+    <div id="qso-list" style="margin-top:var(--sp-xs);font-size:var(--fs-xs);color:var(--c-text2);max-height:120px;overflow-y:auto"></div>
+  </details>
+  <details class="accordion">
+    <summary>TX Messages</summary>
+    <div class="field">
+      <label>Tx1 CQ suffix</label>
+      <input type="text" id="tx1-cq-suffix" placeholder="POTA" maxlength="4" style="text-transform:uppercase;width:5em">
+      <div style="font-size:var(--fs-xs);color:var(--c-text2)">POTA / SOTA / DX etc. (blank = CQ only)</div>
+    </div>
+    <div class="field">
+      <label>Tx5 Free text</label>
+      <input type="text" id="tx5-free-text" placeholder="JA/TK-001" maxlength="13" style="text-transform:uppercase">
+      <div style="font-size:var(--fs-xs);color:var(--c-text2)">Replaces RR73. SOTA/POTA ref, JCC etc.</div>
+    </div>
   </details>
   <details class="accordion">
     <summary>Decode</summary>
@@ -491,25 +510,6 @@
     <label class="toggle"><input type="checkbox" id="cq-best-snr" checked><span class="toggle-track"></span><span id="cq-reply-label">CQ reply: best SNR</span></label>
     <label class="toggle"><input type="checkbox" id="waterfall-enable" checked><span class="toggle-track"></span><span>Waterfall FFT</span></label>
     <button id="btn-open-wav">Open WAV File</button>
-  </details>
-  <details class="accordion">
-    <summary>TX Messages</summary>
-    <div class="field">
-      <label>Tx1 CQ suffix</label>
-      <input type="text" id="tx1-cq-suffix" placeholder="POTA" maxlength="4" style="text-transform:uppercase;width:5em">
-      <div style="font-size:var(--fs-xs);color:var(--c-text2)">POTA / SOTA / DX etc. (blank = CQ only)</div>
-    </div>
-    <div class="field">
-      <label>Tx5 Free text</label>
-      <input type="text" id="tx5-free-text" placeholder="JA/TK-001" maxlength="13" style="text-transform:uppercase">
-      <div style="font-size:var(--fs-xs);color:var(--c-text2)">Replaces RR73. SOTA/POTA ref, JCC etc.</div>
-    </div>
-  </details>
-  <details class="accordion">
-    <summary>Log</summary>
-    <button id="btn-export-zip">Export ZIP (ADIF + RX)</button>
-    <button id="btn-clear-log" style="color:var(--c-danger);border-color:var(--c-danger)">Clear All Logs</button>
-    <div id="qso-list" style="margin-top:var(--sp-xs);font-size:var(--fs-xs);color:var(--c-text2);max-height:120px;overflow-y:auto"></div>
   </details>
 </div>
 
