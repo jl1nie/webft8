@@ -115,7 +115,6 @@ let snipeDf = 1000;   // Snipe TX frequency
 let scoutDf = 1500;   // Scout TX frequency
 let apCall = '';
 let snipePhase = 'watch'; // 'watch' | 'call'
-let snipeAltCall = ''; // call2 (sender) from last tapped Snipe message
 let rxSlotEven = null; // even/odd of the period where DX was last heard
 let lastDecodeMs = 0; // last decode duration for timer display
 let lastPeriodIndex = -1; // track period changes for separator
@@ -632,22 +631,6 @@ function updateTxActions() {
     });
     txActionsEl.appendChild(btn);
 
-    // Snipe: show alt call (sender) as secondary option
-    if (currentMode === 'snipe' && snipeAltCall && snipeAltCall !== myCall) {
-      const altBtn = document.createElement('button');
-      altBtn.className = 'tx-msg';
-      altBtn.textContent = `Call ${snipeAltCall}`;
-      altBtn.addEventListener('click', () => {
-        qso.setMyInfo(myCallInput.value, myGridInput.value);
-        const tx = qso.callStation(snipeAltCall);
-        apCall = snipeAltCall;
-        snipeDxCall.textContent = snipeAltCall;
-        clearTargetCards();
-        snipeAltCall = '';
-        if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
-      });
-      txActionsEl.appendChild(altBtn);
-    }
     return;
   }
 
@@ -1089,14 +1072,12 @@ const periodMgr = new FT8PeriodManager({
           }
           const isCq = /^(CQ|DE|QRZ)\b/.test(m.message);
           const target = isCq ? calls[0] : (calls[1] || calls[0] || '');
-          const other  = isCq ? '' : calls[0];
           if (target) {
             qso.setMyInfo(myCallInput.value, myGridInput.value);
             const tx = qso.callStation(target);
             apCall = target;
             snipeDxCall.textContent = target;
             clearTargetCards();
-            snipeAltCall = (other && other !== target) ? other : '';
             if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
             // Set BPF center to clicked station's frequency
             snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, Math.round(m.freq_hz)));
@@ -1498,7 +1479,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '2026-04-11-n';
+const APP_VERSION = '2026-04-11-o';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);
