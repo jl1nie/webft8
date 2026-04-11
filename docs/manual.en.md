@@ -56,6 +56,7 @@ WebFT8 [Scout][Snipe]  14.074(20m)  12s  *
 | **Mode tabs** | Scout / Snipe toggle |
 | **Band selector** | Operating band. On change, sets rig VFO frequency and mode (DATA-USB) when CAT is connected |
 | **Seconds remaining** | Integer seconds until next period boundary |
+| **DT±X.X** | Clock offset display. Shows the auto-corrected value (in seconds) when DT auto-correct is ON and signals have been decoded |
 | **Gear icon** | Open settings panel |
 
 ---
@@ -204,6 +205,18 @@ All TX is **synchronized to the next period boundary** (never immediate).
 - **Halt / Reset (progressive)**: First tap = stop TX immediately (button changes to "Reset"), second tap = reset QSO (saved as incomplete to log)
 - Status bar shows `TX queued: ...` when TX is pending
 
+**State navigation (desync recovery):**
+
+While a QSO is active (any state other than IDLE), a state nav row appears below the TX buttons. Use it to manually recover when your state machine falls out of sync with the other station.
+
+| Button | Visible in state | Action |
+|--------|-----------------|--------|
+| `← CALLING` | REPORT / FINAL | Force back to CALLING; retransmit grid |
+| `→ REPORT` | CALLING | Advance to REPORT; send SNR report |
+| `→ FINAL` | REPORT | Advance to FINAL; send RR73 |
+| `✓ Complete` | FINAL | Log the QSO and return to IDLE (no need to receive 73) |
+| `↺ Reset` | All states | Cancel TX and reset to IDLE |
+
 ---
 
 ## QSO State Machine
@@ -221,9 +234,10 @@ IDLE -> CALLING -> REPORT -> FINAL -> IDLE (complete)
 | **REPORT** | Report exchange | `DX MYCALL R+00` |
 | **FINAL** | Awaiting confirmation | `DX MYCALL RR73` or `73` |
 
-- **Auto ON**: Fully automatic state transitions. Retries on no response (up to 15 times).
+- **Auto ON**: Fully automatic state transitions. Retries on no response (up to 5 times = 75 seconds).
 - **Auto OFF**: TX message selector buttons appear for manual selection.
 - When the retry limit is reached, the QSO is logged as incomplete.
+- **Desync recovery**: Use the state nav buttons in the TX actions area to manually force a state transition (see [TX Actions](#tx-actions-bottom-bar)).
 
 ---
 
@@ -331,10 +345,12 @@ Open/close with the gear icon. Organized as an accordion with 5 sections (ordere
 |------|-------------|
 | **Strictness** | Decode sensitivity vs false-positive (Strict / Normal / Deep) |
 | **Equalizer** | Adaptive equalizer (Off / Adaptive). BPF edge correction |
-| **Retry limit** | QSO retry count limit (default 15) |
+| **Retry limit** | QSO retry count limit (default 5) |
 | **Multi-pass subtract** | Successive interference cancellation (3-pass SIC). Default ON |
 | **A Priori (AP)** | AP decoding. Default ON |
 | **CQ reply: best SNR** | ON: respond to strongest CQ. OFF: first decoded |
+| **DT auto-correct** | ON: automatically corrects the clock offset using the median DT of decoded FT8 signals. Shows `DT±X.X` in the header. Default ON |
+| **NTP Sync** | Sync time via HTTP and reset the clock offset. **Shown on mobile (Android/iOS) only.** Disabled when DT auto-correct is OFF |
 | **Waterfall FFT** | Toggle waterfall display |
 | **Open WAV File** | Select a WAV file for offline analysis |
 
