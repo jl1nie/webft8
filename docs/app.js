@@ -395,7 +395,7 @@ function setMode(mode) {
   resizeCanvas();
   waterfall.clear();
   waterfall.dfLine = mode === 'scout' ? scoutDf : snipeDf;
-  waterfall.targetLine = mode === 'snipe' ? snipeBpf : null;
+  waterfall.targetLine = (mode === 'snipe' && snipePhase === 'call') ? snipeBpf : null;
   waterfall.freqOffset = (mode === 'snipe' && snipePhase === 'call') ? (snipeBpf - FILTER_CENTER) : 0;
   if (mode === 'snipe') {
     snipePhaseHint.textContent = snipePhase === 'watch'
@@ -428,7 +428,8 @@ async function setSnipePhase(phase) {
   snipeView.classList.toggle('snipe-call-phase', phase === 'call');
   if (phase === 'watch') {
     waterfall.freqOffset = 0;
-    waterfall.noiseWindow = null; // full-band noise estimation
+    waterfall.noiseWindow = null;
+    waterfall.targetLine = null;
     snipePhaseHint.textContent = `full-band  DF ${snipeDf} Hz`;
     await cat.setFilter(false);
     const baseHz = Math.round(parseFloat(bandSelect.value) * 1e6);
@@ -436,6 +437,7 @@ async function setSnipePhase(phase) {
   } else {
     waterfall.freqOffset = snipeBpf - FILTER_CENTER;
     waterfall.noiseWindow = { min: snipeBpf - 250, max: snipeBpf + 250 };
+    waterfall.targetLine = snipeBpf;
     snipePhaseHint.textContent = `BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`;
     await cat.setFilter(true);
     await cat.setFreq(snipeDialHz());
@@ -514,8 +516,8 @@ wfWrap.addEventListener('contextmenu', async (e) => {
   const rect = wfCanvas.getBoundingClientRect();
   const freq = Math.round(FREQ_MIN + ((e.clientX - rect.left) / rect.width) * (FREQ_MAX - FREQ_MIN));
   snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq));
-  waterfall.targetLine = snipeBpf;
   if (snipePhase === 'call') {
+    waterfall.targetLine = snipeBpf;
     waterfall.freqOffset = snipeBpf - FILTER_CENTER;
     waterfall.noiseWindow = { min: snipeBpf - 250, max: snipeBpf + 250 };
     await cat.setFreq(snipeDialHz());
@@ -900,6 +902,7 @@ const periodMgr = new FT8PeriodManager({
           const tx = qso.callStation(clickCall);
           apCall = clickCall;
           snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, Math.round(freq)));
+          snipeDf = snipeBpf;
           clearTargetCards();
           if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
         } : null, freq, dt);
@@ -1066,8 +1069,8 @@ const periodMgr = new FT8PeriodManager({
             if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
             // Set BPF center to clicked station's frequency
             snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, Math.round(m.freq_hz)));
-            waterfall.targetLine = snipeBpf;
             if (snipePhase === 'call') {
+              waterfall.targetLine = snipeBpf;
               waterfall.freqOffset = snipeBpf - FILTER_CENTER;
               waterfall.noiseWindow = { min: snipeBpf - 250, max: snipeBpf + 250 };
               cat.setFreq(snipeDialHz());
