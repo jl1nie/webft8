@@ -791,7 +791,7 @@ async function syncNtpOffset() {
   for (const api of APIS) {
     try {
       const t0 = Date.now();
-      const resp = await fetch(api.url, { cache: 'no-store' });
+      const resp = await fetch(api.url, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
       const t1 = Date.now();
       if (!resp.ok) continue;
       const data = await resp.json();
