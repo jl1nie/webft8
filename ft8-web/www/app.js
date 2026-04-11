@@ -794,14 +794,17 @@ const periodMgr = new FT8PeriodManager({
     if (n >= 2) {
       const minDt = results.reduce((m, r) => Math.min(m, r.dt_sec), Infinity);
       const EXPECTED_MIN_DT = 0.1; // typical punctual-station DT
+      // drift = residual offset still in the buffer timing (seconds).
+      // As clockOffsetMs increases, the period fires later and minDt decreases
+      // by the same amount, so: drift = true_clock_offset - clockOffsetMs/1000.
+      // Integrating with α=0.3 makes clockOffsetMs converge to the true offset
+      // in ~8 periods (2 minutes).  The old formula (0.8*C + 0.2*drift*1000)
+      // only converged to 50% of the true offset due to the feedback loop.
       const drift = minDt - EXPECTED_MIN_DT;
-      if (drift > 0.05) {
-        // Exponential moving average — converges in ~5 periods (α=0.2)
-        const newOffset = 0.8 * periodMgr.clockOffsetMs + 0.2 * drift * 1000;
-        periodMgr.clockOffsetMs = Math.max(0, Math.min(5000, newOffset));
-      } else if (drift < -0.05) {
-        // Clock appears to be behind — reduce offset gently
-        periodMgr.clockOffsetMs = Math.max(0, periodMgr.clockOffsetMs + drift * 200);
+      if (Math.abs(drift) > 0.05) {
+        periodMgr.clockOffsetMs = Math.max(0, Math.min(5000,
+          periodMgr.clockOffsetMs + 0.3 * drift * 1000
+        ));
       }
     }
     // ── end DT calibration ──────────────────────────────────────────────────
