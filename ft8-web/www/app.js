@@ -467,15 +467,29 @@ function closeSettings() {
 }
 btnSettings.addEventListener('click', openSettings);
 
-dtAutoCorrectCheck.addEventListener('change', () => {
-  periodMgr.setDtAutoCorrect(dtAutoCorrectCheck.checked);
-});
+// Mobile detection: NTP Sync is only useful on Android/iOS where the OS
+// may not keep perfect time.  Desktop OS and Tauri native sync via NTP automatically.
+const isMobile = !isTauriMode && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+if (!isMobile) btnNtp.style.display = 'none';
+
+function applyDtAutoCorrectUi() {
+  const on = dtAutoCorrectCheck.checked;
+  periodMgr.setDtAutoCorrect(on);
+  dtOffsetEl.style.display = on ? '' : 'none';
+  btnNtp.disabled = !on;
+  if (!on) {
+    dtOffsetEl.textContent = '';
+    dtOffsetEl.classList.remove('correcting');
+  }
+}
+dtAutoCorrectCheck.addEventListener('change', applyDtAutoCorrectUi);
+applyDtAutoCorrectUi();  // apply initial state
 
 btnNtp.addEventListener('click', async () => {
   btnNtp.disabled = true;
   btnNtp.textContent = 'Syncing...';
   await syncNtpOffset();
-  btnNtp.disabled = false;
+  btnNtp.disabled = !dtAutoCorrectCheck.checked;
   btnNtp.textContent = 'NTP Sync';
 });
 settingsOverlay.addEventListener('click', closeSettings);
@@ -781,29 +795,38 @@ function queueTxMsg(call1, call2, report) {
 async function syncNtpOffset() {
   // HTTP-based time sync (UDP NTP is not accessible from browsers).
   // Each API has CORS enabled and returns UTC time in JSON.
+  // Strategy: take 3 measurements per API, keep the one with minimum RTT.
+  // Minimum RTT ≈ most symmetric path → best midpoint estimate (standard NTP practice).
   const APIS = [
+    { url: 'https://time.cloudflare.com/',
+      parse: d => new Date(d.time).getTime() },
     { url: 'https://worldtimeapi.org/api/timezone/UTC',
       parse: d => new Date(d.utc_datetime).getTime() },
-    { url: 'https://timeapi.io/api/Time/current/zone?timeZone=UTC',
-      parse: d => new Date(`${d.dateTime}Z`).getTime() },
+    { url: 'https://timeapi.io/api/time/current/zone?timeZone=UTC',
+      parse: d => new Date(d.dateTime + 'Z').getTime() },
   ];
 
   for (const api of APIS) {
     try {
-      const t0 = Date.now();
-      const resp = await fetch(api.url, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
-      const t1 = Date.now();
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      const serverMs = api.parse(data);
-      if (isNaN(serverMs)) continue;
-      // Server time estimated at request midpoint to cancel out half the RTT
-      const rttMs = t1 - t0;
-      const offsetSec = (t0 + rttMs / 2 - serverMs) / 1000;
-      periodMgr.setClockOffset(offsetSec);
-      const sign = offsetSec >= 0 ? '+' : '';
-      setStatus(`NTP: ${sign}${offsetSec.toFixed(2)} s (RTT ${rttMs} ms)`);
-      return offsetSec;
+      let best = null;
+      for (let i = 0; i < 3; i++) {
+        const t0 = Date.now();
+        const resp = await fetch(api.url, { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+        const t1 = Date.now();
+        if (!resp.ok) break;
+        const data = await resp.json();
+        const serverMs = api.parse(data);
+        if (isNaN(serverMs)) break;
+        const rttMs = t1 - t0;
+        const offsetSec = (t0 + rttMs / 2 - serverMs) / 1000;
+        if (!best || rttMs < best.rttMs) best = { offsetSec, rttMs };
+      }
+      if (!best) continue;
+
+      periodMgr.setClockOffset(best.offsetSec);
+      const sign = best.offsetSec >= 0 ? '+' : '';
+      setStatus(`NTP: ${sign}${best.offsetSec.toFixed(2)} s (RTT ${best.rttMs} ms)`);
+      return best.offsetSec;
     } catch (_) { /* try next API */ }
   }
   setStatus('NTP sync failed');
