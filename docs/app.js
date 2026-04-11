@@ -75,7 +75,6 @@ const snipeOverlay = document.getElementById('snipe-overlay');
 const snipeFreqLabel = document.getElementById('snipe-freq-label');
 const chatList = document.getElementById('chat-list');
 const snipeDxCall = document.getElementById('snipe-dx-call');
-const snipeDxMsg = document.getElementById('snipe-dx-msg');
 const snipeDxInfo = document.getElementById('snipe-dx-info');
 const snipeTxLine = document.getElementById('snipe-tx-line');
 const snipeBand = document.getElementById('snipe-band');
@@ -163,7 +162,6 @@ const scoutTargetInfo = document.getElementById('scout-target-info');
 function clearTargetCards() {
   scoutTargetMsg.textContent = '';
   scoutTargetInfo.textContent = '';
-  snipeDxMsg.textContent = '';
   snipeDxInfo.textContent = '';
 }
 
@@ -909,7 +907,6 @@ const periodMgr = new FT8PeriodManager({
 
         // Snipe view
         if (currentMode === 'snipe' && apCall && msg.toUpperCase().includes(apCall)) {
-          snipeDxMsg.textContent = msg;
           snipeDxInfo.textContent = `${freq.toFixed(0)} Hz  ${snr >= 0 ? '+' : ''}${Math.round(snr)} dB`;
         }
 
