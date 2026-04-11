@@ -410,22 +410,12 @@ The IC-705 supports BLE (Bluetooth Low Energy) for CI-V CAT commands. This lets 
 
 #### First-time Setup
 
-**On the IC-705:**
+BLE requires no OS-level pairing. Just follow these steps:
 
-1. **MENU** → **SET** → **Bluetooth** → **Bluetooth** = **ON**
-2. In the same menu: **Pairing Reception** = **ON**
-3. The IC-705 is now waiting for a BLE connection
-
-**On your phone:**
-
-4. Open your phone's **Bluetooth settings** and pair with "ICOM BT(IC-705)"
-   - Enter the pairing PIN shown on the IC-705 display
-5. After pairing succeeds, go back to WebFT8
-6. Open Settings (gear icon) → **Rig** section
-7. Tap **Connect BLE**
-8. Select "ICOM BT(IC-705)" from the browser's device dialog
-9. WebFT8 performs the BLE GATT application-level pairing automatically
-10. Status shows "connected" — done!
+1. **On the IC-705:** MENU → **SET** → **Bluetooth** → **Bluetooth** = **ON**, then tap **Pairing from Other Device** to start waiting
+2. **In WebFT8 settings** (gear icon) → **Rig** section, select your rig and tap **Connect BLE**
+3. Select "ICOM BT(IC-705)" from the browser's device dialog
+4. Status shows "connected" — done!
 
 #### Subsequent Connections
 
