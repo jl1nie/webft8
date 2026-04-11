@@ -401,6 +401,8 @@ function setMode(mode) {
   resizeCanvas();
   waterfall.clear();
   waterfall.dfLine = mode === 'scout' ? scoutDf : snipeDf;
+  waterfall.targetLine = mode === 'snipe' ? snipeBpf : null;
+  waterfall.freqOffset = (mode === 'snipe' && snipePhase === 'call') ? (snipeBpf - FILTER_CENTER) : 0;
   updateSnipeOverlay();
 }
 
@@ -426,11 +428,13 @@ async function setSnipePhase(phase) {
   const snipeView = document.getElementById('snipe-view');
   snipeView.classList.toggle('snipe-call-phase', phase === 'call');
   if (phase === 'watch') {
+    waterfall.freqOffset = 0;
     snipePhaseHint.textContent = `full-band  DF ${snipeDf} Hz`;
     await cat.setFilter(false);
     const baseHz = Math.round(parseFloat(bandSelect.value) * 1e6);
     await cat.setFreq(baseHz);
   } else {
+    waterfall.freqOffset = snipeBpf - FILTER_CENTER;
     snipePhaseHint.textContent = `BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`;
     await cat.setFilter(true);
     await cat.setFreq(snipeDialHz());
@@ -482,27 +486,41 @@ function updateSnipeOverlay() {
   snipeFreqLabel.textContent = `${snipeBpf} Hz`;
 }
 
+// Left-click: set DF (TX frequency) — both Watch and Call
 wfWrap.addEventListener('click', async (e) => {
   const rect = wfCanvas.getBoundingClientRect();
   const freq = Math.round(FREQ_MIN + ((e.clientX - rect.left) / rect.width) * (FREQ_MAX - FREQ_MIN));
   if (currentMode === 'snipe') {
-    if (snipePhase === 'watch') {
-      // Watch: set TX frequency (DF) — full-band receive
-      snipeDf = Math.max(FREQ_MIN, Math.min(FREQ_MAX, freq));
-      waterfall.dfLine = snipeDf;
-      setStatus(`DF: ${snipeDf} Hz`);
-    } else {
-      // Call: set BPF window center — narrow receive + VFO shift
-      snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq));
-      await cat.setFreq(snipeDialHz());
-      setStatus(`BPF: ${snipeBpf} Hz`);
-    }
-    updateSnipeOverlay();
+    snipeDf = Math.max(FREQ_MIN, Math.min(FREQ_MAX, freq));
+    waterfall.dfLine = snipeDf;
+    setStatus(`DF: ${snipeDf} Hz`);
+    snipePhaseHint.textContent = snipePhase === 'watch'
+      ? `full-band  DF ${snipeDf} Hz`
+      : `BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`;
   } else {
     scoutDf = Math.max(FREQ_MIN, Math.min(FREQ_MAX, freq));
     waterfall.dfLine = scoutDf;
     setStatus(`DF: ${scoutDf} Hz`);
   }
+});
+
+// Right-click: set target frequency (BPF center, green line) — Snipe only
+wfWrap.addEventListener('contextmenu', async (e) => {
+  if (currentMode !== 'snipe') return;
+  e.preventDefault();
+  const rect = wfCanvas.getBoundingClientRect();
+  const freq = Math.round(FREQ_MIN + ((e.clientX - rect.left) / rect.width) * (FREQ_MAX - FREQ_MIN));
+  snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq));
+  waterfall.targetLine = snipeBpf;
+  if (snipePhase === 'call') {
+    waterfall.freqOffset = snipeBpf - FILTER_CENTER;
+    await cat.setFreq(snipeDialHz());
+  }
+  updateSnipeOverlay();
+  snipePhaseHint.textContent = snipePhase === 'watch'
+    ? `full-band  DF ${snipeDf} Hz  Target ${snipeBpf} Hz`
+    : `BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`;
+  setStatus(`Target: ${snipeBpf} Hz`);
 });
 
 // ── Chat message helper (Scout mode) ────────────────────────────────────────
@@ -850,9 +868,14 @@ const periodMgr = new FT8PeriodManager({
         sepInserted = true;
       }
 
+      // In Snipe Call mode, decoded freq_hz is in audio space (VFO-shifted).
+      // Add freqOffset to display in the original (Watch) coordinate system.
+      const freqOff = (currentMode === 'snipe' && snipePhase === 'call')
+        ? (snipeBpf - FILTER_CENTER) : 0;
+
       for (const r of batch) {
         const msg = r.message;
-        const freq = r.freq_hz;
+        const freq = r.freq_hz + freqOff;
         const snr = r.snr_db;
         const dt = r.dt_sec;
         msgs.push({ freq_hz: freq, dt_sec: dt, snr_db: snr, message: msg });

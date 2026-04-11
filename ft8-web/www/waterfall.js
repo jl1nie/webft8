@@ -118,6 +118,10 @@ export class Waterfall {
 
     // DF line frequency (Hz) — null = no line
     this.dfLine = null;
+    // Target line frequency (Hz) — green, for Snipe mode BPF center
+    this.targetLine = null;
+    // Frequency offset (Hz) — shifts FFT rendering position for VFO-shifted display
+    this.freqOffset = 0;
 
     // Residual buffer for streaming
     this.residual = new Float32Array(0);
@@ -278,9 +282,18 @@ export class Waterfall {
     const dbMin = this.noiseFloor;
     const dbMax = dbMin + this.dynRange;
 
+    // freqOffset: shift rendering position so VFO-shifted audio aligns
+    // with the original (Watch-mode) frequency axis. Offset in bins.
+    const offsetBins = this.freqOffset / (this.sampleRate / this.fftSize);
+
     for (let px = 0; px < w; px++) {
-      // Map pixel to bin (linear interpolation)
-      const binF = (px / w) * this.numBins;
+      // Map pixel to bin, applying frequency offset
+      const binF = (px / w) * this.numBins - offsetBins;
+      if (binF < 0 || binF >= this.numBins - 1) {
+        // Outside audio data range → dark background
+        data[px * 4 + 3] = 255;
+        continue;
+      }
       const bin0 = Math.floor(binF);
       const bin1 = Math.min(bin0 + 1, this.numBins - 1);
       const frac = binF - bin0;
@@ -301,6 +314,7 @@ export class Waterfall {
     // Redraw overlays on top (survives scrolling)
     this._drawFreqAxisInternal();
     this._drawDfLine();
+    this._drawTargetLine();
   }
 
   _drawFreqAxisInternal() {
@@ -347,5 +361,29 @@ export class Waterfall {
     ctx.fillStyle = '#f44336';
     ctx.textBaseline = 'top';
     ctx.fillText(`${this.dfLine}`, x + 3, 17);
+  }
+
+  /** Draw a vertical target line (green) for Snipe mode BPF center. */
+  _drawTargetLine() {
+    if (this.targetLine == null) return;
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const x = ((this.targetLine - this.freqMin) / (this.freqMax - this.freqMin)) * w;
+    if (x < 0 || x > w) return;
+
+    ctx.strokeStyle = '#4caf50';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, 16);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#4caf50';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${this.targetLine}`, x + 3, 27);
   }
 }
