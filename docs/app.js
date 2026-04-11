@@ -66,7 +66,9 @@ function addUnread(mode) {
   badgeSnipe.style.display = '';
 }
 const timerEl = document.getElementById('period-timer');
+const dtOffsetEl = document.getElementById('dt-offset-display');
 const btnSettings = document.getElementById('btn-settings');
+const btnNtp = document.getElementById('btn-ntp');
 const settingsPanel = document.getElementById('settings-panel');
 const settingsOverlay = document.getElementById('settings-overlay');
 const wfCanvas = document.getElementById('waterfall');
@@ -100,6 +102,7 @@ const outputDeviceSelect = document.getElementById('audio-output-device');
 const bandSelect = document.getElementById('band-header');
 const subtractCheck = document.getElementById('subtract-mode');
 const apCheck = document.getElementById('ap-mode');
+const dtAutoCorrectCheck = document.getElementById('dt-auto-correct');
 const strictnessSelect = document.getElementById('decode-strictness');
 const btnCat = document.getElementById('btn-cat');
 const btnCatBle = document.getElementById('btn-cat-ble');
@@ -463,6 +466,18 @@ function closeSettings() {
   settingsOverlay.classList.remove('open');
 }
 btnSettings.addEventListener('click', openSettings);
+
+dtAutoCorrectCheck.addEventListener('change', () => {
+  periodMgr.setDtAutoCorrect(dtAutoCorrectCheck.checked);
+});
+
+btnNtp.addEventListener('click', async () => {
+  btnNtp.classList.add('syncing');
+  btnNtp.textContent = '...';
+  await syncNtpOffset();
+  btnNtp.classList.remove('syncing');
+  btnNtp.textContent = 'NTP';
+});
 settingsOverlay.addEventListener('click', closeSettings);
 document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
 
@@ -760,6 +775,41 @@ function queueTxMsg(call1, call2, report) {
   setStatus(`TX queued: ${call1} ${call2} ${report}`);
 }
 
+// ── NTP clock-offset sync (HTTP-based) ────────────────────────────────────
+// Fetches UTC time from a public API, compares with Date.now(), and applies
+// the measured offset to the period manager.  Works without NTP UDP access.
+async function syncNtpOffset() {
+  // HTTP-based time sync (UDP NTP is not accessible from browsers).
+  // Each API has CORS enabled and returns UTC time in JSON.
+  const APIS = [
+    { url: 'https://worldtimeapi.org/api/timezone/UTC',
+      parse: d => new Date(d.utc_datetime).getTime() },
+    { url: 'https://timeapi.io/api/Time/current/zone?timeZone=UTC',
+      parse: d => new Date(`${d.dateTime}Z`).getTime() },
+  ];
+
+  for (const api of APIS) {
+    try {
+      const t0 = Date.now();
+      const resp = await fetch(api.url, { cache: 'no-store' });
+      const t1 = Date.now();
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const serverMs = api.parse(data);
+      if (isNaN(serverMs)) continue;
+      // Server time estimated at request midpoint to cancel out half the RTT
+      const rttMs = t1 - t0;
+      const offsetSec = (t0 + rttMs / 2 - serverMs) / 1000;
+      periodMgr.setClockOffset(offsetSec);
+      const sign = offsetSec >= 0 ? '+' : '';
+      setStatus(`NTP: ${sign}${offsetSec.toFixed(2)} s (RTT ${rttMs} ms)`);
+      return offsetSec;
+    } catch (_) { /* try next API */ }
+  }
+  setStatus('NTP sync failed');
+  return null;
+}
+
 // ── Transmit (called by period manager at period boundary) ─────────────────
 async function transmit(call1, call2, report, freq) {
   if (!wasmReady) return;
@@ -818,6 +868,16 @@ async function transmit(call1, call2, report, freq) {
 // ── Period manager ──────────────────────────────────────────────────────────
 const periodMgr = new FT8PeriodManager({
   onTick: (rem) => { timerEl.textContent = `${Math.ceil(rem)}s`; },
+  onClockOffset: (offsetSec) => {
+    if (Math.abs(offsetSec) < 0.05) {
+      dtOffsetEl.textContent = '';
+      dtOffsetEl.classList.remove('correcting');
+    } else {
+      const sign = offsetSec >= 0 ? '+' : '';
+      dtOffsetEl.textContent = `DT${sign}${offsetSec.toFixed(1)}`;
+      dtOffsetEl.classList.toggle('correcting', Math.abs(offsetSec) > 0.3);
+    }
+  },
   onPeriodEnd: async (periodIndex, isEven) => {
     if (!capture.running || !wasmReady) return;
 
@@ -937,6 +997,16 @@ const periodMgr = new FT8PeriodManager({
     }
 
     lastPeriodIndex = periodIndex;
+
+    // Feed DT values to clock-offset estimator.
+    // Only use BP/OSD results with clean sync (dt_sec is reliable);
+    // skip AP-assisted passes which may be anchored to a known signal.
+    if (results.length >= 3) {
+      const dtVals = results
+        .filter(r => (r.pass ?? 0) <= 5 && r.dt_sec != null)
+        .map(r => r.dt_sec);
+      if (dtVals.length >= 3) periodMgr.addDtSamples(dtVals);
+    }
 
     const shed = [subDisabledAuto && 'sub', apDisabledAuto && 'AP'].filter(Boolean);
     const shedTag = shed.length ? ` [-${shed.join(',')}]` : '';
@@ -1487,7 +1557,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '0.2.2';
+const APP_VERSION = '0.3.0';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);

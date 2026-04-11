@@ -1,6 +1,7 @@
 // FT8 15-second period manager.
 // Tracks UTC-aligned periods and fires callbacks at boundaries.
 // Supports TX queueing with even/odd slot control.
+// Supports automatic clock-offset correction via observed DT values.
 
 export class FT8PeriodManager {
   /**
@@ -19,6 +20,22 @@ export class FT8PeriodManager {
     this.txQueue = null;
     // Period index when TX was queued — skip firing on the same boundary.
     this._txQueuedPeriod = -1;
+
+    // ── DT auto-correction ──────────────────────────────────────────────────
+    // clockOffsetMs: how much to delay the period boundary beyond the raw UTC
+    // alignment.  Positive = our clock is fast (ahead) — we fire the boundary
+    // later so the capture window slides right and signals appear near DT=0.
+    //
+    // Estimation: decoded DT values are accumulated each period.  After
+    // MIN_SAMPLES are collected the median is used to update the offset.
+    // The update is smoothed (EMA) to avoid jumps from spurious outliers.
+    this.clockOffsetMs = 0;
+    this._dtSamples = [];          // DT values collected this period
+    this._dtHistory  = [];         // smoothed estimates, capped at HIST_LEN
+    this._MIN_SAMPLES = 3;         // minimum decoded signals per period
+    this._HIST_LEN   = 6;          // rolling history length (≈ 90 s)
+    this._EMA_ALPHA  = 0.4;        // EMA smoothing factor
+    this._dtAutoCorrect = true;    // FT8-signal-based correction enabled by default
   }
 
   start() {
@@ -52,10 +69,6 @@ export class FT8PeriodManager {
    */
   queueTx(tx, txEven) {
     this.txQueue = { ...tx, txEven };
-    // Remember current period so _scheduleBoundary won't fire TX at the
-    // same boundary where it was queued (the slot parity matches the
-    // *current* period, which is the one that just started — TX should
-    // wait for the *next* matching slot, i.e. the next boundary).
     this._txQueuedPeriod = this.getCurrentPeriod().periodIndex;
   }
 
@@ -69,6 +82,41 @@ export class FT8PeriodManager {
     return this.txQueue !== null;
   }
 
+  /**
+   * Feed decoded DT values for clock-offset estimation.
+   * Call once per period with the dt_sec of every successfully decoded signal.
+   * @param {number[]} dtValues — array of dt_sec from decoded results
+   */
+  addDtSamples(dtValues) {
+    this._dtSamples.push(...dtValues);
+  }
+
+  /** Return current clock offset estimate in seconds (positive = clock fast). */
+  get clockOffsetSec() {
+    return this.clockOffsetMs / 1000;
+  }
+
+  /**
+   * Directly set the clock offset (e.g. from NTP measurement).
+   * Overrides any FT8-signal-based estimate accumulated so far.
+   * @param {number} offsetSec — positive = local clock is fast (ahead of UTC)
+   */
+  setClockOffset(offsetSec) {
+    // Clamp to ±10 s (anything larger is likely a measurement error)
+    const clamped = Math.max(-10, Math.min(10, offsetSec));
+    this.clockOffsetMs = Math.round(clamped * 1000);
+    // Seed the FT8-based history so it doesn't fight the NTP value immediately
+    this._dtHistory = Array(this._HIST_LEN).fill(clamped);
+    if (this.callbacks.onClockOffset) {
+      this.callbacks.onClockOffset(clamped);
+    }
+  }
+
+  /** Enable or disable FT8-signal-based DT auto-correction. */
+  setDtAutoCorrect(enabled) {
+    this._dtAutoCorrect = enabled;
+  }
+
   // ── Internal ────────────────────────────────────────────────────────────
 
   _tick() {
@@ -78,13 +126,50 @@ export class FT8PeriodManager {
     }
   }
 
+  /** Update clock offset from accumulated DT samples, then clear them. */
+  _updateClockOffset() {
+    const samples = this._dtSamples;
+    this._dtSamples = [];
+    if (!this._dtAutoCorrect) return;
+
+    if (samples.length < this._MIN_SAMPLES) return;
+
+    // Median DT of this period — robust to outliers from weak/partial decodes
+    const sorted = [...samples].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+
+    // Clamp: ignore implausible values (> ±5 s are measurement errors)
+    if (Math.abs(median) > 5) return;
+
+    // EMA update — smooths period-to-period jitter
+    const prev = this._dtHistory.length > 0
+      ? this._dtHistory[this._dtHistory.length - 1]
+      : median;
+    const smoothed = prev + this._EMA_ALPHA * (median - prev);
+
+    this._dtHistory.push(smoothed);
+    if (this._dtHistory.length > this._HIST_LEN) {
+      this._dtHistory.shift();
+    }
+
+    // Use the mean of the recent history as the offset estimate.
+    // decoded DT > 0  →  our clock is fast (ahead)  →  clockOffsetMs > 0
+    const estimate = this._dtHistory.reduce((a, b) => a + b, 0) / this._dtHistory.length;
+    this.clockOffsetMs = Math.round(estimate * 1000);
+
+    if (this.callbacks.onClockOffset) {
+      this.callbacks.onClockOffset(estimate);
+    }
+  }
+
   _scheduleBoundary() {
     if (!this.running) return;
     const now = Date.now();
     const currentPeriod = Math.floor(now / 15000);
-    // Schedule setTimeout so it fires at the next UTC-aligned 15s boundary.
+    // Schedule so it fires at the next UTC-aligned 15 s boundary,
+    // shifted by clockOffsetMs to compensate for local clock error.
     const nextBoundaryMs = (currentPeriod + 1) * 15000;
-    const delay = nextBoundaryMs - now;
+    const delay = Math.max(0, nextBoundaryMs - now + this.clockOffsetMs);
 
     this.boundaryTimeout = setTimeout(async () => {
       if (!this.running) return;
@@ -97,10 +182,6 @@ export class FT8PeriodManager {
       // TX must start within ~2.4 s of the boundary (FT8 signal = 12.64 s;
       // must fit inside the 15 s receive window).  Decode can take 1–3 s,
       // so we fire TX immediately and decode concurrently.
-      //
-      // Skip if TX was queued during this same boundary's onPeriodEnd
-      // callback (parity match against the period that just started —
-      // wait for the NEXT matching slot).
       if (this.txQueue) {
         const { txEven } = this.txQueue;
         const slotMatch = txEven === null || txEven === isEven;
@@ -127,6 +208,9 @@ export class FT8PeriodManager {
           console.error('Decode error:', e);
         }
       }
+
+      // ── Update clock offset from DT samples collected during decode ────────
+      this._updateClockOffset();
 
       this._scheduleBoundary();
     }, delay);
