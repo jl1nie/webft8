@@ -367,7 +367,7 @@ capture.onPeak = (level) => {
   const rawLevel = gain > 0 ? level / gain : level;
   const pct = Math.min(level * 100, 100);
   rxMeter.style.width = pct + '%';
-  if (rawLevel > 0.95) {
+  if (rawLevel > 1.5) {
     rxMeter.classList.add('clip');
     rxClip.classList.add('active');
   } else {
