@@ -14,8 +14,9 @@ for f in "$SRC"/*.js "$SRC"/*.html "$SRC"/*.json; do
   cp "$f" "$DST/$base"
 done
 
-# Rewrite WASM import path: ../pkg/ft8_web.js → ./ft8_web.js
+# Rewrite WASM import path: ../pkg/ft8_web.js → ./ft8_web.js (all JS files)
 sed -i "s|from '../pkg/ft8_web.js'|from './ft8_web.js'|g" "$DST/app.js"
+sed -i "s|from '../pkg/ft8_web.js'|from './ft8_web.js'|g" "$DST/decode-worker.js"
 
 echo "Deployed to docs/"
 diff <(head -1 "$SRC/app.js") <(head -1 "$DST/app.js") || true
