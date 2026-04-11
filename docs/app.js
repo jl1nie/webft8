@@ -49,7 +49,7 @@ import { AudioCapture } from './audio-capture.js';
 import { AudioOutput } from './audio-output.js';
 import { FT8PeriodManager } from './ft8-period.js';
 import { QsoManager, QSO_STATE } from './qso.js';
-import { CatController, loadRigProfiles, getRigProfiles } from './cat.js';
+import { CatController, loadRigProfiles, getRigProfiles, isTauriMode, listSerialPorts } from './cat.js';
 import { QsoLog } from './qso-log.js';
 
 // ── Elements ────────────────────────────────────────────────────────────────
@@ -1126,6 +1126,32 @@ btnTestTone.addEventListener('click', async () => {
 });
 
 // ── CAT ─────────────────────────────────────────────────────────────────────
+
+// Tauri mode: show COM port selector and populate it
+const catPortField = document.getElementById('cat-port-field');
+const catPortSelect = document.getElementById('cat-port');
+const btnCatRefresh = document.getElementById('btn-cat-refresh');
+
+async function refreshCatPorts() {
+  const ports = await listSerialPorts();
+  catPortSelect.innerHTML = '';
+  for (const p of ports) {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.vid ? `${p.name} (${p.vid.toString(16)}:${p.pid.toString(16)})` : p.name;
+    catPortSelect.appendChild(opt);
+  }
+  // Restore last used port
+  const last = localStorage.getItem('rs-ft8n-cat-port');
+  if (last) catPortSelect.value = last;
+}
+
+if (isTauriMode()) {
+  catPortField.style.display = '';
+  refreshCatPorts();
+  btnCatRefresh.addEventListener('click', refreshCatPorts);
+}
+
 btnCat.addEventListener('click', async () => {
   if (cat.connected) {
     await cat.disconnect();
@@ -1140,8 +1166,17 @@ btnCat.addEventListener('click', async () => {
   try {
     const rigId = document.getElementById('rig-model').value;
     if (!rigId) { catStatusEl.textContent = 'Select a rig model'; return; }
-    await cat.requestPort();
-    await cat.connect(rigId);
+
+    if (isTauriMode()) {
+      const portName = catPortSelect.value;
+      if (!portName) { catStatusEl.textContent = 'Select a COM port'; return; }
+      await cat.connectTauri(rigId, portName);
+      localStorage.setItem('rs-ft8n-cat-port', portName);
+    } else {
+      await cat.requestPort();
+      await cat.connect(rigId);
+    }
+
     btnCat.textContent = 'Disconnect';
     const profiles = getRigProfiles();
     catStatusEl.textContent = `connected (${profiles[rigId]?.label || rigId})`;

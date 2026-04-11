@@ -1,9 +1,38 @@
-// CAT (Computer Aided Transceiver) control via Web Serial / Web Bluetooth.
+// CAT (Computer Aided Transceiver) control via Web Serial / Web Bluetooth / Tauri.
 // Rig profiles loaded from rig-profiles.json (editable/extensible).
+// In Tauri desktop mode, serial access uses native OS APIs via invoke().
 
 import { BleTransport } from './ble-transport.js';
 
 let rigProfiles = {};
+
+// ── Tauri detection ────────────────────────────────────────────────────────
+const isTauri = !!(window.__TAURI_INTERNALS__);
+
+async function tauriInvoke(cmd, args) {
+  const { invoke } = await import('https://unpkg.com/@tauri-apps/api@2/core');
+  return invoke(cmd, args);
+}
+
+// Lazy-load Tauri invoke if available
+if (isTauri) {
+  // Override invoke with direct __TAURI_INTERNALS__ call for bundled builds
+  // (unpkg import is fallback for dev mode)
+  try {
+    const ti = window.__TAURI_INTERNALS__;
+    if (ti && ti.invoke) {
+      // Use the built-in invoke directly
+      const _origInvoke = tauriInvoke;
+      // @ts-ignore
+      globalThis.__tauriInvoke = (cmd, args) => ti.invoke(cmd, args);
+    }
+  } catch (_) {}
+}
+
+async function invokeCmd(cmd, args) {
+  if (globalThis.__tauriInvoke) return globalThis.__tauriInvoke(cmd, args);
+  return tauriInvoke(cmd, args);
+}
 
 /** Load rig profiles from JSON file. */
 export async function loadRigProfiles() {
@@ -19,6 +48,15 @@ export async function loadRigProfiles() {
 
 /** Get loaded profiles. */
 export function getRigProfiles() { return rigProfiles; }
+
+/** Check if running in Tauri desktop mode. */
+export function isTauriMode() { return isTauri; }
+
+/** List available serial ports (Tauri only). */
+export async function listSerialPorts() {
+  if (!isTauri) return [];
+  return invokeCmd('serial_list_ports');
+}
 
 // ── Hex string helpers ──────────────────────────────────────────────────────
 
@@ -36,7 +74,7 @@ function parseAddr(s) {
 export class CatController {
   constructor() {
     this.transport = null;  // { write(Uint8Array), disconnect() }
-    this.transportType = ''; // 'serial' | 'ble'
+    this.transportType = ''; // 'serial' | 'ble' | 'tauri'
     this.port = null;       // Web Serial port (serial mode only)
     this.writer = null;     // Web Serial writer (serial mode only)
     this.connected = false;
@@ -47,16 +85,49 @@ export class CatController {
     this.onDisconnect = null;
   }
 
-  static isSerialSupported() { return 'serial' in navigator; }
+  static isSerialSupported() { return isTauri || ('serial' in navigator); }
   static isBleSupported() { return BleTransport.isSupported(); }
   /** @deprecated Use isSerialSupported() */
   static isSupported() { return CatController.isSerialSupported(); }
 
   async requestPort() {
-    if (!CatController.isSerialSupported()) throw new Error('Web Serial API not supported');
+    if (isTauri) {
+      // Tauri mode — port selection handled by connectTauri()
+      this.transportType = 'tauri';
+      return null;
+    }
+    if (!('serial' in navigator)) throw new Error('Web Serial API not supported');
     this.port = await navigator.serial.requestPort();
     this.transportType = 'serial';
     return this.port;
+  }
+
+  /** Connect via Tauri native serial.
+   * @param {string} rigId - rig profile key
+   * @param {string} portName - COM port name (e.g. "COM5")
+   */
+  async connectTauri(rigId, portName) {
+    const rig = rigProfiles[rigId];
+    if (!rig) throw new Error(`Unknown rig: ${rigId}`);
+
+    await invokeCmd('serial_open', {
+      portName,
+      baudRate: rig.baud,
+      stopBits: rig.stopBits || null,
+    });
+
+    this.rig = rig;
+    this.rigId = rigId;
+    this.transportType = 'tauri';
+    this.transport = {
+      write: async (data) => {
+        await invokeCmd('serial_write', { data: Array.from(data) });
+      },
+    };
+    this.connected = true;
+    this.pttOn = false;
+    this.narrowOn = false;
+    console.log(`[CAT] Tauri serial connected: ${portName} @ ${rig.baud} baud`);
   }
 
   async connectBle(rigId) {
@@ -82,7 +153,11 @@ export class CatController {
       // BLE path — already connected via connectBle()
       return;
     }
-    // Serial path
+    if (this.transportType === 'tauri') {
+      // Tauri path — already connected via connectTauri()
+      return;
+    }
+    // Web Serial path
     if (!this.port) throw new Error('No port selected');
     const rig = rigProfiles[rigId];
     if (!rig) throw new Error(`Unknown rig: ${rigId}`);
@@ -146,7 +221,9 @@ export class CatController {
     this.connected = false;
     await this.safePttOff();
 
-    if (this.transportType === 'ble') {
+    if (this.transportType === 'tauri') {
+      try { await invokeCmd('serial_close'); } catch (_) {}
+    } else if (this.transportType === 'ble') {
       if (this.transport) await this.transport.disconnect();
     } else {
       // Release writer lock, then close port

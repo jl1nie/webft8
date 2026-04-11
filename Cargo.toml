@@ -4,4 +4,7 @@ members = [
     "ft8-bench",
     "ft8-web",
 ]
+exclude = [
+    "ft8-desktop/src-tauri",
+]
 resolver = "2"

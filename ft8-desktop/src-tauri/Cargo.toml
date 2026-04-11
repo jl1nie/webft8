@@ -1,0 +1,40 @@
+[package]
+name = "ft8-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "rs-ft8n Desktop - FT8 Sniper Decoder"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+# Tauri core
+tauri = { version = "2.0", features = [] }
+tauri-plugin-shell = "2.0"
+
+# FT8 decode engine (native)
+ft8-core = { path = "../../ft8-core" }
+
+# FFT for waterfall
+rustfft = "6"
+num-complex = "0.4"
+
+# Audio capture
+cpal = "0.15"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Serial port
+serialport = "4.3.0"
+
+# Logging
+log = "0.4"
+
+# Error handling
+anyhow = "1.0"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
