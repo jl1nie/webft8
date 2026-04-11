@@ -25,4 +25,7 @@ sed -i "s|from '../pkg/ft8_web.js'|from './ft8_web.js'|g" "$DST/decode-worker.js
 # Inject version from Cargo.toml into docs/app.js
 sed -i "s|APP_VERSION = '__VERSION__'|APP_VERSION = '$VERSION'|" "$DST/app.js"
 
+# Bump service worker cache name so Tauri WebView2 discards stale cache
+sed -i "s|CACHE_NAME = 'webft8-[^']*'|CACHE_NAME = 'webft8-v$VERSION'|" "$DST/sw.js"
+
 echo "Deployed to docs/ (v$VERSION)"
