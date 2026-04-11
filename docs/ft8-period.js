@@ -105,7 +105,9 @@ export class FT8PeriodManager {
     // Clamp to ±10 s (anything larger is likely a measurement error)
     const clamped = Math.max(-10, Math.min(10, offsetSec));
     this.clockOffsetMs = Math.round(clamped * 1000);
-    // Seed the FT8-based history so it doesn't fight the NTP value immediately
+    // Discard any samples collected under the old timing — they're stale
+    this._dtSamples = [];
+    // Seed the FT8-based history so EMA starts from the new offset
     this._dtHistory = Array(this._HIST_LEN).fill(clamped);
     if (this.callbacks.onClockOffset) {
       this.callbacks.onClockOffset(clamped);
