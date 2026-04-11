@@ -17,11 +17,15 @@
 import init, {
   decode_wav, decode_wav_subtract, decode_sniper,
   decode_wav_f32, decode_wav_subtract_f32, decode_sniper_f32,
+  decode_phase1, decode_phase1_f32,
+  decode_phase2, decode_phase2_f32,
 } from './ft8_web.js';
 
 const FN_MAP = {
   decode_wav, decode_wav_subtract, decode_sniper,
   decode_wav_f32, decode_wav_subtract_f32, decode_sniper_f32,
+  decode_phase1, decode_phase1_f32,
+  decode_phase2, decode_phase2_f32,
 };
 
 const initPromise = init().then(() => {

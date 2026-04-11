@@ -644,7 +644,7 @@ autoCheck.addEventListener('change', updateTxActions);
 // Snipe always runs both (narrow band = fast).
 const BUDGET_MS = 2400;
 
-async function runDecode(samples, sampleRate) {
+async function runDecode(samples, sampleRate, onPartial) {
   const t0 = performance.now();
 
   // Dispatch to f32 or i16 entry points based on the input array type.
@@ -652,18 +652,34 @@ async function runDecode(samples, sampleRate) {
   // the JS i16 conversion loop. WAV file drops still arrive as Int16Array.
   const isF32 = samples instanceof Float32Array;
   const fnDecodeName   = isF32 ? 'decode_wav_f32'          : 'decode_wav';
-  const fnSubtractName = isF32 ? 'decode_wav_subtract_f32' : 'decode_wav_subtract';
   const fnSniperName   = isF32 ? 'decode_sniper_f32'       : 'decode_sniper';
+  const fnPhase1Name   = isF32 ? 'decode_phase1_f32'       : 'decode_phase1';
+  const fnPhase2Name   = isF32 ? 'decode_phase2_f32'       : 'decode_phase2';
 
   // Subtract: use if enabled and not auto-disabled
   const useSub = subtractCheck.checked && !subDisabledAuto;
   const strict = parseInt(strictnessSelect.value, 10);
   const sr = sampleRate || capture.getSampleRate();
-  const results = await workerDecode(
-    useSub ? fnSubtractName : fnDecodeName,
-    [samples, strict, sr],
-  );
-  const baseMs = performance.now() - t0;
+
+  let results;
+  if (useSub) {
+    // Pipelined decode: Phase 1 (fast, ~200ms) + Phase 2 (subtract, budget permitting).
+    // Phase 1 caches audio + FFT in WASM thread_local; Phase 2 reuses them.
+    const p1 = await workerDecode(fnPhase1Name, [samples, sr]);
+    const p1Ms = performance.now() - t0;
+
+    // Show Phase 1 results immediately while Phase 2 runs
+    if (onPartial && p1.length > 0) onPartial(p1);
+
+    let p2 = [];
+    if (BUDGET_MS - p1Ms > 200) {
+      p2 = await workerDecode(fnPhase2Name, [strict]);
+    }
+    results = [...p1, ...p2];
+  } else {
+    // Non-subtract path (unchanged)
+    results = await workerDecode(fnDecodeName, [samples, strict, sr]);
+  }
 
   // AP supplement: enabled by checkbox, auto-disabled by budget
   // Skip AP when calling CQ (no target yet — AP would only produce false positives)
@@ -746,7 +762,7 @@ async function transmit(call1, call2, report, freq) {
     if (activeBtn) activeBtn.classList.add('tx-active');
     timerEl.classList.add('tx-on');
 
-    const utc = new Date().toISOString().substr(11, 5);
+    const utc = new Date().toISOString().substr(11, 8);
     addChatMsg('tx sending', utc, txText, undefined);
 
     const samples = encode_ft8(call1, call2, report, freq);
@@ -798,31 +814,105 @@ const periodMgr = new FT8PeriodManager({
       if (peak > 1e-6) { const s = 0.8 / peak; for (let i = 0; i < float32.length; i++) float32[i] *= s; }
     }
 
+    // ── Per-message rendering helper ──────────────────────────────────────
+    // Pushes decoded messages to chat/snipe views, logs them, and feeds the
+    // QSO state machine.  Designed to be called once (non-subtract) or twice
+    // (Phase 1 partial + Phase 2 remainder) per period.
+    const utc = new Date(periodIndex * 15000).toISOString().substr(11, 8);
+    let sepInserted = false;
+    const callers = []; // track stations calling me (for pileup notification)
+    let txMsg = null;
+    const msgs = [];
+
+    function pushResults(batch) {
+      // Insert period separator once, on the first batch with results
+      if (!sepInserted && batch.length > 0) {
+        const sep = document.createElement('div');
+        sep.className = 'period-sep';
+        sep.textContent = utc;
+        chatList.appendChild(sep);
+        snipeRxList.appendChild(sep.cloneNode(true));
+        sepInserted = true;
+      }
+
+      for (const r of batch) {
+        const msg = r.message;
+        const freq = r.freq_hz;
+        const snr = r.snr_db;
+        const dt = r.dt_sec - periodMgr.clockOffsetMs / 1000;
+        msgs.push({ freq_hz: freq, dt_sec: dt, snr_db: snr, message: msg });
+
+        qsoLog.addRx({ message: msg, freq_hz: freq, snr_db: snr });
+
+        // Scout chat
+        const words = msg.split(/\s+/);
+        const calls = [];
+        for (const w of words) {
+          if (['CQ', 'DE', 'QRZ', 'DX'].includes(w)) continue;
+          if (w.length >= 3 && /[0-9]/.test(w)) calls.push(w);
+          if (calls.length >= 2) break;
+        }
+        const isCq = /^(CQ|DE|QRZ)\b/.test(msg);
+        const clickCall = isCq ? (calls[0] || '') : (calls[1] || calls[0] || '');
+        addChatMsg('rx', utc, msg, snr, clickCall ? () => {
+          qso.setMyInfo(myCallInput.value, myGridInput.value);
+          const tx = qso.callStation(clickCall);
+          apCall = clickCall;
+          clearTargetCards();
+          if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
+        } : null, freq, dt);
+
+        // Snipe view
+        if (currentMode === 'snipe' && apCall && msg.toUpperCase().includes(apCall)) {
+          snipeDxMsg.textContent = msg;
+          snipeDxInfo.textContent = `${freq.toFixed(0)} Hz  ${snr >= 0 ? '+' : ''}${Math.round(snr)} dB`;
+        }
+
+        // Track callers
+        const myCall = myCallInput.value.toUpperCase();
+        const w = msg.split(/\s+/);
+        if (w[0] === myCall && w.length >= 2 && w[1] !== myCall) {
+          callers.push({ call: w[1], snr, msg, freq });
+        }
+
+        // QSO state machine (skip CQ responses — handled below after SNR sort)
+        const isCqWait = qso.state === QSO_STATE.CALLING && !qso.dxCall;
+        if (!isCqWait) {
+          qso.setRxSnr(snr);
+          const result = qso.processMessage(msg);
+          if (result && !txMsg) txMsg = result;
+        }
+
+        // Update target card
+        if (qso.dxCall && msg.toUpperCase().includes(qso.dxCall)) {
+          scoutTargetMsg.textContent = msg;
+          scoutTargetInfo.textContent = `${freq.toFixed(0)} Hz  ${snr >= 0 ? '+' : ''}${Math.round(snr)} dB`;
+        }
+      }
+    }
+
     // Pass Float32Array directly — runDecode dispatches to the f32 WASM
     // entry points which fold scaling + i16 conversion + (no-op) resample
     // into a single Rust pass. The decode runs in a Web Worker so the
     // main thread (waterfall, UI) stays responsive throughout.
-    const results = await runDecode(float32);
+    //
+    // onPartial: Phase 1 results are pushed to chat immediately while
+    // Phase 2 (subtract) is still running in the worker.
+    const results = await runDecode(float32, null, pushResults);
     const n = results.length;
 
+    // Push any remaining results not yet shown (non-subtract path, or
+    // Phase 2 results that arrived after the onPartial callback).
+    // pushResults is idempotent per-message via the msgs array check.
+    const shownCount = msgs.length;
+    if (shownCount < n) {
+      pushResults(results.slice(shownCount));
+    }
+
     // ── DT auto-calibration ─────────────────────────────────────────────────
-    // The PC clock may drift or jump (e.g. after NTP sync), making Date.now()
-    // run ahead or behind real UTC. This shifts the period-end timestamp and
-    // causes all decoded DTs to be offset by the same amount.
-    //
-    // Recovery: take the minimum decoded DT each period as a proxy for the
-    // "fastest" station's true DT (expected ≈ 0.1 s for a punctual station).
-    // Any excess above the expected floor is our estimated clock lead.
-    // Smooth-update clockOffsetMs so the period timer converges over ~5 periods.
     if (n >= 2) {
       const minDt = results.reduce((m, r) => Math.min(m, r.dt_sec), Infinity);
-      const EXPECTED_MIN_DT = 0.1; // typical punctual-station DT
-      // drift = residual offset still in the buffer timing (seconds).
-      // As clockOffsetMs increases, the period fires later and minDt decreases
-      // by the same amount, so: drift = true_clock_offset - clockOffsetMs/1000.
-      // Integrating with α=0.3 makes clockOffsetMs converge to the true offset
-      // in ~8 periods (2 minutes).  The old formula (0.8*C + 0.2*drift*1000)
-      // only converged to 50% of the true offset due to the feedback loop.
+      const EXPECTED_MIN_DT = 0.1;
       const drift = minDt - EXPECTED_MIN_DT;
       if (Math.abs(drift) > 0.05) {
         periodMgr.clockOffsetMs = Math.max(0, Math.min(5000,
@@ -832,15 +922,6 @@ const periodMgr = new FT8PeriodManager({
     }
     // ── end DT calibration ──────────────────────────────────────────────────
 
-    const utc = new Date(periodIndex * 15000).toISOString().substr(11, 5);
-    // Period separator with UTC (skip if no decodes)
-    if (n > 0) {
-      const sep = document.createElement('div');
-      sep.className = 'period-sep';
-      sep.textContent = utc;
-      chatList.appendChild(sep);
-      snipeRxList.appendChild(sep.cloneNode(true));
-    }
     lastPeriodIndex = periodIndex;
 
     const shed = [subDisabledAuto && 'sub', apDisabledAuto && 'AP'].filter(Boolean);
@@ -851,84 +932,6 @@ const periodMgr = new FT8PeriodManager({
 
     // AP target: use QSO dxCall if available, or last Snipe target
     if (qso.dxCall) apCall = qso.dxCall;
-
-    const msgs = [];
-    let txMsg = null;
-    const callers = []; // track stations calling me (for pileup notification)
-
-    for (let i = 0; i < n; i++) {
-      const r = results[i];
-      const msg = r.message;
-      const freq = r.freq_hz;
-      const snr = r.snr_db;
-      // Subtract estimated clock offset so displayed DT reflects real station
-      // timing rather than our PC clock error (e.g. after NTP jump).
-      const dt = r.dt_sec - periodMgr.clockOffsetMs / 1000;
-      // Quality gating now happens in ft8-core via DecodeStrictness; the
-      // legacy `suspect` flag is gone. Keep the references neutral.
-      const suspect = false;
-      msgs.push({ freq_hz: freq, dt_sec: dt, snr_db: snr, message: msg });
-
-      // Log RX to persistent store
-      {
-        qsoLog.addRx({ message: msg, freq_hz: freq, snr_db: snr });
-      }
-
-      // Scout chat
-      if (!suspect) {
-        const words = msg.split(/\s+/);
-        // Extract sender (call2): skip CQ/DE/QRZ/DX prefixes, then
-        // in "CQ SENDER GRID" sender is 1st call, in "DEST SENDER RPT" sender is 2nd call
-        const calls = [];
-        for (const w of words) {
-          if (['CQ', 'DE', 'QRZ', 'DX'].includes(w)) continue;
-          if (w.length >= 3 && /[0-9]/.test(w)) calls.push(w);
-          if (calls.length >= 2) break;
-        }
-        // CQ message: only 1 call before grid → sender is calls[0]
-        // Directed message: DEST SENDER → sender is calls[1]
-        const isCq = /^(CQ|DE|QRZ)\b/.test(msg);
-        const clickCall = isCq ? (calls[0] || '') : (calls[1] || calls[0] || '');
-        addChatMsg('rx', utc, msg, snr, clickCall ? () => {
-          qso.setMyInfo(myCallInput.value, myGridInput.value);
-          const tx = qso.callStation(clickCall);
-          apCall = clickCall;
-          clearTargetCards();
-          if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
-        } : null, freq, dt);
-      }
-
-      // Snipe view: update target info
-      if (currentMode === 'snipe' && apCall && msg.toUpperCase().includes(apCall)) {
-        snipeDxMsg.textContent = msg;
-        snipeDxInfo.textContent = `${freq.toFixed(0)} Hz  ${snr >= 0 ? '+' : ''}${Math.round(snr)} dB`;
-      }
-
-      // Track callers (my call is first word = someone calling me)
-      if (!suspect) {
-        const myCall = myCallInput.value.toUpperCase();
-        const w = msg.split(/\s+/);
-        if (w[0] === myCall && w.length >= 2 && w[1] !== myCall) {
-          callers.push({ call: w[1], snr, msg, freq });
-        }
-      }
-
-      // QSO state machine (skip CQ responses — handled below after SNR sort)
-      const isCqWait = qso.state === QSO_STATE.CALLING && !qso.dxCall;
-      if (!suspect && !isCqWait) {
-        qso.setRxSnr(snr);
-        const result = qso.processMessage(msg);
-        if (result && !txMsg) txMsg = result;
-      }
-
-      // Update target card when DX is heard
-      if (!suspect && qso.dxCall && msg.toUpperCase().includes(qso.dxCall)) {
-        scoutTargetMsg.textContent = msg;
-        scoutTargetInfo.textContent = `${freq.toFixed(0)} Hz  ${snr >= 0 ? '+' : ''}${Math.round(snr)} dB`;
-      }
-
-      // Plain object from the worker — no .free() needed.
-    }
 
     // CQ response handling: sort by SNR, feed strongest to SM
     if (qso.state === QSO_STATE.CALLING && !qso.dxCall && callers.length > 0) {
@@ -1406,7 +1409,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '2026-04-11-e';
+const APP_VERSION = '2026-04-11-f';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);

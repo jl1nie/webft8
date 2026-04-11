@@ -20,6 +20,10 @@ use crate::{
 // ────────────────────────────────────────────────────────────────────────────
 // Public types
 
+/// Opaque FFT cache produced by [`decode_frame_with_cache`] (Phase 1),
+/// consumed by [`decode_frame_subtract_with_known`] (Phase 2).
+pub type FftCache = Vec<num_complex::Complex<f32>>;
+
 /// Decoding depth: which LLR sets and passes to attempt.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DecodeDepth {
@@ -259,7 +263,23 @@ pub fn decode_frame(
     depth: DecodeDepth,
     max_cand: usize,
 ) -> Vec<DecodeResult> {
-    decode_frame_inner(audio, freq_min, freq_max, sync_min, freq_hint, depth, max_cand, DecodeStrictness::Normal, &[], EqMode::Off)
+    decode_frame_inner(audio, freq_min, freq_max, sync_min, freq_hint, depth, max_cand, DecodeStrictness::Normal, &[], EqMode::Off, None).0
+}
+
+/// Like [`decode_frame`] but also returns the 192k-point FFT cache for
+/// reuse by a subsequent [`decode_frame_subtract_with_known`] call.
+///
+/// This is the Phase 1 entry point for pipelined decoding.
+pub fn decode_frame_with_cache(
+    audio: &[i16],
+    freq_min: f32,
+    freq_max: f32,
+    sync_min: f32,
+    freq_hint: Option<f32>,
+    depth: DecodeDepth,
+    max_cand: usize,
+) -> (Vec<DecodeResult>, FftCache) {
+    decode_frame_inner(audio, freq_min, freq_max, sync_min, freq_hint, depth, max_cand, DecodeStrictness::Normal, &[], EqMode::Off, None)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -495,8 +515,12 @@ fn process_candidate(
 
 /// Inner decode loop shared by [`decode_frame`] and [`decode_frame_subtract`].
 ///
-/// `osd_score_min` — minimum coarse-sync score required for OSD fallback.
-/// `known`         — messages already decoded in earlier passes (skipped).
+/// `known`           — messages already decoded in earlier passes (skipped).
+/// `precomputed_fft` — optional pre-computed 192k-point FFT cache; when `None`
+///                     the cache is built internally from `audio`.
+///
+/// Returns `(decoded_results, fft_cache)`.  Callers that don't need the cache
+/// can simply ignore the second element.
 fn decode_frame_inner(
     audio: &[i16],
     freq_min: f32,
@@ -508,13 +532,21 @@ fn decode_frame_inner(
     strictness: DecodeStrictness,
     known: &[DecodeResult],
     eq_mode: EqMode,
-) -> Vec<DecodeResult> {
+    precomputed_fft: Option<&[num_complex::Complex<f32>]>,
+) -> (Vec<DecodeResult>, Vec<num_complex::Complex<f32>>) {
     let candidates = coarse_sync(audio, freq_min, freq_max, sync_min, freq_hint, max_cand);
     if candidates.is_empty() {
-        return Vec::new();
+        let fft_cache = match precomputed_fft {
+            Some(c) => c.to_vec(),
+            None => build_fft_cache(audio),
+        };
+        return (Vec::new(), fft_cache);
     }
 
-    let fft_cache = build_fft_cache(audio);
+    let fft_cache = match precomputed_fft {
+        Some(c) => c.to_vec(),
+        None => build_fft_cache(audio),
+    };
 
     #[cfg(feature = "parallel")]
     let raw: Vec<DecodeResult> = candidates
@@ -536,7 +568,7 @@ fn decode_frame_inner(
             results.push(r);
         }
     }
-    results
+    (results, fft_cache)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -574,7 +606,7 @@ pub fn decode_frame_subtract(
     let passes: &[f32] = &[1.0, 0.75, 0.5];
 
     for &factor in passes {
-        let new = decode_frame_inner(
+        let (new, _) = decode_frame_inner(
             &residual,
             freq_min, freq_max,
             sync_min * factor,
@@ -582,6 +614,7 @@ pub fn decode_frame_subtract(
             strictness,
             &all_results,
             EqMode::Off,
+            None,
         );
 
         for r in &new {
@@ -595,6 +628,63 @@ pub fn decode_frame_subtract(
     }
 
     all_results
+}
+
+/// Phase-2 subtract decode: accepts Phase-1 results as `known` and an
+/// optional pre-computed FFT cache for the first pass.
+///
+/// Internally runs three subtract passes (sync_min × 1.0 / 0.75 / 0.5).
+/// The first pass reuses `precomputed_fft` when available; subsequent
+/// passes recompute the FFT from the post-subtraction residual.
+///
+/// Returns only **newly** decoded messages (those not in `known`).
+pub fn decode_frame_subtract_with_known(
+    audio: &[i16],
+    freq_min: f32,
+    freq_max: f32,
+    sync_min: f32,
+    freq_hint: Option<f32>,
+    depth: DecodeDepth,
+    max_cand: usize,
+    strictness: DecodeStrictness,
+    known: &[DecodeResult],
+    precomputed_fft: Option<FftCache>,
+) -> Vec<DecodeResult> {
+    let mut residual = audio.to_vec();
+    let mut all_results: Vec<DecodeResult> = known.to_vec();
+    let known_count = known.len();
+
+    let passes: &[f32] = &[1.0, 0.75, 0.5];
+
+    for (i, &factor) in passes.iter().enumerate() {
+        // Reuse the pre-computed FFT cache only for the first pass
+        // (the audio hasn't been modified yet).
+        let fft = if i == 0 {
+            precomputed_fft.as_deref()
+        } else {
+            None
+        };
+
+        let (new, _) = decode_frame_inner(
+            &residual,
+            freq_min, freq_max,
+            sync_min * factor,
+            freq_hint, depth, max_cand,
+            strictness,
+            &all_results,
+            EqMode::Off,
+            fft,
+        );
+
+        for r in &new {
+            let sub_gain = if r.sync_cv > 0.3 { 0.5 } else { 1.0 };
+            subtract_signal_weighted(&mut residual, r, sub_gain);
+        }
+        all_results.extend(new);
+    }
+
+    // Return only the newly decoded messages (exclude `known`).
+    all_results.split_off(known_count)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

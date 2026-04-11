@@ -1,5 +1,8 @@
 use wasm_bindgen::prelude::*;
-use ft8_core::decode::{decode_frame, decode_frame_subtract, DecodeDepth, DecodeStrictness};
+use ft8_core::decode::{
+    decode_frame, decode_frame_subtract, decode_frame_subtract_with_known,
+    decode_frame_with_cache, DecodeDepth, DecodeStrictness, FftCache,
+};
 use ft8_core::hash_table::CallsignHashTable;
 use ft8_core::message::{unpack77_with_hash, is_plausible_message};
 use ft8_core::resample::{resample_to_12k, resample_f32_to_12k};
@@ -8,6 +11,12 @@ use std::cell::RefCell;
 
 thread_local! {
     static HASH_TABLE: RefCell<CallsignHashTable> = RefCell::new(CallsignHashTable::new());
+    /// Cached resampled audio from Phase 1 (reused by Phase 2).
+    static CACHED_AUDIO: RefCell<Option<Vec<i16>>> = RefCell::new(None);
+    /// Cached 192k-point FFT from Phase 1 (reused by Phase 2 pass 1).
+    static CACHED_FFT: RefCell<Option<FftCache>> = RefCell::new(None);
+    /// Phase 1 decode results (passed as `known` to Phase 2).
+    static CACHED_PHASE1: RefCell<Vec<ft8_core::decode::DecodeResult>> = RefCell::new(Vec::new());
 }
 
 #[wasm_bindgen]
@@ -202,6 +211,80 @@ pub fn decode_sniper_f32(samples: &[f32], target_freq: f32, callsign: &str, myca
         decode_sniper_ap(
             &audio, target_freq, DecodeDepth::BpAllOsd, 20,
             eq_mode, ap.as_ref(),
+        )
+    )
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Pipelined decode: Phase 1 (fast) + Phase 2 (deep subtract)
+//
+// Phase 1 decodes strong signals quickly and caches audio + FFT in
+// thread_local storage.  Phase 2 reuses the cache, runs 3-pass subtract,
+// and returns only the newly decoded messages.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Phase 1 decode (i16): fast single-pass decode.
+///
+/// Caches the resampled audio and FFT for a subsequent `decode_phase2` call.
+#[wasm_bindgen]
+pub fn decode_phase1(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage> {
+    let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
+    let (results, fft_cache) = decode_frame_with_cache(
+        &audio, 100.0, 3000.0, 1.5, None, DecodeDepth::BpAllOsd, 200,
+    );
+    CACHED_AUDIO.with(|a| *a.borrow_mut() = Some(audio));
+    CACHED_FFT.with(|f| *f.borrow_mut() = Some(fft_cache));
+    CACHED_PHASE1.with(|p| *p.borrow_mut() = results.clone());
+    decode_and_register(results)
+}
+
+/// Phase 2 decode (i16): 3-pass subtract using cached Phase 1 state.
+///
+/// Panics if `decode_phase1` was not called first.
+#[wasm_bindgen]
+pub fn decode_phase2(strictness: u8) -> Vec<DecodedMessage> {
+    let audio = CACHED_AUDIO.with(|a| a.borrow_mut().take())
+        .expect("decode_phase1 must run first");
+    let fft = CACHED_FFT.with(|f| f.borrow_mut().take());
+    let known = CACHED_PHASE1.with(|p| std::mem::take(&mut *p.borrow_mut()));
+    decode_and_register(
+        decode_frame_subtract_with_known(
+            &audio, 100.0, 3000.0, 1.0, None,
+            DecodeDepth::BpAllOsd, 200, to_strictness(strictness),
+            &known, fft,
+        )
+    )
+}
+
+/// Phase 1 decode (f32): fast single-pass decode for live AudioWorklet path.
+///
+/// Caches the resampled audio and FFT for a subsequent `decode_phase2_f32` call.
+#[wasm_bindgen]
+pub fn decode_phase1_f32(samples: &[f32], sample_rate: u32) -> Vec<DecodedMessage> {
+    let audio = resample_f32_to_12k(samples, sample_rate);
+    let (results, fft_cache) = decode_frame_with_cache(
+        &audio, 100.0, 3000.0, 1.5, None, DecodeDepth::BpAllOsd, 200,
+    );
+    CACHED_AUDIO.with(|a| *a.borrow_mut() = Some(audio));
+    CACHED_FFT.with(|f| *f.borrow_mut() = Some(fft_cache));
+    CACHED_PHASE1.with(|p| *p.borrow_mut() = results.clone());
+    decode_and_register(results)
+}
+
+/// Phase 2 decode (f32): 3-pass subtract using cached Phase 1 state.
+///
+/// Panics if `decode_phase1_f32` was not called first.
+#[wasm_bindgen]
+pub fn decode_phase2_f32(strictness: u8) -> Vec<DecodedMessage> {
+    let audio = CACHED_AUDIO.with(|a| a.borrow_mut().take())
+        .expect("decode_phase1_f32 must run first");
+    let fft = CACHED_FFT.with(|f| f.borrow_mut().take());
+    let known = CACHED_PHASE1.with(|p| std::mem::take(&mut *p.borrow_mut()));
+    decode_and_register(
+        decode_frame_subtract_with_known(
+            &audio, 100.0, 3000.0, 1.0, None,
+            DecodeDepth::BpAllOsd, 200, to_strictness(strictness),
+            &known, fft,
         )
     )
 }
