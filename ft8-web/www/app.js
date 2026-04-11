@@ -397,6 +397,11 @@ function setMode(mode) {
   waterfall.dfLine = mode === 'scout' ? scoutDf : snipeDf;
   waterfall.targetLine = mode === 'snipe' ? snipeBpf : null;
   waterfall.freqOffset = (mode === 'snipe' && snipePhase === 'call') ? (snipeBpf - FILTER_CENTER) : 0;
+  if (mode === 'snipe') {
+    snipePhaseHint.textContent = snipePhase === 'watch'
+      ? `full-band  DF ${snipeDf} Hz  Target ${snipeBpf} Hz`
+      : `BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`;
+  }
   updateSnipeOverlay();
 }
 
@@ -894,6 +899,7 @@ const periodMgr = new FT8PeriodManager({
           qso.setMyInfo(myCallInput.value, myGridInput.value);
           const tx = qso.callStation(clickCall);
           apCall = clickCall;
+          snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, Math.round(freq)));
           clearTargetCards();
           if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
         } : null, freq, dt);
