@@ -56,21 +56,14 @@ import { QsoLog } from './qso-log.js';
 const body = document.body;
 const tabScout = document.getElementById('tab-scout');
 const tabSnipe = document.getElementById('tab-snipe');
-const badgeScout = document.getElementById('badge-scout');
 const badgeSnipe = document.getElementById('badge-snipe');
-let unreadScout = 0, unreadSnipe = 0;
+let unreadSnipe = 0;
 function addUnread(mode) {
-  if (mode === 'scout') {
-    if (currentMode === 'scout') return;
-    unreadScout++;
-    badgeScout.textContent = unreadScout > 99 ? '99+' : unreadScout;
-    badgeScout.style.display = '';
-  } else {
-    if (currentMode === 'snipe') return;
-    unreadSnipe++;
-    badgeSnipe.textContent = unreadSnipe > 99 ? '99+' : unreadSnipe;
-    badgeSnipe.style.display = '';
-  }
+  if (mode !== 'snipe') return;
+  if (currentMode === 'snipe') return;
+  unreadSnipe++;
+  badgeSnipe.textContent = unreadSnipe > 99 ? '99+' : unreadSnipe;
+  badgeSnipe.style.display = '';
 }
 const timerEl = document.getElementById('period-timer');
 const btnSettings = document.getElementById('btn-settings');
@@ -398,8 +391,7 @@ function setMode(mode) {
   body.className = mode + '-mode';
   tabScout.classList.toggle('active', mode === 'scout');
   tabSnipe.classList.toggle('active', mode === 'snipe');
-  if (mode === 'scout') { unreadScout = 0; badgeScout.style.display = 'none'; }
-  else { unreadSnipe = 0; badgeSnipe.style.display = 'none'; }
+  if (mode === 'snipe') { unreadSnipe = 0; badgeSnipe.style.display = 'none'; }
   resizeCanvas();
   waterfall.clear();
   waterfall.dfLine = mode === 'scout' ? scoutDf : snipeDf;
@@ -575,7 +567,6 @@ function addChatMsg(type, time, text, snr, actionCb, freq, dt) {
   if (type === 'rx') {
     div.classList.add('new');
     div.addEventListener('animationend', () => div.classList.remove('new'), { once: true });
-    addUnread('scout');
   }
 }
 
@@ -1067,6 +1058,15 @@ const periodMgr = new FT8PeriodManager({
             clearTargetCards();
             snipeAltCall = (sender && sender !== target) ? sender : '';
             if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
+            // Set BPF center to clicked station's frequency
+            snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, Math.round(m.freq_hz)));
+            waterfall.targetLine = snipeBpf;
+            if (snipePhase === 'call') {
+              waterfall.freqOffset = snipeBpf - FILTER_CENTER;
+              waterfall.noiseWindow = { min: snipeBpf - 250, max: snipeBpf + 250 };
+              cat.setFreq(snipeDialHz());
+            }
+            updateSnipeOverlay();
           }
         });
         div.classList.add('new');
