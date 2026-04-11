@@ -891,14 +891,9 @@ async function transmit(call1, call2, report, freq) {
 const periodMgr = new FT8PeriodManager({
   onTick: (rem) => { timerEl.textContent = `${Math.ceil(rem)}s`; },
   onClockOffset: (offsetSec) => {
-    if (Math.abs(offsetSec) < 0.05) {
-      dtOffsetEl.textContent = '';
-      dtOffsetEl.classList.remove('correcting');
-    } else {
-      const sign = offsetSec >= 0 ? '+' : '';
-      dtOffsetEl.textContent = `DT${sign}${offsetSec.toFixed(1)}`;
-      dtOffsetEl.classList.toggle('correcting', Math.abs(offsetSec) > 0.3);
-    }
+    const sign = offsetSec >= 0 ? '+' : '';
+    dtOffsetEl.textContent = `DT${sign}${offsetSec.toFixed(2)}`;
+    dtOffsetEl.classList.toggle('correcting', Math.abs(offsetSec) > 0.3);
   },
   onPeriodEnd: async (periodIndex, isEven) => {
     if (!capture.running || !wasmReady) return;
