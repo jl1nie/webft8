@@ -56,6 +56,22 @@ import { QsoLog } from './qso-log.js';
 const body = document.body;
 const tabScout = document.getElementById('tab-scout');
 const tabSnipe = document.getElementById('tab-snipe');
+const badgeScout = document.getElementById('badge-scout');
+const badgeSnipe = document.getElementById('badge-snipe');
+let unreadScout = 0, unreadSnipe = 0;
+function addUnread(mode) {
+  if (mode === 'scout') {
+    if (currentMode === 'scout') return;
+    unreadScout++;
+    badgeScout.textContent = unreadScout > 99 ? '99+' : unreadScout;
+    badgeScout.style.display = '';
+  } else {
+    if (currentMode === 'snipe') return;
+    unreadSnipe++;
+    badgeSnipe.textContent = unreadSnipe > 99 ? '99+' : unreadSnipe;
+    badgeSnipe.style.display = '';
+  }
+}
 const timerEl = document.getElementById('period-timer');
 const btnSettings = document.getElementById('btn-settings');
 const settingsPanel = document.getElementById('settings-panel');
@@ -372,6 +388,8 @@ function setMode(mode) {
   body.className = mode + '-mode';
   tabScout.classList.toggle('active', mode === 'scout');
   tabSnipe.classList.toggle('active', mode === 'snipe');
+  if (mode === 'scout') { unreadScout = 0; badgeScout.style.display = 'none'; }
+  else { unreadSnipe = 0; badgeSnipe.style.display = 'none'; }
   resizeCanvas();
   waterfall.clear();
   waterfall.dfLine = mode === 'scout' ? scoutDf : snipeDf;
@@ -521,6 +539,11 @@ function addChatMsg(type, time, text, snr, actionCb, freq, dt) {
   chatList.appendChild(div);
   pruneList(chatList);
   chatList.scrollTop = chatList.scrollHeight;
+  if (type === 'rx') {
+    div.classList.add('new');
+    div.addEventListener('animationend', () => div.classList.remove('new'), { once: true });
+    addUnread('scout');
+  }
 }
 
 // ── QSO display update ─────────────────────────────────────────────────────
@@ -1014,10 +1037,13 @@ const periodMgr = new FT8PeriodManager({
               if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
             }
           });
+          div.classList.add('new');
+          div.addEventListener('animationend', () => div.classList.remove('new'), { once: true });
           snipeRxList.appendChild(div);
         }
         pruneList(snipeRxList);
         snipeRxList.scrollTop = snipeRxList.scrollHeight;
+        if (msgs.length > 0) addUnread('snipe');
 
         // Show callers list
         if (apCall && callers.length > 0) {
@@ -1041,9 +1067,12 @@ const periodMgr = new FT8PeriodManager({
             <span class="col-dt">${m.dt_sec >= 0 ? '+' : ''}${m.dt_sec.toFixed(1)}</span>
             <span class="col-snr">${snrV >= 0 ? '+' : ''}${snrV}</span>
             <span class="text">${m.message}</span>`;
+          div.classList.add('new');
+          div.addEventListener('animationend', () => div.classList.remove('new'), { once: true });
           snipeRxList.appendChild(div);
         }
         snipeRxList.scrollTop = snipeRxList.scrollHeight;
+        addUnread('snipe');
 
         // Auto-switch back to Watch on QSO failure (reset)
         // (handled by retry timeout above — user can manually switch too)
@@ -1377,7 +1406,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '2026-04-11-d';
+const APP_VERSION = '2026-04-11-e';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);

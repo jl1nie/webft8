@@ -160,6 +160,12 @@
   .toggle input:checked + .toggle-track { background: var(--c-accent); }
   .toggle input:checked + .toggle-track::after { transform: translateX(16px); background: #fff; }
   @keyframes pulse { to { opacity: 0.6; } }
+  @keyframes rx-flash { 0% { background: #0d47a1; } 100% { background: var(--c-surface); } }
+  .chat-msg.rx.new { animation: rx-flash 1.2s ease-out forwards; }
+  .mode-tabs button .badge { display: inline-block; background: var(--c-danger); color: #fff;
+    font-size: 0.6rem; font-weight: bold; border-radius: 8px; padding: 0 4px; margin-left: 3px;
+    min-width: 14px; text-align: center; line-height: 14px; vertical-align: middle; }
+  .mode-tabs button.active .badge { display: none; }
   #tx-actions { display: flex; gap: var(--sp-xs); flex-wrap: wrap; flex: 1; }
   #tx-actions button.cq { background: var(--c-accent-bg); border-color: var(--c-accent); color: #fff;
     padding: var(--sp-sm) 1.2rem; }
@@ -298,8 +304,8 @@
 <div class="header">
   <h1>rs-ft8n</h1>
   <div class="mode-tabs">
-    <button id="tab-scout" class="active">Scout</button>
-    <button id="tab-snipe">Snipe</button>
+    <button id="tab-scout" class="active">Scout<span class="badge" id="badge-scout" style="display:none"></span></button>
+    <button id="tab-snipe">Snipe<span class="badge" id="badge-snipe" style="display:none"></span></button>
   </div>
   <select id="band-header" class="band-sel">
     <option value="1.840">1.840</option>
