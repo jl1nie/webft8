@@ -913,7 +913,16 @@ const periodMgr = new FT8PeriodManager({
 
     const shed = [subDisabledAuto && 'sub', apDisabledAuto && 'AP'].filter(Boolean);
     const shedTag = shed.length ? ` [-${shed.join(',')}]` : '';
-    setStatus(`${n}d ${lastDecodeMs}ms${shedTag}`);
+    // Diagnostic: buffer samples (expected 180000) and median DT
+    const bufSamples = float32.length;
+    const bufTag = bufSamples !== 180000 ? ` buf:${bufSamples}` : '';
+    let mdtTag = '';
+    if (n >= 2) {
+      const dts = results.map(r => r.dt_sec).sort((a, b) => a - b);
+      const mdt = dts[Math.floor(dts.length / 2)];
+      mdtTag = ` mDT:${mdt >= 0 ? '+' : ''}${mdt.toFixed(1)}`;
+    }
+    setStatus(`${n}d ${lastDecodeMs}ms${shedTag}${bufTag}${mdtTag}`);
 
     // AP target: use QSO dxCall if available, or last Snipe target
     if (qso.dxCall) apCall = qso.dxCall;
