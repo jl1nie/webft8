@@ -1133,6 +1133,30 @@ mod tests {
     }
 
     #[test]
+    fn type4_hash_register_then_resolve() {
+        // Simulate the real flow: pack Type 4 → register std_call in hash table
+        // → unpack with hash table → hashed callsign should resolve.
+        let mut ht = CallsignHashTable::new();
+        ht.insert("JA1ABC");
+
+        // pack: JL1NIE/1 (non-std) + JA1ABC (std, will be 12-bit hashed)
+        let msg = pack77_type4("JL1NIE/1", "JA1ABC", "", false).expect("pack failed");
+
+        // unpack WITHOUT hash table → shows <...>
+        let text_no_ht = unpack77(&msg).expect("unpack failed");
+        assert!(text_no_ht.contains("<...>"), "without hash table: {text_no_ht}");
+        assert!(text_no_ht.contains("JL1NIE/1"), "without hash table: {text_no_ht}");
+
+        // unpack WITH hash table → resolves <JA1ABC>
+        let text_ht = unpack77_with_hash(&msg, &ht).expect("unpack failed");
+        assert!(text_ht.contains("<JA1ABC>"), "with hash table should resolve: {text_ht}");
+        assert!(text_ht.contains("JL1NIE/1"), "with hash table: {text_ht}");
+
+        // Verify the resolved message passes plausibility
+        assert!(is_plausible_message(&text_ht), "resolved message should be plausible: {text_ht}");
+    }
+
+    #[test]
     fn pack77_type4_cq_with_pack77() {
         // pack77 should work with CQ + non-standard callsign that doesn't pack via pack28
         // This test ensures the Type 4 path produces valid messages
