@@ -1011,17 +1011,19 @@ async function transmit(call1, call2, report, freq) {
 // ── Period manager ──────────────────────────────────────────────────────────
 const periodMgr = new FT8PeriodManager({
   onTick: (rem) => {
+    // rem is already time-until-next-boundary-fire (from _nextFireMs in ft8-period.js).
+    // No ± offset arithmetic needed here — just annotate when correction is active.
     const offset = periodMgr.clockOffsetSec;
     if (Math.abs(offset) > 0.3) {
-      // Show real-UTC remaining (local remaining minus fast-clock error)
-      // e.g. local says 3.5s but clock is +1.5s fast → real UTC boundary in 2.0s → "2s(-1.5)"
-      const corrected = Math.max(0, rem - offset);
-      const sign = offset > 0 ? '-' : '+';
-      timerEl.textContent = `${Math.ceil(corrected)}s(${sign}${Math.abs(offset).toFixed(1)})`;
+      const ann = -offset;   // (-1.9) when clock is +1.9s fast
+      const annSign = ann >= 0 ? '+' : '';
+      timerEl.innerHTML = `${Math.ceil(rem)}s <small class="dt-ann">(${annSign}${ann.toFixed(1)})</small>`;
       timerEl.classList.add('dt-corrected');
+      dtOffsetEl.style.display = 'none';
     } else {
       timerEl.textContent = `${Math.ceil(rem)}s`;
       timerEl.classList.remove('dt-corrected');
+      dtOffsetEl.style.display = '';
     }
   },
   onClockOffset: (offsetSec) => {
@@ -1681,7 +1683,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);
