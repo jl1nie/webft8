@@ -960,7 +960,20 @@ async function transmit(call1, call2, report, freq) {
 
 // ── Period manager ──────────────────────────────────────────────────────────
 const periodMgr = new FT8PeriodManager({
-  onTick: (rem) => { timerEl.textContent = `${Math.ceil(rem)}s`; },
+  onTick: (rem) => {
+    const offset = periodMgr.clockOffsetSec;
+    if (Math.abs(offset) > 0.3) {
+      // Show real-UTC remaining (local remaining minus fast-clock error)
+      // e.g. local says 3.5s but clock is +1.5s fast → real UTC boundary in 2.0s → "2s(-1.5)"
+      const corrected = Math.max(0, rem - offset);
+      const sign = offset > 0 ? '-' : '+';
+      timerEl.textContent = `${Math.ceil(corrected)}s(${sign}${Math.abs(offset).toFixed(1)})`;
+      timerEl.classList.add('dt-corrected');
+    } else {
+      timerEl.textContent = `${Math.ceil(rem)}s`;
+      timerEl.classList.remove('dt-corrected');
+    }
+  },
   onClockOffset: (offsetSec) => {
     const sign = offsetSec >= 0 ? '+' : '';
     dtOffsetEl.textContent = `DT${sign}${offsetSec.toFixed(1)}`;
