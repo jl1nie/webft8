@@ -101,7 +101,9 @@
   .dot.current { background: var(--c-accent); border-color: var(--c-accent); }
   #scout-status .state, .qso-progress .label { color: var(--c-accent); font-weight: bold; }
   #scout-status .dx { color: var(--c-success); font-weight: bold; }
-  #scout-status .decode-info { color: var(--c-text2); margin-left: auto; font-size: var(--fs-xs);
+  .decode-info { font-size: var(--fs-xs); color: var(--c-text2);
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #scout-status .decode-info { margin-left: auto; font-size: var(--fs-xs);
     flex-shrink: 0; }
   #scout-status .tx-queue { color: var(--c-danger); font-weight: bold; font-size: var(--fs-sm);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
