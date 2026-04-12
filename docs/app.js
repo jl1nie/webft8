@@ -927,6 +927,8 @@ async function syncNtpOffset() {
 async function transmit(call1, call2, report, freq) {
   if (!wasmReady) return;
   freq = freq || (currentMode === 'snipe' ? snipeDf : scoutDf);
+  txActive = true;
+  updateHaltBtn();
   try {
     const txText = `${call1} ${call2} ${report}`.trim();
     scoutTxQueue.textContent = ''; // clear queue indicator
@@ -969,10 +971,14 @@ async function transmit(call1, call2, report, freq) {
 
     if (activeBtn) activeBtn.classList.remove('tx-active');
     timerEl.classList.remove('tx-on');
+    txActive = false;
+    updateHaltBtn();
     setStatus('TX complete');
   } catch (e) {
     txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
     timerEl.classList.remove('tx-on');
+    txActive = false;
+    updateHaltBtn();
     setStatus(`TX error: ${e.message || e}`);
     await cat.safePttOff();
   }
@@ -1285,14 +1291,15 @@ periodMgr.callbacks.onTxFire = async (tx) => {
 // ■ (TX active/queued) — cancels TX, keeps QSO state
 // ↺ (TX idle)          — logs partial QSO if any, resets to IDLE
 let halted = false;
+let txActive = false;  // true while transmit() is running (audio playing)
 
 function updateHaltBtn() {
-  // ■ only when TX is actively queued — halted state shows ↺ (ready to reset)
-  btnHalt.textContent = periodMgr.hasTxQueued() ? '■' : '↺';
+  // ■ when TX is queued OR actively transmitting
+  btnHalt.textContent = (periodMgr.hasTxQueued() || txActive) ? '■' : '↺';
 }
 
 btnHalt.addEventListener('click', async () => {
-  if (periodMgr.hasTxQueued()) {
+  if (periodMgr.hasTxQueued() || txActive) {
     // Cancel TX, stop audio, keep QSO state
     periodMgr.cancelTx();
     audioOut.stop();
