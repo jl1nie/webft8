@@ -197,9 +197,15 @@ function updateScoutStatus() {
 }
 
 // ── Waterfall ───────────────────────────────────────────────────────────────
+// Canvas drawing height is fixed at 280 px (Snipe mode max).  The wrapper
+// clips to the mode-appropriate height (220/280 px) via overflow:hidden, and
+// the canvas is pinned to the bottom so the most-recent rows are always visible.
+// Only width is updated on resize; setting canvas.height would clear the buffer.
+const WF_CANVAS_HEIGHT = 280;
 function resizeCanvas() {
-  wfCanvas.width = wfCanvas.clientWidth;
-  wfCanvas.height = wfCanvas.clientHeight;
+  const newW = wfCanvas.clientWidth;
+  if (wfCanvas.width !== newW) wfCanvas.width = newW;
+  if (wfCanvas.height !== WF_CANVAS_HEIGHT) wfCanvas.height = WF_CANVAS_HEIGHT;
 }
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
@@ -422,6 +428,15 @@ const snipeCallersEl = document.getElementById('snipe-callers');
 btnWatch.addEventListener('click', () => setSnipePhase('watch'));
 btnCall.addEventListener('click', () => setSnipePhase('call'));
 
+// Allow manual callsign entry in the Snipe target field
+snipeDxCall.addEventListener('change', () => {
+  const call = snipeDxCall.value.trim().toUpperCase();
+  snipeDxCall.value = call;
+  apCall = call;
+  qso.dxCall = call;  // set target for AP filtering without starting TX
+  updateQsoDisplay();
+});
+
 /** Compute shifted dial frequency so the physical filter covers snipeBpf. */
 function snipeDialHz() {
   const baseHz = Math.round(parseFloat(bandSelect.value) * 1e6);
@@ -481,7 +496,8 @@ if (!isMobile) btnNtp.style.display = 'none';
 function applyDtAutoCorrectUi() {
   const on = dtAutoCorrectCheck.checked;
   periodMgr.setDtAutoCorrect(on);
-  dtOffsetEl.style.display = on ? '' : 'none';
+  // Only show offset display when live AND auto-correct is on AND offset is small
+  dtOffsetEl.style.display = (on && liveMode) ? '' : 'none';
   btnNtp.disabled = !on;
   if (!on) {
     dtOffsetEl.textContent = '';
@@ -667,7 +683,7 @@ function updateQsoDisplay() {
 
   // Snipe view
   qsoLabel.textContent = state;
-  snipeDxCall.textContent = qso.dxCall || 'No target';
+  snipeDxCall.value = qso.dxCall || '';
   const tx = qso.getNextTx();
   snipeTxLine.textContent = tx ? `Next: ${qso.formatTx(tx)}` : '';
 
@@ -1012,24 +1028,26 @@ async function transmit(call1, call2, report, freq) {
 const periodMgr = new FT8PeriodManager({
   onTick: (rem) => {
     // rem is already time-until-next-boundary-fire (from _nextFireMs in ft8-period.js).
-    // No ± offset arithmetic needed here — just annotate when correction is active.
+    // Show small annotation when abs(offset) > 0.3 s; colour yellow when >= 1.0 s.
     const offset = periodMgr.clockOffsetSec;
     if (Math.abs(offset) > 0.3) {
       const ann = -offset;   // (-1.9) when clock is +1.9s fast
       const annSign = ann >= 0 ? '+' : '';
       timerEl.innerHTML = `${Math.ceil(rem)}s <small class="dt-ann">(${annSign}${ann.toFixed(1)})</small>`;
-      timerEl.classList.add('dt-corrected');
+      timerEl.classList.toggle('dt-corrected', Math.abs(offset) >= 1.0);
       dtOffsetEl.style.display = 'none';
     } else {
       timerEl.textContent = `${Math.ceil(rem)}s`;
       timerEl.classList.remove('dt-corrected');
-      dtOffsetEl.style.display = '';
+      dtOffsetEl.style.display = liveMode && dtAutoCorrectCheck.checked ? '' : 'none';
     }
   },
   onClockOffset: (offsetSec) => {
     const sign = offsetSec >= 0 ? '+' : '';
     dtOffsetEl.textContent = `DT${sign}${offsetSec.toFixed(1)}`;
     dtOffsetEl.classList.toggle('correcting', Math.abs(offsetSec) > 0.3);
+    // Don't touch display here — onTick controls visibility when live,
+    // updateLiveUI hides it when stopped.
   },
   onPeriodEnd: async (periodIndex, isEven) => {
     if (!capture.running || !wasmReady) return;
@@ -1347,7 +1365,12 @@ const logoEl = document.querySelector('.header h1');
 function updateLiveUI() {
   btnStart.textContent = liveMode ? 'Stop Audio' : 'Start Audio';
   logoEl.classList.toggle('live', liveMode);
-  if (!liveMode) timerEl.textContent = '--';
+  if (!liveMode) {
+    timerEl.textContent = '--';
+    timerEl.classList.remove('dt-corrected');
+    // Hide DT offset display when not live — it has no meaning before decoding starts
+    if (dtAutoCorrectCheck.checked) dtOffsetEl.style.display = 'none';
+  }
 }
 
 async function toggleAudio() {
@@ -1778,6 +1801,7 @@ init().then(async () => {
         btnCat.textContent = 'Disconnect';
         catStatusEl.textContent = `connected (${profiles[savedRig]?.label || savedRig})`;
         localStorage.setItem('webft8-transport', 'serial');
+        transportSerialRadio.checked = true;  // sync radio to actual connected transport
         await rigSetup();
       } catch (e) {
         catStatusEl.textContent = `auto-connect failed: ${e.message || e}`;

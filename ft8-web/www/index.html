@@ -73,10 +73,15 @@
   .header .gear:hover { color: var(--c-accent); border-color: var(--c-accent); }
 
   /* ── Waterfall ──────────────────────────────────────────────────────── */
-  #waterfall-wrap { position: relative; flex-shrink: 0; cursor: crosshair; }
-  #waterfall { width: 100%; display: block; background: #000; border-bottom: 1px solid var(--c-border); }
-  .scout-mode #waterfall { height: min(25vh, 220px); }
-  .snipe-mode #waterfall { height: 280px; }
+  /* Canvas stays at fixed 280px drawing height; wrapper clips via overflow:hidden.
+     Scout mode shows the bottom 220px (most recent rows); Snipe shows all 280px.
+     Switching modes preserves the waterfall history — top goes black in Snipe if
+     the canvas hasn't scrolled enough to fill it yet. */
+  #waterfall-wrap { position: relative; flex-shrink: 0; cursor: crosshair; overflow: hidden; }
+  .scout-mode #waterfall-wrap { height: min(25vh, 220px); }
+  .snipe-mode #waterfall-wrap { height: 280px; }
+  #waterfall { position: absolute; bottom: 0; left: 0; width: 100%; height: 280px;
+    display: block; background: #000; border-bottom: 1px solid var(--c-border); }
   #snipe-overlay { position: absolute; top: 0; bottom: 0; background: rgba(79,195,247,0.12);
     border-left: 1px solid rgba(79,195,247,0.5); border-right: 1px solid rgba(79,195,247,0.5);
     pointer-events: none; display: none; }
@@ -391,7 +396,9 @@
   </div>
   <div class="snipe-target" id="snipe-target">
     <div style="display:flex;align-items:baseline;gap:var(--sp-sm)">
-      <div class="dx-call" id="snipe-dx-call">No target</div>
+      <input type="text" id="snipe-dx-call" class="dx-call" placeholder="No target"
+        style="background:transparent;border:none;border-bottom:1px solid var(--c-border);outline:none;width:8em;cursor:text;"
+        autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
       <input type="text" id="snipe-dx-grid" placeholder="GL" maxlength="6"
         style="width:4.2em;font-size:var(--fs-sm);background:var(--c-surface);color:var(--c-text);border:1px solid var(--c-border);border-radius:4px;padding:1px 4px;text-transform:uppercase">
       <div class="dx-info" id="snipe-dx-info"></div>
