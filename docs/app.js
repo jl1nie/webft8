@@ -384,7 +384,7 @@ capture._onDisconnect = () => {
   periodMgr.stop();
   liveMode = false;
   updateLiveUI();
-  setStatus('Audio disconnected');
+  showToast('Audio disconnected');
 };
 // RX level meter from AudioWorklet peak reports.
 capture.onPeak = (level) => {
@@ -394,7 +394,7 @@ capture.onPeak = (level) => {
 cat.onDisconnect = () => {
   btnCat.textContent = 'Connect';
   catStatusEl.textContent = 'disconnected';
-  setStatus('CAT disconnected');
+  showToast('CAT disconnected');
   // BLE GPS queries stop automatically (BleTransport.disconnect clears timer)
 };
 
@@ -1501,6 +1501,7 @@ btnCat.addEventListener('click', async () => {
       catStatusEl.textContent = 'BLE connected (IC-705)';
       localStorage.setItem('webft8-rig', rigId);
       localStorage.setItem('webft8-transport', 'ble');
+      showToast('BLE connected (IC-705)');
 
       // Enable GPS UTC sync via CI-V position query (0x23 0x00) over BLE
       if (cat.ble && dtAutoCorrectCheck.checked) {
@@ -1512,11 +1513,13 @@ btnCat.addEventListener('click', async () => {
     } catch (e) {
       btnCat.textContent = 'Connect';
       catStatusEl.textContent = `BLE error: ${e.message || e}`;
+      showToast(`BLE error: ${e.message || e}`);
     }
   } else {
     // ── Serial path (Web Serial / Tauri) ──────────────────────────────────
     if (!CatController.isSerialSupported()) {
       catStatusEl.textContent = 'Web Serial not supported';
+      showToast('Web Serial not supported');
       return;
     }
     try {
@@ -1535,14 +1538,17 @@ btnCat.addEventListener('click', async () => {
 
       btnCat.textContent = 'Disconnect';
       const profiles = getRigProfiles();
-      catStatusEl.textContent = `connected (${profiles[rigId]?.label || rigId})`;
+      const label = profiles[rigId]?.label || rigId;
+      catStatusEl.textContent = `connected (${label})`;
       localStorage.setItem('webft8-rig', rigId);
       localStorage.setItem('webft8-transport', 'serial');
+      showToast(`Connected: ${label}`);
       await rigSetup();
     } catch (e) {
       await cat.disconnect();
       btnCat.textContent = 'Connect';
       catStatusEl.textContent = `error: ${e.message || e}`;
+      showToast(`CAT error: ${e.message || e}`);
     }
   }
 });
