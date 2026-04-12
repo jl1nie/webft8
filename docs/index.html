@@ -61,6 +61,7 @@
     padding: var(--sp-xs); margin-left: auto; min-width: 5em; }
   .timer { font-size: var(--fs-base); color: var(--c-snr); font-variant-numeric: tabular-nums;
     min-width: 2.5em; text-align: right; flex-shrink: 0; transition: color .2s; }
+  .timer.dt-corrected { color: var(--c-warn, #f90); }
   .timer.tx-on { color: var(--c-danger); font-weight: bold; }
   .dt-offset { font-size: var(--fs-xs); color: var(--c-text2); flex-shrink: 0;
     font-variant-numeric: tabular-nums; min-width: 4em; text-align: center; }
@@ -390,6 +391,8 @@
   <div class="snipe-target" id="snipe-target">
     <div style="display:flex;align-items:baseline;gap:var(--sp-sm)">
       <div class="dx-call" id="snipe-dx-call">No target</div>
+      <input type="text" id="snipe-dx-grid" placeholder="GL" maxlength="6"
+        style="width:4.2em;font-size:var(--fs-sm);background:var(--c-surface);color:var(--c-text);border:1px solid var(--c-border);border-radius:4px;padding:1px 4px;text-transform:uppercase">
       <div class="dx-info" id="snipe-dx-info"></div>
     </div>
     <div id="snipe-callers" style="margin-top:var(--sp-xs);font-size:var(--fs-sm);color:var(--c-text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
@@ -474,18 +477,31 @@
     </div>
     <button id="btn-test-tone">Test Tone</button>
     <button id="btn-start">Start Audio</button>
-    <div class="field">
+    <div class="field" id="transport-field">
+      <label>Transport</label>
+      <span style="display:inline-flex;gap:var(--sp-md);align-items:center">
+        <label style="display:inline-flex;gap:4px;align-items:center;font-size:var(--fs-base)">
+          <input type="radio" name="transport" id="transport-serial" value="serial" checked> Serial
+        </label>
+        <label id="transport-ble-label" style="display:inline-flex;gap:4px;align-items:center;font-size:var(--fs-base)">
+          <input type="radio" name="transport" id="transport-ble" value="ble"> BLE
+        </label>
+      </span>
+    </div>
+    <div class="field" id="rig-model-field">
       <label>Rig Model</label>
       <select id="rig-model"></select>
     </div>
+    <div id="ble-rig-label" style="display:none;font-size:var(--fs-sm);color:var(--c-text2);margin-bottom:var(--sp-sm)">IC-705</div>
     <div id="cat-port-field" class="field" style="display:none">
       <label>Port</label>
       <select id="cat-port"></select>
       <button id="btn-cat-refresh" style="font-size:var(--fs-xs);padding:2px 6px">&#x21bb;</button>
     </div>
-    <button id="btn-cat">Connect Rig</button>
-    <button id="btn-cat-ble" style="display:none">Connect BLE</button>
+    <button id="btn-cat">Connect</button>
     <span class="cat-status" id="cat-status" style="font-size:var(--fs-xs);color:var(--c-text2);display:block;margin-bottom:var(--sp-sm)">not connected</span>
+    <button id="btn-gps-sync" style="margin-top:4px">GPS Sync</button>
+    <button id="btn-ntp" style="margin-top:4px">NTP Sync</button>
   </details>
   <details class="accordion">
     <summary>Log</summary>
@@ -530,7 +546,6 @@
     <label><input type="checkbox" id="subtract-mode" checked> Multi-pass subtract</label>
     <label><input type="checkbox" id="ap-mode" checked> A Priori (AP)</label>
     <label><input type="checkbox" id="dt-auto-correct" checked> DT auto-correct (FT8 signals)</label>
-    <button id="btn-ntp" style="margin-top:4px">NTP Sync</button>
     <label class="toggle"><input type="checkbox" id="cq-best-snr" checked><span class="toggle-track"></span><span id="cq-reply-label">CQ reply: best SNR</span></label>
     <label class="toggle"><input type="checkbox" id="waterfall-enable" checked><span class="toggle-track"></span><span>Waterfall FFT</span></label>
     <button id="btn-open-wav">Open WAV File</button>

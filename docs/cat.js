@@ -77,6 +77,7 @@ export class CatController {
     this.transportType = ''; // 'serial' | 'ble' | 'tauri'
     this.port = null;       // Web Serial port (serial mode only)
     this.writer = null;     // Web Serial writer (serial mode only)
+    this.ble = null;        // BleTransport instance (ble mode only)
     this.connected = false;
     this.rig = null;
     this.rigId = '';
@@ -140,6 +141,7 @@ export class CatController {
     await ble.connect();
 
     this.transport = ble;
+    this.ble = ble;        // direct reference for GPS/CI-V callbacks
     this.transportType = 'ble';
     this.rig = rig;
     this.rigId = rigId;
@@ -316,6 +318,7 @@ export class CatController {
       try { this.writer.releaseLock(); } catch (_) {}
       this.writer = null;
     }
+    this.ble = null;
     if (this.onDisconnect) this.onDisconnect();
   }
 
