@@ -1,15 +1,15 @@
-// GPS NMEA UTC sync via Web Serial API.
+// GPS NMEA UTC sync — Web Serial (browser) or Tauri native serial (desktop).
 //
 // Reads $GNRMC / $GPRMC sentences from IC-705 USB-B GPS port (9600 baud)
 // and derives a clock-offset estimate for FT8 period synchronisation.
 //
-// Usage:
-//   const sync = new GpsNmeaSync((offsetSec, label) => {
-//     periodMgr.setClockOffset(offsetSec);
-//   });
-//   await sync.connect();   // shows browser port-picker dialog
-//   // ...
-//   await sync.disconnect();
+// Browser usage (Web Serial port-picker dialog):
+//   const sync = new GpsNmeaSync(onSync);
+//   await sync.connect();
+//
+// Tauri usage (port name supplied by caller):
+//   const sync = new GpsNmeaSync(onSync);
+//   await sync.connect('COM8');  // portName from listSerialPorts()
 
 /**
  * Parse NMEA UTC time + date into a UTC epoch (ms).
@@ -49,10 +49,27 @@ function nmeaChecksumOk(line) {
   return cs === parseInt(line.substr(star + 1, 2), 16);
 }
 
+// ── Tauri invoke helper (mirrors cat.js pattern) ───────────────────────────
+const _isTauri = !!(window.__TAURI_INTERNALS__);
+
+async function _tauriInvoke(cmd, args) {
+  if (window.__TAURI_INTERNALS__?.invoke) {
+    return window.__TAURI_INTERNALS__.invoke(cmd, args);
+  }
+  const { invoke } = await import('https://unpkg.com/@tauri-apps/api@2/core');
+  return invoke(cmd, args);
+}
+
+// ── GpsNmeaSync ────────────────────────────────────────────────────────────
+
 export class GpsNmeaSync {
-  /** Returns true if Web Serial API is available in this browser. */
+  /**
+   * Returns true if GPS NMEA sync is available:
+   * - Browser: Web Serial API present
+   * - Tauri desktop: always true (native serial)
+   */
   static isSupported() {
-    return typeof navigator !== 'undefined' && 'serial' in navigator;
+    return _isTauri || (typeof navigator !== 'undefined' && 'serial' in navigator);
   }
 
   /**
@@ -64,27 +81,51 @@ export class GpsNmeaSync {
     this.onSync = onSync;
     this._port = null;
     this._running = false;
+    this._pollTimer = null;
   }
 
   /**
-   * Open the GPS serial port (shows browser port-picker dialog).
-   * Resolves when the port is open and the read loop has started.
+   * Open the GPS serial port.
+   * @param {string} [portName]  Required in Tauri mode (e.g. 'COM8').
+   *                             Ignored in browser mode (port-picker dialog shown).
    */
-  async connect() {
-    this._port = await navigator.serial.requestPort();
-    await this._port.open({ baudRate: 9600 });
+  async connect(portName) {
     this._running = true;
-    this._readLoop();  // fire-and-forget async loop
+    if (_isTauri) {
+      if (!portName) throw new Error('portName required in Tauri mode');
+      await _tauriInvoke('serial_gps_open', { portName, baudRate: 9600 });
+      this._pollLoop();  // fire-and-forget polling loop
+    } else {
+      this._port = await navigator.serial.requestPort();
+      await this._port.open({ baudRate: 9600 });
+      this._readLoop();  // fire-and-forget streaming loop
+    }
   }
 
   /** Stop reading and close the port. */
   async disconnect() {
     this._running = false;
-    try { await this._port?.close(); } catch (_) {}
-    this._port = null;
+    clearTimeout(this._pollTimer);
+    this._pollTimer = null;
+    if (_isTauri) {
+      try { await _tauriInvoke('serial_gps_close', {}); } catch (_) {}
+    } else {
+      try { await this._port?.close(); } catch (_) {}
+      this._port = null;
+    }
   }
 
   // ── Internal ────────────────────────────────────────────────────────────
+
+  /** Tauri: poll serial_gps_readline at ~10 Hz. */
+  async _pollLoop() {
+    if (!this._running) return;
+    try {
+      const line = await _tauriInvoke('serial_gps_readline', {});
+      if (line) this._parseLine(line.trim());
+    } catch (_) {}
+    this._pollTimer = setTimeout(() => this._pollLoop(), 100);
+  }
 
   async _readLoop() {
     const decoder = new TextDecoder();

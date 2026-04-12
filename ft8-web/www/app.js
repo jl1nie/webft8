@@ -504,8 +504,8 @@ btnNtp.addEventListener('click', async () => {
 const btnGpsSync = document.getElementById('btn-gps-sync');
 let gpsSync = null;
 
-// Hide GPS button when Web Serial is unavailable or in Tauri desktop mode
-if (!GpsNmeaSync.isSupported() || isTauriMode()) {
+// Hide GPS button only when neither Web Serial nor Tauri native serial is available
+if (!GpsNmeaSync.isSupported()) {
   btnGpsSync.style.display = 'none';
 }
 
@@ -524,7 +524,25 @@ btnGpsSync.addEventListener('click', async () => {
   }
   gpsSync = new GpsNmeaSync(_applyGpsOffset);
   try {
-    await gpsSync.connect();
+    let portName;
+    if (isTauriMode()) {
+      // In Tauri, show a port selection prompt using the native port list
+      const ports = await listSerialPorts();
+      if (!ports.length) throw new Error('No serial ports found');
+      // Build a simple selection string: "COM8 (VID:0C28 PID:0003)"
+      const choices = ports.map(p =>
+        `${p.name}${p.vid ? ` (${p.vid.toString(16).toUpperCase().padStart(4,'0')}:${p.pid.toString(16).toUpperCase().padStart(4,'0')})` : ''}`
+      );
+      const choice = prompt(
+        'Select GPS port (IC-705 USB-B):\n' + choices.map((c, i) => `${i}: ${c}`).join('\n'),
+        '0'
+      );
+      if (choice === null) { gpsSync = null; return; }
+      const idx = parseInt(choice, 10);
+      if (isNaN(idx) || idx < 0 || idx >= ports.length) throw new Error('Invalid selection');
+      portName = ports[idx].name;
+    }
+    await gpsSync.connect(portName);
     btnGpsSync.textContent = 'GPS ●';
   } catch (e) {
     gpsSync = null;
