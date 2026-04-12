@@ -472,6 +472,24 @@ function snipeDialHz() {
   return baseHz + (snipeBpf - FILTER_CENTER);
 }
 
+/**
+ * Audio frequency (Hz) to pass to WASM encode/decode for Snipe TX.
+ *
+ * `snipeDf` is always stored in *band-offset* coordinates (= WF display
+ * position = original-VFO-relative Hz).  In Call phase the VFO has been
+ * shifted by freqOffset = snipeBpf − FILTER_CENTER, so the audio frequency
+ * that lands at the correct band position is:
+ *
+ *   audio = snipeDf − freqOffset = snipeDf − (snipeBpf − FILTER_CENTER)
+ *
+ * In Watch phase freqOffset = 0, so audio = snipeDf directly.
+ */
+function snipeAudioHz() {
+  return snipePhase === 'call'
+    ? snipeDf - (snipeBpf - FILTER_CENTER)
+    : snipeDf;
+}
+
 async function setSnipePhase(phase) {
   snipePhase = phase;
   btnBpf.classList.toggle('active', phase === 'call');
@@ -856,7 +874,7 @@ async function runDecode(samples, sampleRate, onPartial) {
   if (apTarget || apGridActive) {
     const found = apTarget && results.some(r => r.message.toUpperCase().includes(apTarget));
     if (!found) {
-      const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
+      const freq = currentMode === 'snipe' ? snipeAudioHz() : scoutDf;
       const myCall = myCallInput.value.trim().toUpperCase();
       const eqOn = eqModeSelect.value === 'adaptive';
       // Watch phase: CQ-style AP (pass empty mycall + grid).
@@ -903,7 +921,7 @@ async function runDecode(samples, sampleRate, onPartial) {
 // ── TX queue helper (all manual TX goes through period manager) ─────────────
 function queueTxMsg(call1, call2, report) {
   clearHalted();
-  const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
+  const freq = currentMode === 'snipe' ? snipeAudioHz() : scoutDf;
   const txSlot = rxSlotEven !== null ? !rxSlotEven : !periodMgr.getCurrentPeriod().isEven;
   periodMgr.queueTx({ call1, call2, report, freq }, txSlot);
   setStatus(`TX queued: ${call1} ${call2} ${report}`);
@@ -957,7 +975,7 @@ async function syncNtpOffset() {
 // ── Transmit (called by period manager at period boundary) ─────────────────
 async function transmit(call1, call2, report, freq) {
   if (!wasmReady) return;
-  freq = freq || (currentMode === 'snipe' ? snipeDf : scoutDf);
+  freq = freq || (currentMode === 'snipe' ? snipeAudioHz() : scoutDf);
   txActive = true;
   updateHaltBtn();
   try {
@@ -1115,7 +1133,7 @@ const periodMgr = new FT8PeriodManager({
           snipeDxGridInput.value = clickGrid;
           snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, Math.round(freq)));
           snipeBpfSet = true;
-          if (snipePhase !== 'call') snipeDf = snipeBpf;
+          snipeDf = snipeBpf; // sync TX to new target (band-offset coords)
           clearTargetCards();
           if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
           // In Call phase: update BPF center and VFO to track the tapped station
@@ -1255,7 +1273,7 @@ const periodMgr = new FT8PeriodManager({
     // Helper: fire TX immediately if decode finished within the 2.4 s TX window
     // and the current period is already the correct slot.  Otherwise queue.
     const _fireTx = (tx, label) => {
-      const freq = currentMode === 'snipe' ? snipeDf : scoutDf;
+      const freq = currentMode === 'snipe' ? snipeAudioHz() : scoutDf;
       const { isEven: curIsEven, elapsed } = periodMgr.getCurrentPeriod();
       rxSlotEven = isEven; // remember which slot DX used
       if (txSlot === curIsEven && elapsed < 2.4) {
@@ -1460,7 +1478,7 @@ btnTestTone.addEventListener('click', async () => {
     txMeter.classList.remove('clip');
     txClip.classList.remove('active');
   } else {
-    const df = currentMode === 'snipe' ? snipeDf : scoutDf;
+    const df = currentMode === 'snipe' ? snipeAudioHz() : scoutDf;
     if (cat.connected) await cat.ptt(true);
     await audioOut.startTone(df, outputDeviceSelect.value || undefined);
     btnTestTone.textContent = `Stop (${df} Hz)`;
