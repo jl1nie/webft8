@@ -983,6 +983,12 @@ async function transmit(call1, call2, report, freq) {
 // ── Period manager ──────────────────────────────────────────────────────────
 const periodMgr = new FT8PeriodManager({
   onTick: (rem) => {
+    // Recover from Chrome auto-suspending the AudioContext after inactivity.
+    // The suspension causes the worklet to stop sending audio, which stalls
+    // snapshot() and breaks the decode loop.  Resume proactively each tick.
+    if (capture.audioCtx?.state === 'suspended') {
+      capture.audioCtx.resume().catch(() => {});
+    }
     // rem is already time-until-next-boundary-fire (from _nextFireMs in ft8-period.js).
     // Show small annotation when abs(offset) > 0.3 s; colour yellow when >= 1.0 s.
     const offset = periodMgr.clockOffsetSec;
@@ -1042,6 +1048,7 @@ const periodMgr = new FT8PeriodManager({
         sep.className = 'period-sep';
         sep.textContent = utc;
         chatList.appendChild(sep);
+        pruneList(chatList);
         sepInserted = true;
       }
 
@@ -1672,7 +1679,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '0.4.2';
+const APP_VERSION = '0.4.3';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);
