@@ -67,6 +67,7 @@ function addUnread(mode) {
   badgeSnipe.style.display = '';
 }
 const timerEl = document.getElementById('period-timer');
+const dtAnnEl = document.getElementById('dt-ann-display');
 const dtOffsetEl = document.getElementById('dt-offset-display');
 const headerEl = document.querySelector('.header');
 const btnSettings = document.getElementById('btn-settings');
@@ -999,13 +1000,15 @@ const periodMgr = new FT8PeriodManager({
     if (Math.abs(offset) > 0.3) {
       const ann = -offset;   // (-1.9) when clock is +1.9s fast
       const annSign = ann >= 0 ? '+' : '';
-      timerEl.innerHTML = `${Math.ceil(rem)}s <small class="dt-ann">(${annSign}${ann.toFixed(1)})</small>`;
+      timerEl.textContent = `${Math.ceil(rem)}s`;
+      dtAnnEl.textContent = `(${annSign}${ann.toFixed(1)})`;
       const dtWarn = Math.abs(offset) >= 1.0;
       timerEl.classList.toggle('dt-corrected', dtWarn);
       headerEl.classList.toggle('dt-warn', dtWarn);
       dtOffsetEl.style.display = 'none';
     } else {
       timerEl.textContent = `${Math.ceil(rem)}s`;
+      dtAnnEl.textContent = '';
       timerEl.classList.remove('dt-corrected');
       headerEl.classList.remove('dt-warn');
       dtOffsetEl.style.display = liveMode && dtAutoCorrectCheck.checked ? '' : 'none';
