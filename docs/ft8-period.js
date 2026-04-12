@@ -110,6 +110,13 @@ export class FT8PeriodManager {
     this._dtSamples = [];
     // Seed the FT8-based history so EMA starts from the new offset
     this._dtHistory = Array(this._HIST_LEN).fill(clamped);
+    // Reschedule the pending boundary immediately so the new offset takes
+    // effect from the very next period — not 1–2 periods later.
+    if (this.running && this.boundaryTimeout) {
+      clearTimeout(this.boundaryTimeout);
+      this.boundaryTimeout = null;
+      this._scheduleBoundary();
+    }
     if (this.callbacks.onClockOffset) {
       this.callbacks.onClockOffset(clamped);
     }
