@@ -30,6 +30,7 @@ export class FT8PeriodManager {
     // MIN_SAMPLES are collected the median is used to update the offset.
     // The update is smoothed (EMA) to avoid jumps from spurious outliers.
     this.clockOffsetMs = 0;
+    this._nextFireMs = 0;          // absolute ms when next boundary will fire (set by _scheduleBoundary)
     this._dtSamples = [];          // DT values collected this period
     this._dtHistory  = [];         // smoothed estimates, capped at HIST_LEN
     this._MIN_SAMPLES = 3;         // minimum decoded signals per period
@@ -122,9 +123,13 @@ export class FT8PeriodManager {
   // ── Internal ────────────────────────────────────────────────────────────
 
   _tick() {
-    const { remaining } = this.getCurrentPeriod();
+    // Use actual scheduled fire time so countdown reaches 0 exactly when the
+    // boundary fires, regardless of clockOffsetMs direction or magnitude.
+    const remaining = this._nextFireMs
+      ? Math.max(0, (this._nextFireMs - Date.now()) / 1000)
+      : Math.max(0, this.getCurrentPeriod().remaining);
     if (this.callbacks.onTick) {
-      this.callbacks.onTick(Math.max(0, remaining));
+      this.callbacks.onTick(remaining);
     }
   }
 
@@ -172,6 +177,7 @@ export class FT8PeriodManager {
     // shifted by clockOffsetMs to compensate for local clock error.
     const nextBoundaryMs = (currentPeriod + 1) * 15000;
     const delay = Math.max(0, nextBoundaryMs - now + this.clockOffsetMs);
+    this._nextFireMs = now + delay;  // track actual fire time for accurate countdown
 
     this.boundaryTimeout = setTimeout(async () => {
       if (!this.running) return;

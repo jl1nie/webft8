@@ -1011,17 +1011,15 @@ async function transmit(call1, call2, report, freq) {
 // ── Period manager ──────────────────────────────────────────────────────────
 const periodMgr = new FT8PeriodManager({
   onTick: (rem) => {
+    // rem is already time-until-next-boundary-fire (from _nextFireMs in ft8-period.js).
+    // No ± offset arithmetic needed here — just annotate when correction is active.
     const offset = periodMgr.clockOffsetSec;
     if (Math.abs(offset) > 0.3) {
-      // rem is from Date.now() which is offset-seconds fast/slow.
-      // Real UTC remaining = rem + offset (e.g. clock fast +1.9s → rem is 1.9s short → add it back).
-      // Annotation shows -offset: (-1.9) when clock is +1.9s fast.
-      const corrected = Math.max(0, rem + offset);
-      const ann = -offset;
+      const ann = -offset;   // (-1.9) when clock is +1.9s fast
       const annSign = ann >= 0 ? '+' : '';
-      timerEl.innerHTML = `${Math.ceil(corrected)}s <small class="dt-ann">(${annSign}${ann.toFixed(1)})</small>`;
+      timerEl.innerHTML = `${Math.ceil(rem)}s <small class="dt-ann">(${annSign}${ann.toFixed(1)})</small>`;
       timerEl.classList.add('dt-corrected');
-      dtOffsetEl.style.display = 'none';   // annotation covers this info
+      dtOffsetEl.style.display = 'none';
     } else {
       timerEl.textContent = `${Math.ceil(rem)}s`;
       timerEl.classList.remove('dt-corrected');
