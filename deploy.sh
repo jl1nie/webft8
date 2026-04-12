@@ -5,6 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Ensure pre-commit hook is always active (self-healing: safe to run repeatedly)
+git config core.hooksPath .githooks 2>/dev/null || true
+
 SRC=ft8-web/www
 DST=docs
 
