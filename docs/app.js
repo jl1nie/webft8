@@ -488,17 +488,15 @@ function closeSettings() {
 }
 btnSettings.addEventListener('click', openSettings);
 
-// Mobile detection: NTP Sync is only useful on Android/iOS where the OS
-// may not keep perfect time.  Desktop OS and Tauri native sync via NTP automatically.
+// NTP Sync is useful on any platform — desktop clocks can also drift (VMs, sleep/wake).
 const isMobile = !isTauriMode() && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
-if (!isMobile) btnNtp.style.display = 'none';
 
 function applyDtAutoCorrectUi() {
   const on = dtAutoCorrectCheck.checked;
   periodMgr.setDtAutoCorrect(on);
   // Only show offset display when live AND auto-correct is on AND offset is small
   dtOffsetEl.style.display = (on && liveMode) ? '' : 'none';
-  btnNtp.disabled = !on;
+  // NTP button is independent of FT8 auto-correct — always enabled
   if (!on) {
     dtOffsetEl.textContent = '';
     dtOffsetEl.classList.remove('correcting');
@@ -510,7 +508,7 @@ btnNtp.addEventListener('click', async () => {
   btnNtp.disabled = true;
   btnNtp.textContent = 'Syncing...';
   await syncNtpOffset();
-  btnNtp.disabled = !dtAutoCorrectCheck.checked;
+  btnNtp.disabled = false;
   btnNtp.textContent = 'NTP Sync';
 });
 
