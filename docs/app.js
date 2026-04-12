@@ -143,8 +143,10 @@ function setStatus(text) {
   }
   // Decode counts (e.g. "10d 1783ms") go to snipe-decode-info only — not here
   if (!/^\d+d \d+ms/.test(text)) snipeTxLine.textContent = text;
-  // Show Halt/Reset when TX is queued, active, or halted
-  btnHalt.style.display = (periodMgr.hasTxQueued() || isTx || halted) ? '' : 'none';
+  // Show ■/↺ when TX is queued, active, or QSO in progress
+  const showHalt = periodMgr.hasTxQueued() || isTx || halted || !!qso.dxCall;
+  btnHalt.style.display = showHalt ? '' : 'none';
+  if (showHalt) updateHaltBtn();
 }
 
 const DOM_MAX = 200; // max child elements per list
@@ -613,15 +615,16 @@ wfWrap.addEventListener('contextmenu', async (e) => {
   const rect = wfCanvas.getBoundingClientRect();
   const freq = Math.round(FREQ_MIN + ((e.clientX - rect.left) / rect.width) * (FREQ_MAX - FREQ_MIN));
   snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, freq));
+  // Show BPF target overlay in both Watch and Call modes
+  waterfall.targetLine = snipeBpf;
+  waterfall.noiseWindow = { min: snipeBpf - 250, max: snipeBpf + 250 };
   if (snipePhase === 'call') {
-    waterfall.targetLine = snipeBpf;
     waterfall.freqOffset = snipeBpf - FILTER_CENTER;
-    waterfall.noiseWindow = { min: snipeBpf - 250, max: snipeBpf + 250 };
     await cat.setFreq(snipeDialHz());
   }
   updateSnipeOverlay();
   snipePhaseHint.textContent = snipePhase === 'watch'
-    ? `full-band  DF ${snipeDf} Hz  Target ${snipeBpf} Hz`
+    ? `full-band  BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`
     : `BPF ${snipeBpf} Hz  DF ${snipeDf} Hz`;
   setStatus(`Target: ${snipeBpf} Hz`);
 });
@@ -731,15 +734,7 @@ function updateTxActions() {
     return;
   }
 
-  // QSO active — short DX call button + CQ
-  const tx = qso.getNextTx();
-  if (tx) {
-    const btn = document.createElement('button');
-    btn.className = 'tx-next';
-    btn.textContent = dx; // just DX callsign, not full message
-    btn.addEventListener('click', () => queueTxMsg(tx.call1, tx.call2, tx.report));
-    txActionsEl.appendChild(btn);
-  }
+  // QSO active — CQ + direct state buttons only (DX callsign shown in target field)
   const cqSfx = tx1CqSuffix.value.trim().toUpperCase();
   const cqBtn = document.createElement('button');
   cqBtn.className = 'cq';
@@ -752,61 +747,24 @@ function updateTxActions() {
   });
   txActionsEl.appendChild(cqBtn);
 
-  // ── State nav: manual desync recovery — same row as CQ ─────────────────
-  const fwdLabel = { [QSO_STATE.CALLING]: 'REPORT', [QSO_STATE.REPORT]: 'FINAL' };
-  const bwdLabel = { [QSO_STATE.REPORT]: '← Back', [QSO_STATE.FINAL]: '← Back' };
-
-  if (bwdLabel[state]) {
-    const bwd = document.createElement('button');
-    bwd.className = 'state-nav-btn';
-    bwd.textContent = bwdLabel[state];
-    const tgt = state === QSO_STATE.REPORT ? QSO_STATE.CALLING : QSO_STATE.REPORT;
-    bwd.addEventListener('click', () => {
-      const t = qso.forceState(tgt);
+  // ── State nav: direct-jump to any QSO state (full desync recovery) ──────
+  // Show CALL / REPORT / 73 buttons — current state is highlighted.
+  const stateButtons = [
+    { label: 'CALL',   target: QSO_STATE.CALLING },
+    { label: 'REPORT', target: QSO_STATE.REPORT  },
+    { label: '73',     target: QSO_STATE.FINAL   },
+  ];
+  for (const { label, target } of stateButtons) {
+    const btn = document.createElement('button');
+    btn.className = 'state-nav-btn' + (state === target ? ' current-state' : '');
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      const t = qso.forceState(target);
       if (t) queueTxMsg(t.call1, t.call2, t.report);
       updateTxActions(); updateQsoDisplay();
     });
-    txActionsEl.appendChild(bwd);
+    txActionsEl.appendChild(btn);
   }
-
-  if (fwdLabel[state]) {
-    const fwd = document.createElement('button');
-    fwd.className = 'state-nav-btn';
-    fwd.textContent = fwdLabel[state];
-    const tgt = state === QSO_STATE.CALLING ? QSO_STATE.REPORT : QSO_STATE.FINAL;
-    fwd.addEventListener('click', () => {
-      const t = qso.forceState(tgt);
-      if (t) queueTxMsg(t.call1, t.call2, t.report);
-      updateTxActions(); updateQsoDisplay();
-    });
-    txActionsEl.appendChild(fwd);
-  }
-
-  if (state === QSO_STATE.FINAL) {
-    const done = document.createElement('button');
-    done.className = 'state-nav-btn complete';
-    done.textContent = '✓ Done';
-    done.addEventListener('click', () => {
-      if (qso.dxCall) {
-        qsoLog.add({ dxCall: qso.dxCall, dxGrid: qso.dxGrid,
-          txReport: qso.txReport, rxReport: qso.rxReport,
-          freq: currentMode === 'snipe' ? snipeDf : scoutDf,
-          bandMHz: bandSelect.value, state: QSO_STATE.FINAL });
-      }
-      qso.reset(); periodMgr.cancelTx(); rxSlotEven = null;
-      updateTxActions(); updateQsoDisplay(); setStatus('QSO complete');
-    });
-    txActionsEl.appendChild(done);
-  }
-
-  const rst = document.createElement('button');
-  rst.className = 'state-nav-btn reset';
-  rst.textContent = '↺ Reset';
-  rst.addEventListener('click', () => {
-    qso.reset(); periodMgr.cancelTx(); rxSlotEven = null;
-    updateTxActions(); updateQsoDisplay(); setStatus('QSO reset');
-  });
-  txActionsEl.appendChild(rst);
 }
 
 autoCheck.addEventListener('change', updateTxActions);
@@ -1313,22 +1271,29 @@ periodMgr.callbacks.onTxFire = async (tx) => {
   await transmit(tx.call1, tx.call2, tx.report, tx.freq);
 };
 
-// ── Halt / Reset (progressive: 1st tap = halt TX, 2nd tap = reset QSO) ─────
+// ── Halt / Reset ────────────────────────────────────────────────────────────
+// ■ (TX active/queued) — cancels TX, keeps QSO state
+// ↺ (TX idle)          — logs partial QSO if any, resets to IDLE
 let halted = false;
 
+function updateHaltBtn() {
+  const txBusy = periodMgr.hasTxQueued() || halted;
+  btnHalt.textContent = txBusy ? '■' : '↺';
+}
+
 btnHalt.addEventListener('click', async () => {
-  if (!halted) {
-    // First tap: cancel TX, stop audio output, but keep QSO state
+  if (periodMgr.hasTxQueued() || !halted) {
+    // Cancel TX, stop audio, keep QSO state
     periodMgr.cancelTx();
     audioOut.stop();
     await cat.safePttOff();
     txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
     timerEl.classList.remove('tx-on');
     halted = true;
-    btnHalt.textContent = 'Reset';
-    setStatus('Halted — tap Reset to abandon QSO');
+    updateHaltBtn();
+    setStatus('TX halted — tap ↺ to reset QSO');
   } else {
-    // Second tap: reset QSO to IDLE
+    // Reset QSO, log partial QSO if applicable
     if (qso.state !== QSO_STATE.IDLE && qso.dxCall) {
       qsoLog.add({
         dxCall: qso.dxCall, dxGrid: qso.dxGrid,
@@ -1341,7 +1306,7 @@ btnHalt.addEventListener('click', async () => {
     qso.reset();
     rxSlotEven = null;
     halted = false;
-    btnHalt.textContent = 'Halt';
+    updateHaltBtn();
     updateQsoDisplay();
     setStatus('QSO reset');
   }
@@ -1351,7 +1316,7 @@ btnHalt.addEventListener('click', async () => {
 function clearHalted() {
   if (halted) {
     halted = false;
-    btnHalt.textContent = 'Halt';
+    updateHaltBtn();
   }
 }
 
