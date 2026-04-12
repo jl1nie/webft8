@@ -395,7 +395,6 @@ function setMode(mode) {
   tabSnipe.classList.toggle('active', mode === 'snipe');
   if (mode === 'snipe') { unreadSnipe = 0; badgeSnipe.style.display = 'none'; }
   resizeCanvas();
-  waterfall.clear();
   waterfall.dfLine = mode === 'scout' ? scoutDf : snipeDf;
   waterfall.targetLine = (mode === 'snipe' && snipePhase === 'call') ? snipeBpf : null;
   waterfall.freqOffset = (mode === 'snipe' && snipePhase === 'call') ? (snipeBpf - FILTER_CENTER) : 0;
@@ -605,7 +604,6 @@ function addChatMsg(type, time, text, snr, actionCb, freq, dt) {
 }
 
 // ── QSO display update ─────────────────────────────────────────────────────
-const snipeRxList = document.getElementById('snipe-rx-list');
 
 function updateQsoDisplay() {
   const state = qso.state;
@@ -990,7 +988,6 @@ const periodMgr = new FT8PeriodManager({
         sep.className = 'period-sep';
         sep.textContent = utc;
         chatList.appendChild(sep);
-        snipeRxList.appendChild(sep.cloneNode(true));
         sepInserted = true;
       }
 
@@ -1023,9 +1020,17 @@ const periodMgr = new FT8PeriodManager({
           const tx = qso.callStation(clickCall);
           apCall = clickCall;
           snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, Math.round(freq)));
-          snipeDf = snipeBpf;
+          if (snipePhase !== 'call') snipeDf = snipeBpf;
           clearTargetCards();
           if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
+          // In Call phase: update BPF center and VFO to track the tapped station
+          if (currentMode === 'snipe' && snipePhase === 'call') {
+            waterfall.targetLine = snipeBpf;
+            waterfall.freqOffset = snipeBpf - FILTER_CENTER;
+            waterfall.noiseWindow = { min: snipeBpf - 250, max: snipeBpf + 250 };
+            cat.setFreq(snipeDialHz());
+          }
+          updateSnipeOverlay();
         } : null, freq, dt);
 
         // Snipe view
@@ -1174,91 +1179,26 @@ const periodMgr = new FT8PeriodManager({
       }
     }
 
-    // Snipe: unified RX list — append all decoded messages every period.
-    // No Watch/Call filtering: both phases share the same list so history
-    // is preserved across phase switches. Target messages are highlighted.
-    if (currentMode === 'snipe') {
+    // Snipe: track who DX responded to (Picked summary)
+    // Decoded from DX's TX period — always visible. Also count unread badge.
+    if (currentMode === 'snipe' && apCall && msgs.length > 0) {
       const myCall = myCallInput.value.toUpperCase();
-      const pickedUp = [];   // who DX responded to (DX picked up)
-
+      const pickedUp = [];
       for (const m of msgs) {
-        try {
-        const upper = m.message.toUpperCase();
-        const isTarget = apCall && upper.includes(apCall);
-
-        // Track callers of current target
-        if (apCall) {
-          const words = m.message.split(/\s+/);
-          const w0 = words[0]?.toUpperCase();
-          const w1 = words[1]?.toUpperCase();
-          // DX responded to someone → "picked up"
-          if (w0 === apCall && w1 && w1 !== myCall) {
-            pickedUp.push({ call: words[1], freq: Math.round(m.freq_hz) });
-          }
-        }
-
-        const div = document.createElement('div');
-        div.className = 'chat-msg rx';
-        if (isTarget) div.classList.add('qso-active');
-        const snrV = Math.round(m.snr_db);
-        // Escape HTML special chars so FT8 hash messages like "R065Z <...> RR73"
-        // are not parsed as HTML tags (critical for EdgeWebView2 / Tauri)
-        const safeMsg = m.message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const dtStr = m.dt_sec != null ? `${m.dt_sec >= 0 ? '+' : ''}${m.dt_sec.toFixed(1)}` : '';
-        div.innerHTML = `<span class="col-freq">${Math.round(m.freq_hz)}</span>
-          <span class="col-dt">${dtStr}</span>
-          <span class="col-snr">${snrV >= 0 ? '+' : ''}${snrV}</span>
-          <span class="text">${safeMsg}</span>`;
-        div.style.cursor = 'pointer';
-        div.addEventListener('click', () => {
-          const words = m.message.split(/\s+/);
-          const calls = [];
-          for (const w of words) {
-            if (['CQ','DE','QRZ','DX'].includes(w)) continue;
-            if (w.length >= 3 && /[0-9]/.test(w)) calls.push(w);
-            if (calls.length >= 2) break;
-          }
-          const isCq = /^(CQ|DE|QRZ)\b/.test(m.message);
-          const target = isCq ? calls[0] : (calls[1] || calls[0] || '');
-          if (target) {
-            qso.setMyInfo(myCallInput.value, myGridInput.value);
-            const tx = qso.callStation(target);
-            apCall = target;
-            snipeDxCall.textContent = target;
-            clearTargetCards();
-            if (tx) queueTxMsg(tx.call1, tx.call2, tx.report);
-            // Set BPF center to clicked station's frequency
-            snipeBpf = Math.max(FREQ_MIN + 250, Math.min(FREQ_MAX - 250, Math.round(m.freq_hz)));
-            if (snipePhase === 'call') {
-              waterfall.targetLine = snipeBpf;
-              waterfall.freqOffset = snipeBpf - FILTER_CENTER;
-              waterfall.noiseWindow = { min: snipeBpf - 250, max: snipeBpf + 250 };
-              cat.setFreq(snipeDialHz());
-            }
-            updateSnipeOverlay();
-          }
-        });
-        div.classList.add('new');
-        div.addEventListener('animationend', () => div.classList.remove('new'), { once: true });
-        snipeRxList.appendChild(div);
-        } catch (err) {
-          console.error('snipe render error:', err, m);
+        const words = m.message.split(/\s+/);
+        const w0 = words[0]?.toUpperCase();
+        const w1 = words[1]?.toUpperCase();
+        if (w0 === apCall && w1 && w1 !== myCall) {
+          pickedUp.push({ call: words[1], freq: Math.round(m.freq_hz) });
         }
       }
-
-      if (msgs.length > 0) {
-        pruneList(snipeRxList);
-        snipeRxList.scrollTop = snipeRxList.scrollHeight;
-        addUnread('snipe');
-      }
-
-      // Show picked-up summary (DX responded to someone in this period)
-      if (apCall && pickedUp.length > 0) {
+      if (pickedUp.length > 0) {
         const fmt = ({ call, freq }) => `${call}@${freq}`;
         snipeCallersEl.textContent = `Picked: ${pickedUp.map(fmt).join(' ')}`;
-      } else if (apCall) {
+      } else {
         snipeCallersEl.textContent = '';
       }
+      addUnread('snipe');
     }
 
     waterfall.drawLabels(msgs);

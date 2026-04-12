@@ -98,9 +98,9 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ── Message list (shared Scout & Snipe) ────────────────────────────── */
-  #scout-view { flex: 1; overflow-y: auto; display: none; }
-  .scout-mode #scout-view { display: flex; flex-direction: column; }
-  .chat-list { flex: 1; overflow-y: auto; padding: var(--sp-xs) var(--sp-sm); }
+  #scout-view { display: none; }
+  .scout-mode #scout-view { display: block; }
+  .chat-list { padding: var(--sp-xs) var(--sp-sm); }
   .chat-msg { padding: var(--sp-xs) var(--sp-sm); margin-bottom: 2px; border-radius: var(--radius-md);
     font-size: var(--fs-base); display: flex; align-items: baseline; gap: var(--sp-xs); }
   .chat-msg.rx { background: var(--c-surface); border-left: 3px solid var(--c-accent); }
@@ -122,8 +122,12 @@
   .chat-msg .text .call { color: var(--c-warn); font-weight: bold; }
   .chat-msg .text .target { color: var(--c-success); font-weight: bold; }
 
+  /* ── Shared RX list ─────────────────────────────────────────────────── */
+  #chat-list { flex: 1; overflow-y: auto; display: none; }
+  .scout-mode #chat-list, .snipe-mode #chat-list { display: block; }
+
   /* ── Snipe view ─────────────────────────────────────────────────────── */
-  #snipe-view { flex: 1; overflow-y: auto; display: none; padding: var(--sp-xs) var(--sp-sm); }
+  #snipe-view { flex-shrink: 0; display: none; padding: var(--sp-xs) var(--sp-sm) 0; }
   .snipe-mode #snipe-view { display: flex; flex-direction: column; }
   .snipe-target { background: var(--c-surface); border: 1px solid var(--c-border);
     border-radius: var(--radius-md); padding: var(--sp-sm); margin-bottom: var(--sp-xs); }
@@ -371,17 +375,10 @@
   <div class="dx-info" id="scout-target-info"></div>
 </div>
 
-<!-- Scout view: chat-style message flow -->
-<div id="scout-view">
-  <div class="chat-list" id="chat-list">
-    <div class="empty-state" id="empty-state">
-      <div style="font-size:var(--fs-lg);margin-bottom:var(--sp-md)">Tap <b>WebFT8</b> to start</div>
-      <div id="diag-info"></div>
-    </div>
-  </div>
-</div>
+<!-- Scout-specific status (empty-state shown here via JS) -->
+<div id="scout-view"></div>
 
-<!-- Snipe view: target-focused -->
+<!-- Snipe view: target header only (list is shared below) -->
 <div id="snipe-view">
   <div style="display:flex;align-items:center;gap:var(--sp-xs);margin-bottom:var(--sp-xs)">
     <div class="snipe-phase-tabs">
@@ -407,7 +404,14 @@
   </div>
   <div id="snipe-tx-line" style="font-size:var(--fs-sm);color:var(--c-warn);margin:var(--sp-xs) 0"></div>
   <div class="snipe-band" id="snipe-band"></div>
-  <div class="chat-list" id="snipe-rx-list" style="flex:1;overflow-y:auto;margin-top:var(--sp-xs)"></div>
+</div>
+
+<!-- Shared RX list — Scout and Snipe both use this -->
+<div class="chat-list" id="chat-list">
+  <div class="empty-state" id="empty-state">
+    <div style="font-size:var(--fs-lg);margin-bottom:var(--sp-md)">Tap <b>WebFT8</b> to start</div>
+    <div id="diag-info"></div>
+  </div>
 </div>
 
 <!-- Bottom bar -->
