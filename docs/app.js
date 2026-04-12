@@ -385,7 +385,6 @@ capture._onDisconnect = () => {
   liveMode = false;
   updateLiveUI();
   setStatus('Audio disconnected');
-  showToast('Audio disconnected');
 };
 // RX level meter from AudioWorklet peak reports.
 capture.onPeak = (level) => {
@@ -396,7 +395,6 @@ cat.onDisconnect = () => {
   btnCat.textContent = 'Connect';
   catStatusEl.textContent = 'disconnected';
   setStatus('CAT disconnected');
-  showToast('CAT disconnected');
   // BLE GPS queries stop automatically (BleTransport.disconnect clears timer)
 };
 
