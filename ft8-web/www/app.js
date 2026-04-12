@@ -50,6 +50,7 @@ import { AudioOutput } from './audio-output.js';
 import { FT8PeriodManager } from './ft8-period.js';
 import { QsoManager, QSO_STATE } from './qso.js';
 import { CatController, loadRigProfiles, getRigProfiles, isTauriMode, listSerialPorts } from './cat.js';
+import { GpsNmeaSync } from './gps-nmea.js';
 import { QsoLog } from './qso-log.js';
 
 // ── Elements ────────────────────────────────────────────────────────────────
@@ -389,6 +390,7 @@ cat.onDisconnect = () => {
   catStatusEl.textContent = 'disconnected';
   setStatus('CAT disconnected');
   showToast('CAT disconnected');
+  // BLE GPS queries stop automatically (BleTransport.disconnect clears timer)
 };
 
 // ── Mode switching ──────────────────────────────────────────────────────────
@@ -496,6 +498,38 @@ btnNtp.addEventListener('click', async () => {
   await syncNtpOffset();
   btnNtp.disabled = !dtAutoCorrectCheck.checked;
   btnNtp.textContent = 'NTP Sync';
+});
+
+// ── GPS NMEA sync (IC-705 USB-B) ───────────────────────────────────────────
+const btnGpsSync = document.getElementById('btn-gps-sync');
+let gpsSync = null;
+
+// Hide GPS button when Web Serial is unavailable or in Tauri desktop mode
+if (!GpsNmeaSync.isSupported() || isTauriMode()) {
+  btnGpsSync.style.display = 'none';
+}
+
+function _applyGpsOffset(offsetSec, label) {
+  periodMgr.setClockOffset(offsetSec);
+  const sign = offsetSec >= 0 ? '+' : '';
+  setStatus(`${label}: ${sign}${offsetSec.toFixed(2)} s`);
+}
+
+btnGpsSync.addEventListener('click', async () => {
+  if (gpsSync) {
+    await gpsSync.disconnect();
+    gpsSync = null;
+    btnGpsSync.textContent = 'GPS Sync';
+    return;
+  }
+  gpsSync = new GpsNmeaSync(_applyGpsOffset);
+  try {
+    await gpsSync.connect();
+    btnGpsSync.textContent = 'GPS ●';
+  } catch (e) {
+    gpsSync = null;
+    setStatus('GPS: ' + (e.message || e));
+  }
 });
 settingsOverlay.addEventListener('click', closeSettings);
 document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
@@ -1467,6 +1501,13 @@ btnCatBle.addEventListener('click', async () => {
     btnCatBle.textContent = 'Disconnect';
     catStatusEl.textContent = 'BLE connected (IC-705)';
     localStorage.setItem('webft8-rig', rigId);
+
+    // Enable GPS UTC sync via CI-V position query (0x23 0x00) over BLE
+    if (cat.ble && dtAutoCorrectCheck.checked) {
+      cat.ble.onGpsTime = (offsetSec) => _applyGpsOffset(offsetSec, 'GPS(BLE)');
+      cat.ble._startGpsQuery();
+    }
+
     await rigSetup();
   } catch (e) {
     catStatusEl.textContent = `BLE error: ${e.message || e}`;
