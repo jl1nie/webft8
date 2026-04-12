@@ -319,9 +319,12 @@ Open/close with the gear icon. Organized as an accordion with 5 sections (ordere
 | **RX / TX Gain** | Input/output level sliders + level meters |
 | **Test Tone** | Continuous carrier for ALC adjustment (CAT PTT auto) |
 | **Start Audio** | Start or stop live decoding (also via logo tap) |
-| **Rig Model** | Rig selector dropdown (from rig-profiles.json) |
-| **Connect Rig** | Connect via Web Serial. Desktop Chrome / Edge |
-| **Connect BLE** | Connect to IC-705 via Web Bluetooth. Mobile supported (see below) |
+| **Transport** | Connection type (Serial / BLE). Serial-only on platforms without Web Bluetooth |
+| **Rig Model** | Rig selector dropdown (shown for Serial only) |
+| **Port** | COM port selector (Tauri desktop only) |
+| **Connect** | Connect/disconnect using the selected transport. BLE is IC-705 only |
+| **GPS Sync** | Sync UTC from IC-705 USB-B NMEA or BLE CI-V |
+| **NTP Sync** | Sync time via HTTP (**mobile only**) |
 
 ### Log
 
@@ -348,7 +351,6 @@ Open/close with the gear icon. Organized as an accordion with 5 sections (ordere
 | **A Priori (AP)** | AP decoding. Default ON |
 | **CQ reply: best SNR** | ON: respond to strongest CQ. OFF: first decoded |
 | **DT auto-correct** | ON: automatically corrects the clock offset using the median DT of decoded FT8 signals. Shows `DT±X.X` in the header. Default ON |
-| **NTP Sync** | Sync time via HTTP and reset the clock offset. **Shown on mobile (Android/iOS) only.** Disabled when DT auto-correct is OFF |
 | **Waterfall FFT** | Toggle waterfall display |
 | **Open WAV File** | Select a WAV file for offline analysis |
 
@@ -415,9 +417,10 @@ Uses the Web Serial API to control rig PTT, filter, frequency, and mode via USB.
 **Connection steps:**
 
 1. Connect your rig to the PC via USB cable
-2. Select **Rig Model** in the CAT section of the settings panel
-3. **Connect CAT** -- browser serial port selection dialog opens
-4. Select the port -- connected
+2. In the settings panel **Rig** section, select **Transport: Serial** (default)
+3. Select **Rig Model**
+4. Click **Connect** — the browser serial port dialog opens (Tauri: select from dropdown)
+5. Select the port — connected
 
 ### IC-705 BLE Connection (Mobile / Wireless)
 
@@ -430,16 +433,16 @@ The IC-705 supports BLE (Bluetooth Low Energy) for CI-V CAT commands. This lets 
 BLE requires no OS-level pairing. Just follow these steps:
 
 1. **On the IC-705:** MENU → **SET** → **Bluetooth** → **Bluetooth** = **ON**, then tap **Pairing from Other Device** to start waiting
-2. **In WebFT8 settings** (gear icon) → **Rig** section, select your rig and tap **Connect BLE**
-3. Select "ICOM BT(IC-705)" from the browser's device dialog
-4. Status shows "connected" — done!
+2. **In WebFT8 settings** (gear icon) → **Rig** section, select **Transport: BLE**
+3. Tap **Connect** — the browser device selection dialog opens
+4. Select "ICOM BT(IC-705)" — status shows "connected" — done!
 
 #### Subsequent Connections
 
 Once paired, the IC-705 remembers the device. On the next session:
 
 1. Ensure IC-705 Bluetooth is ON (it usually stays on)
-2. In WebFT8, tap the logo (or **Connect BLE** in settings)
+2. In WebFT8, tap the logo (or settings → **Transport: BLE** → **Connect**)
 3. Select the IC-705 from the dialog — connects in seconds
 
 #### Requirements

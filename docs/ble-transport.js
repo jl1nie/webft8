@@ -6,7 +6,7 @@ const CHAR_UUID    = '14cf8002-1ec2-d408-1b04-2eb270f14203';
 
 // Pairing constants
 const DEVICE_UUID = '00001101-0000-1000-8000-00805F9B34FB'; // 36 chars ASCII
-const DEVICE_NAME = 'rs-ft8n BLE\x00\x00\x00\x00\x00';      // 16 chars padded
+const DEVICE_NAME = 'WebFT8 BLE\x00\x00\x00\x00\x00\x00';    // 16 chars padded
 const PAIR_TOKEN  = [0xEE, 0x39, 0x09, 0x10];
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }

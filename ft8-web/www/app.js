@@ -107,7 +107,6 @@ const apCheck = document.getElementById('ap-mode');
 const dtAutoCorrectCheck = document.getElementById('dt-auto-correct');
 const strictnessSelect = document.getElementById('decode-strictness');
 const btnCat = document.getElementById('btn-cat');
-const btnCatBle = document.getElementById('btn-cat-ble');
 const catStatusEl = document.getElementById('cat-status');
 const btnStart = document.getElementById('btn-start');
 
@@ -385,8 +384,7 @@ capture.onPeak = (level) => {
   rxMeter.style.width = pct + '%';
 };
 cat.onDisconnect = () => {
-  btnCat.textContent = 'Connect Rig';
-  btnCatBle.textContent = 'Connect BLE';
+  btnCat.textContent = 'Connect';
   catStatusEl.textContent = 'disconnected';
   setStatus('CAT disconnected');
   showToast('CAT disconnected');
@@ -1427,10 +1425,38 @@ btnTestTone.addEventListener('click', async () => {
 
 // ── CAT ─────────────────────────────────────────────────────────────────────
 
-// Tauri mode: show COM port selector and populate it
 const catPortField = document.getElementById('cat-port-field');
 const catPortSelect = document.getElementById('cat-port');
 const btnCatRefresh = document.getElementById('btn-cat-refresh');
+const transportSerialRadio = document.getElementById('transport-serial');
+const transportBleRadio = document.getElementById('transport-ble');
+const transportBleLabel = document.getElementById('transport-ble-label');
+const rigModelField = document.getElementById('rig-model-field');
+const bleRigLabel = document.getElementById('ble-rig-label');
+
+/** Update UI visibility based on selected transport and environment. */
+function applyTransportUi() {
+  const isBle = transportBleRadio.checked;
+  rigModelField.style.display = isBle ? 'none' : '';
+  bleRigLabel.style.display = isBle ? '' : 'none';
+  catPortField.style.display = (!isBle && isTauriMode()) ? '' : 'none';
+}
+
+// BLE radio: hide entirely if BLE not supported
+if (!CatController.isBleSupported()) {
+  transportBleLabel.style.display = 'none';
+}
+
+// Restore saved transport
+const savedTransport = localStorage.getItem('webft8-transport');
+if (savedTransport === 'ble' && CatController.isBleSupported()) {
+  transportBleRadio.checked = true;
+}
+
+applyTransportUi();
+
+transportSerialRadio.addEventListener('change', applyTransportUi);
+transportBleRadio.addEventListener('change', applyTransportUi);
 
 async function refreshCatPorts() {
   const ports = await listSerialPorts();
@@ -1447,7 +1473,6 @@ async function refreshCatPorts() {
 }
 
 if (isTauriMode()) {
-  catPortField.style.display = '';
   refreshCatPorts();
   btnCatRefresh.addEventListener('click', refreshCatPorts);
   // Tauri WebView shows a native "Save image" context menu on canvas right-clicks.
@@ -1468,67 +1493,66 @@ async function rigSetup() {
 btnCat.addEventListener('click', async () => {
   if (cat.connected) {
     await cat.disconnect();
-    btnCat.textContent = 'Connect Rig';
+    btnCat.textContent = 'Connect';
     catStatusEl.textContent = 'disconnected';
     return;
   }
-  if (!CatController.isSerialSupported()) {
-    catStatusEl.textContent = 'Web Serial not supported';
-    return;
-  }
-  try {
-    const rigId = document.getElementById('rig-model').value;
-    if (!rigId) { catStatusEl.textContent = 'Select a rig model'; return; }
 
-    if (isTauriMode()) {
-      const portName = catPortSelect.value;
-      if (!portName) { catStatusEl.textContent = 'Select a COM port'; return; }
-      await cat.connectTauri(rigId, portName);
-      localStorage.setItem('webft8-cat-port', portName);
-    } else {
-      await cat.requestPort();
-      await cat.connect(rigId);
+  const isBle = transportBleRadio.checked;
+
+  if (isBle) {
+    // ── BLE path (IC-705 only) ────────────────────────────────────────────
+    try {
+      const rigId = 'ic705';
+      catStatusEl.textContent = 'pairing...';
+      await cat.connectBle(rigId);
+      btnCat.textContent = 'Disconnect';
+      catStatusEl.textContent = 'BLE connected (IC-705)';
+      localStorage.setItem('webft8-rig', rigId);
+      localStorage.setItem('webft8-transport', 'ble');
+
+      // Enable GPS UTC sync via CI-V position query (0x23 0x00) over BLE
+      if (cat.ble && dtAutoCorrectCheck.checked) {
+        cat.ble.onGpsTime = (offsetSec) => _applyGpsOffset(offsetSec, 'GPS(BLE)');
+        cat.ble._startGpsQuery();
+      }
+
+      await rigSetup();
+    } catch (e) {
+      btnCat.textContent = 'Connect';
+      catStatusEl.textContent = `BLE error: ${e.message || e}`;
     }
-
-    btnCat.textContent = 'Disconnect';
-    const profiles = getRigProfiles();
-    catStatusEl.textContent = `connected (${profiles[rigId]?.label || rigId})`;
-    localStorage.setItem('webft8-rig', rigId);
-    await rigSetup();
-  } catch (e) {
-    await cat.disconnect();
-    btnCat.textContent = 'Connect Rig';
-    catStatusEl.textContent = `error: ${e.message || e}`;
-  }
-});
-
-// ── CAT BLE ───────────────────────────────────────────────────────────────
-btnCatBle.addEventListener('click', async () => {
-  if (cat.connected) {
-    await cat.disconnect();
-    btnCatBle.textContent = 'Connect BLE';
-    catStatusEl.textContent = 'disconnected';
-    return;
-  }
-  try {
-    // BLE is IC-705 only — auto-select rig profile
-    const rigId = 'ic705';
-    document.getElementById('rig-model').value = rigId;
-    catStatusEl.textContent = 'pairing...';
-    await cat.connectBle(rigId);
-    btnCatBle.textContent = 'Disconnect';
-    catStatusEl.textContent = 'BLE connected (IC-705)';
-    localStorage.setItem('webft8-rig', rigId);
-
-    // Enable GPS UTC sync via CI-V position query (0x23 0x00) over BLE
-    if (cat.ble && dtAutoCorrectCheck.checked) {
-      cat.ble.onGpsTime = (offsetSec) => _applyGpsOffset(offsetSec, 'GPS(BLE)');
-      cat.ble._startGpsQuery();
+  } else {
+    // ── Serial path (Web Serial / Tauri) ──────────────────────────────────
+    if (!CatController.isSerialSupported()) {
+      catStatusEl.textContent = 'Web Serial not supported';
+      return;
     }
+    try {
+      const rigId = document.getElementById('rig-model').value;
+      if (!rigId) { catStatusEl.textContent = 'Select a rig model'; return; }
 
-    await rigSetup();
-  } catch (e) {
-    catStatusEl.textContent = `BLE error: ${e.message || e}`;
+      if (isTauriMode()) {
+        const portName = catPortSelect.value;
+        if (!portName) { catStatusEl.textContent = 'Select a COM port'; return; }
+        await cat.connectTauri(rigId, portName);
+        localStorage.setItem('webft8-cat-port', portName);
+      } else {
+        await cat.requestPort();
+        await cat.connect(rigId);
+      }
+
+      btnCat.textContent = 'Disconnect';
+      const profiles = getRigProfiles();
+      catStatusEl.textContent = `connected (${profiles[rigId]?.label || rigId})`;
+      localStorage.setItem('webft8-rig', rigId);
+      localStorage.setItem('webft8-transport', 'serial');
+      await rigSetup();
+    } catch (e) {
+      await cat.disconnect();
+      btnCat.textContent = 'Connect';
+      catStatusEl.textContent = `error: ${e.message || e}`;
+    }
   }
 });
 
@@ -1751,6 +1775,7 @@ init().then(async () => {
         await cat.connectTauri(savedRig, savedPort);
         btnCat.textContent = 'Disconnect';
         catStatusEl.textContent = `connected (${profiles[savedRig]?.label || savedRig})`;
+        localStorage.setItem('webft8-transport', 'serial');
         await rigSetup();
       } catch (e) {
         catStatusEl.textContent = `auto-connect failed: ${e.message || e}`;
@@ -1758,15 +1783,13 @@ init().then(async () => {
     }
   }
 
-  // Show CAT / BLE buttons based on browser support
-  if (CatController.isSerialSupported()) {
-    btnCat.style.display = '';
-  } else {
+  // Show/hide Connect button based on whether any transport is supported
+  if (!CatController.isSerialSupported() && !CatController.isBleSupported()) {
     btnCat.style.display = 'none';
   }
-  if (CatController.isBleSupported()) {
-    btnCatBle.style.display = '';
-  }
+
+  // Re-apply transport UI now that profiles are loaded
+  applyTransportUi();
 
   try {
     const devices = await capture.enumerateDevices();
