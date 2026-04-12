@@ -64,10 +64,10 @@
   .timer { font-size: var(--fs-base); color: var(--c-snr); font-variant-numeric: tabular-nums;
     min-width: 2.5em; text-align: right; flex-shrink: 0; transition: color .2s; }
   .timer.dt-corrected { color: var(--c-warn, #f90); }
-  .timer .dt-ann { font-size: 0.6em; opacity: 0.75; font-weight: normal; }
+  .timer .dt-ann { font-size: 0.65em; opacity: 0.8; font-weight: normal; font-variant-numeric: normal; }
   .timer.tx-on { color: var(--c-danger); font-weight: bold; }
   .dt-offset { font-size: var(--fs-xs); color: var(--c-text2); flex-shrink: 0;
-    font-variant-numeric: tabular-nums; min-width: 4em; text-align: center; }
+    min-width: 4em; text-align: center; }
   .dt-offset.correcting { color: var(--c-warn, #f90); }
   .header .gear { font-size: var(--fs-lg); color: var(--c-text2); cursor: pointer;
     padding: var(--sp-xs); border: 1px solid var(--c-border); border-radius: var(--radius-sm);
@@ -101,8 +101,7 @@
   .dot.current { background: var(--c-accent); border-color: var(--c-accent); }
   #scout-status .state, .qso-progress .label { color: var(--c-accent); font-weight: bold; }
   #scout-status .dx { color: var(--c-success); font-weight: bold; }
-  .decode-info { font-size: var(--fs-xs); color: var(--c-text2);
-    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .decode-info { font-size: var(--fs-xs); color: var(--c-text2); white-space: nowrap; }
   #scout-status .decode-info { margin-left: auto; font-size: var(--fs-xs);
     flex-shrink: 0; }
   #scout-status .tx-queue { color: var(--c-danger); font-weight: bold; font-size: var(--fs-sm);
