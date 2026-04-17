@@ -6,6 +6,8 @@
 
 pub mod downsample;
 pub mod resample;
+pub mod subtract;
 
 pub use downsample::{DownsampleCfg, build_fft_cache, downsample, downsample_cached};
 pub use resample::{resample_f32_to_12k, resample_to_12k};
+pub use subtract::{SubtractCfg, subtract_tones};
