@@ -107,85 +107,93 @@ pub fn process_candidate_ap<P: Protocol>(
         0.0
     };
 
-    let cs_eq_opt;
-    let cs_ref: &[Complex<f32>] = match eq_mode {
-        EqMode::Off => &cs_raw,
-        EqMode::Local | EqMode::Adaptive => {
-            let mut cs_eq = cs_raw.clone();
-            equalize_local::<P>(&mut cs_eq);
-            cs_eq_opt = cs_eq;
-            &cs_eq_opt
-        }
-    };
-
     let fec = P::Fec::default();
-    let llr_set = compute_llr::<P>(cs_ref);
-    let variants: Vec<(&Vec<f32>, u8)> = match depth {
-        DecodeDepth::Bp => vec![(&llr_set.llra, 0)],
-        DecodeDepth::BpAll | DecodeDepth::BpAllOsd => vec![
-            (&llr_set.llra, 0),
-            (&llr_set.llrb, 1),
-            (&llr_set.llrc, 2),
-            (&llr_set.llrd, 3),
-        ],
+
+    // Prepare both EQ and non-EQ views of the symbol spectra — true
+    // adaptive mode tries each in turn. At low SNR the Wiener equaliser
+    // can amplify noise when Costas pilots are themselves noise-dominated,
+    // so having the non-EQ fallback available is essential.
+    let cs_eq = {
+        let mut v = cs_raw.clone();
+        equalize_local::<P>(&mut v);
+        v
+    };
+    let try_order: &[(&[Complex<f32>], bool)] = match eq_mode {
+        EqMode::Off => &[(&cs_raw, false)],
+        EqMode::Local => &[(&cs_eq, true)],
+        EqMode::Adaptive => &[(&cs_eq, true), (&cs_raw, false)],
     };
 
-    // ── Plain BP first, in case the signal is already clear ────────────
-    for (llr, pass_id) in &variants {
-        let bp_opts = FecOpts { bp_max_iter: 30, osd_depth: 0, ap_mask: None };
-        if let Some(r) = fec.decode_soft(llr, &bp_opts) {
-            if let Some(res) = finalise_result::<P>(
-                &r, cand, &refined, sync_cv, *pass_id, cs_ref, None, &fec,
-            ) {
-                return Some(res);
+    for (cs_ref, _used_eq) in try_order {
+        let cs_ref: &[Complex<f32>] = cs_ref;
+        let llr_set = compute_llr::<P>(cs_ref);
+        let variants: Vec<(&Vec<f32>, u8)> = match depth {
+            DecodeDepth::Bp => vec![(&llr_set.llra, 0)],
+            DecodeDepth::BpAll | DecodeDepth::BpAllOsd => vec![
+                (&llr_set.llra, 0),
+                (&llr_set.llrb, 1),
+                (&llr_set.llrc, 2),
+                (&llr_set.llrd, 3),
+            ],
+        };
+
+        // ── Plain BP first, in case the signal is already clear ────────
+        for (llr, pass_id) in &variants {
+            let bp_opts = FecOpts { bp_max_iter: 30, osd_depth: 0, ap_mask: None };
+            if let Some(r) = fec.decode_soft(llr, &bp_opts) {
+                if let Some(res) = finalise_result::<P>(
+                    &r, cand, &refined, sync_cv, *pass_id, cs_ref, None, &fec,
+                ) {
+                    return Some(res);
+                }
             }
         }
-    }
 
-    // ── AP-assisted passes ─────────────────────────────────────────────
-    //
-    // Integer-timing retry (±2 downsampled samples around the refined
-    // peak) was measured to deliver zero threshold improvement at 5×
-    // runtime — the -18 dB floor is LLR-dominated, not timing-dominated.
-    // See snr_sweep bench history 2026-04-18.
-    if let Some(hint) = ap_hint {
-        if hint.has_info() {
-            for (ap_cfg, pass_id) in ap_passes(hint) {
-                let (mask, values) = ap_bits_for::<P>(&ap_cfg);
-                let locked = mask.iter().filter(|&&m| m != 0).count();
-                let max_errors = ap_max_errors(strictness, locked);
+        // ── AP-assisted passes ─────────────────────────────────────────
+        //
+        // Integer-timing retry (±2 downsampled samples around the
+        // refined peak) was measured to deliver zero threshold
+        // improvement at 5× runtime — the -18 dB floor is LLR-dominated,
+        // not timing-dominated. See snr_sweep bench history 2026-04-18.
+        if let Some(hint) = ap_hint {
+            if hint.has_info() {
+                for (ap_cfg, pass_id) in ap_passes(hint) {
+                    let (mask, values) = ap_bits_for::<P>(&ap_cfg);
+                    let locked = mask.iter().filter(|&&m| m != 0).count();
+                    let max_errors = ap_max_errors(strictness, locked);
 
-                for (llr, _) in &variants {
-                    let ap_opts = FecOpts {
-                        bp_max_iter: 30,
-                        osd_depth: 0,
-                        ap_mask: Some((&mask, &values)),
-                    };
-                    if let Some(r) = fec.decode_soft(llr, &ap_opts) {
-                        if r.hard_errors < max_errors {
-                            if let Some(res) = finalise_result::<P>(
-                                &r, cand, &refined, sync_cv, pass_id, cs_ref,
-                                Some(&ap_cfg), &fec,
-                            ) {
-                                return Some(res);
+                    for (llr, _) in &variants {
+                        let ap_opts = FecOpts {
+                            bp_max_iter: 30,
+                            osd_depth: 0,
+                            ap_mask: Some((&mask, &values)),
+                        };
+                        if let Some(r) = fec.decode_soft(llr, &ap_opts) {
+                            if r.hard_errors < max_errors {
+                                if let Some(res) = finalise_result::<P>(
+                                    &r, cand, &refined, sync_cv, pass_id, cs_ref,
+                                    Some(&ap_cfg), &fec,
+                                ) {
+                                    return Some(res);
+                                }
                             }
                         }
-                    }
-                    if depth == DecodeDepth::BpAllOsd {
-                        let depths: &[u32] = if locked >= 55 { &[2, 3] } else { &[2] };
-                        for &od in depths {
-                            let osd_opts = FecOpts {
-                                bp_max_iter: 30,
-                                osd_depth: od,
-                                ap_mask: Some((&mask, &values)),
-                            };
-                            if let Some(r) = fec.decode_soft(llr, &osd_opts) {
-                                if r.hard_errors < max_errors {
-                                    if let Some(res) = finalise_result::<P>(
-                                        &r, cand, &refined, sync_cv, pass_id, cs_ref,
-                                        Some(&ap_cfg), &fec,
-                                    ) {
-                                        return Some(res);
+                        if depth == DecodeDepth::BpAllOsd {
+                            let depths: &[u32] = if locked >= 55 { &[2, 3] } else { &[2] };
+                            for &od in depths {
+                                let osd_opts = FecOpts {
+                                    bp_max_iter: 30,
+                                    osd_depth: od,
+                                    ap_mask: Some((&mask, &values)),
+                                };
+                                if let Some(r) = fec.decode_soft(llr, &osd_opts) {
+                                    if r.hard_errors < max_errors {
+                                        if let Some(res) = finalise_result::<P>(
+                                            &r, cand, &refined, sync_cv, pass_id,
+                                            cs_ref, Some(&ap_cfg), &fec,
+                                        ) {
+                                            return Some(res);
+                                        }
                                     }
                                 }
                             }
