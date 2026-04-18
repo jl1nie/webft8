@@ -109,19 +109,26 @@ pub fn process_candidate_ap<P: Protocol>(
 
     let fec = P::Fec::default();
 
-    // Prepare both EQ and non-EQ views of the symbol spectra — true
-    // adaptive mode tries each in turn. At low SNR the Wiener equaliser
-    // can amplify noise when Costas pilots are themselves noise-dominated,
-    // so having the non-EQ fallback available is essential.
+    // Prepare EQ / non-EQ views of the symbol spectra. The non-EQ fallback
+    // inside `EqMode::Adaptive` doubles per-candidate cost for only a
+    // marginal gain (~1/20 extra decodes at -18 dB), so it is feature-
+    // gated behind `eq-fallback`. Default Adaptive behaviour is
+    // "EQ-only" — matches FT8's historical single-path approach.
     let cs_eq = {
         let mut v = cs_raw.clone();
         equalize_local::<P>(&mut v);
         v
     };
+    #[cfg(feature = "eq-fallback")]
     let try_order: &[(&[Complex<f32>], bool)] = match eq_mode {
         EqMode::Off => &[(&cs_raw, false)],
         EqMode::Local => &[(&cs_eq, true)],
         EqMode::Adaptive => &[(&cs_eq, true), (&cs_raw, false)],
+    };
+    #[cfg(not(feature = "eq-fallback"))]
+    let try_order: &[(&[Complex<f32>], bool)] = match eq_mode {
+        EqMode::Off => &[(&cs_raw, false)],
+        EqMode::Local | EqMode::Adaptive => &[(&cs_eq, true)],
     };
 
     for (cs_ref, _used_eq) in try_order {
@@ -179,7 +186,15 @@ pub fn process_candidate_ap<P: Protocol>(
                             }
                         }
                         if depth == DecodeDepth::BpAllOsd {
+                            // Default is depth-2 only (matches FT8's AP path).
+                            // `osd-deep` feature enables the depth-3 fallback
+                            // under heavy AP locks — ~0.5 dB threshold gain
+                            // at ~25% extra runtime.
+                            #[cfg(feature = "osd-deep")]
                             let depths: &[u32] = if locked >= 55 { &[2, 3] } else { &[2] };
+                            #[cfg(not(feature = "osd-deep"))]
+                            let depths: &[u32] = &[2];
+                            let _ = locked;
                             for &od in depths {
                                 let osd_opts = FecOpts {
                                     bp_max_iter: 30,
@@ -308,6 +323,7 @@ pub fn decode_sniper_ap<P: Protocol>(
     if candidates.is_empty() {
         return Vec::new();
     }
+    let has_ap = ap_hint.is_some_and(|h| h.has_info());
     let fft_cache = build_fft_cache(audio, ds_cfg);
 
     let mut results: Vec<DecodeResult> = Vec::new();
@@ -323,8 +339,15 @@ pub fn decode_sniper_ap<P: Protocol>(
             sync_q_min,
             ap_hint,
         ) {
-            if !results.iter().any(|x| x.message77 == r.message77) {
+            let new = !results.iter().any(|x| x.message77 == r.message77);
+            if new {
                 results.push(r);
+                // Early-exit: in sniper+AP mode we're hunting ONE target.
+                // Once any AP-verified decode lands, further candidates are
+                // almost certainly spurious — cut the remaining work.
+                if has_ap {
+                    break;
+                }
             }
         }
     }

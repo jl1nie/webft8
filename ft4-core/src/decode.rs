@@ -130,6 +130,11 @@ pub fn decode_sniper_ap(
     eq_mode: EqMode,
     ap_hint: Option<&ApHint>,
 ) -> Vec<DecodeResult> {
+    // Clamp caller's candidate count: in sniper mode the target is
+    // reliably in the top-5 after dedup even at -18 dB, so >15 just
+    // burns CPU — especially important under the lite feature defaults
+    // where every candidate runs BP + OSD per AP config.
+    let max_cand = max_cand.min(15);
     pipeline_ap::decode_sniper_ap::<Ft4>(
         audio,
         &FT4_DOWNSAMPLE,
