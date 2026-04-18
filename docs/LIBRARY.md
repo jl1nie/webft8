@@ -296,15 +296,24 @@ Phase 1 / Phase 2 pipelined decode for FT8 (`decode_phase1` +
 
 ## 9. Protocol notes
 
-| Protocol | Slot   | Tones | Symbols | Tone Δf    | FEC          | Msg   | Status |
-|----------|--------|-------|---------|------------|--------------|-------|--------|
-| FT8      | 15 s   | 8     | 79      | 6.25 Hz    | LDPC(174,91) | 77 b  | shipping |
-| FT4      | 7.5 s  | 4     | 103     | 20.833 Hz  | LDPC(174,91) | 77 b  | shipping |
-| FT2      | ~4.5 s | 4     | ~100    | 83 Hz      | LDPC(174,91) | 77 b  | TODO   |
-| FST4     | var    | 4     | var     | var        | LDPC(174,91) | 77 b  | TODO   |
-| JT65     | 60 s   | 65    | 126     | ~2.7 Hz    | RS(63,12)    | 72 b  | TODO   |
-| JT9      | 60 s   | 9     | 85      | 1.736 Hz   | conv + Fano  | 72 b  | TODO   |
-| WSPR     | 110 s  | 4     | 162     | 1.465 Hz   | conv + Fano  | 50 b  | TODO   |
+| Protocol  | Slot   | Tones | Symbols | Tone Δf    | FEC           | Msg   | Status |
+|-----------|--------|-------|---------|------------|---------------|-------|--------|
+| FT8       | 15 s   | 8     | 79      | 6.25 Hz    | LDPC(174, 91) | 77 b  | shipping |
+| FT4       | 7.5 s  | 4     | 103     | 20.833 Hz  | LDPC(174, 91) | 77 b  | shipping |
+| FST4-60A  | 60 s   | 4     | 160     | 3.125 Hz   | LDPC(240,101) | 77 b  | scaffold (FEC tables pending) |
+| FST4 other | 15–1800 s | 4 | var     | var        | LDPC(240,101) | 77 b  | TODO   |
+| JT65      | 60 s   | 65    | 126     | ~2.7 Hz    | RS(63, 12)    | 72 b  | TODO   |
+| JT9       | 60 s   | 9     | 85      | 1.736 Hz   | conv + Fano   | 72 b  | TODO   |
+| WSPR      | 110 s  | 4     | 162     | 1.465 Hz   | conv + Fano   | 50 b  | TODO   |
+
+FST4 does **not** share FT8's LDPC(174, 91); it uses a longer
+LDPC(240, 101) with 24-bit CRC. The BP and OSD *algorithms* in
+`mfsk-fec` generalise naturally once the (240, 101) parity-check and
+generator tables are transcribed from WSJT-X
+`lib/fst4/ldpc_240_101_*.f90` — see `mfsk_fec::ldpc240_101` module
+docs. The FST4 trait surface, Costas layout and DSP routing are
+fully in place and wired through the generic pipeline; only the FEC
+tables block end-to-end decode.
 
 ## 10. See also
 
