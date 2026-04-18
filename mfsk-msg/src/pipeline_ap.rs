@@ -143,6 +143,11 @@ pub fn process_candidate_ap<P: Protocol>(
     }
 
     // ── AP-assisted passes ─────────────────────────────────────────────
+    //
+    // Integer-timing retry (±2 downsampled samples around the refined
+    // peak) was measured to deliver zero threshold improvement at 5×
+    // runtime — the -18 dB floor is LLR-dominated, not timing-dominated.
+    // See snr_sweep bench history 2026-04-18.
     if let Some(hint) = ap_hint {
         if hint.has_info() {
             for (ap_cfg, pass_id) in ap_passes(hint) {
@@ -159,27 +164,14 @@ pub fn process_candidate_ap<P: Protocol>(
                     if let Some(r) = fec.decode_soft(llr, &ap_opts) {
                         if r.hard_errors < max_errors {
                             if let Some(res) = finalise_result::<P>(
-                                &r,
-                                cand,
-                                &refined,
-                                sync_cv,
-                                pass_id,
-                                cs_ref,
-                                Some(&ap_cfg),
-                                &fec,
+                                &r, cand, &refined, sync_cv, pass_id, cs_ref,
+                                Some(&ap_cfg), &fec,
                             ) {
                                 return Some(res);
                             }
                         }
                     }
                     if depth == DecodeDepth::BpAllOsd {
-                        // With strong AP locks (≥55 bits) the OSD search
-                        // space shrinks dramatically — depth 3 is cheap and
-                        // adds useful recovery at moderate SNR. OSD depth 4
-                        // was measured to double the runtime for zero
-                        // threshold improvement under current sync tuning
-                        // (the bottleneck is upstream of FEC at very low
-                        // SNR), so it is not attempted here.
                         let depths: &[u32] = if locked >= 55 { &[2, 3] } else { &[2] };
                         for &od in depths {
                             let osd_opts = FecOpts {
@@ -190,14 +182,8 @@ pub fn process_candidate_ap<P: Protocol>(
                             if let Some(r) = fec.decode_soft(llr, &osd_opts) {
                                 if r.hard_errors < max_errors {
                                     if let Some(res) = finalise_result::<P>(
-                                        &r,
-                                        cand,
-                                        &refined,
-                                        sync_cv,
-                                        pass_id,
-                                        cs_ref,
-                                        Some(&ap_cfg),
-                                        &fec,
+                                        &r, cand, &refined, sync_cv, pass_id, cs_ref,
+                                        Some(&ap_cfg), &fec,
                                     ) {
                                         return Some(res);
                                     }

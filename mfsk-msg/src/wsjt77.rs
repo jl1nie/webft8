@@ -70,7 +70,10 @@ fn unpack28(n28: u32) -> String {
             2 => "CQ".to_string(),
             3..=1002 => format!("CQ {:03}", n28 - 3),
             _ => {
-                // 1003..=532443: "CQ XXXX" (4-char directional CQ)
+                // 1003..=532443: "CQ XXXX" (4-char directional CQ). The
+                // n28 < NTOKENS check above also permits values 532444..
+                // NTOKENS where i1 overflows C4 — bounds-check and fall
+                // back to a placeholder.
                 let n = n28 - 1003;
                 let i1 = (n / (27 * 27 * 27)) as usize;
                 let n = n % (27 * 27 * 27);
@@ -78,6 +81,9 @@ fn unpack28(n28: u32) -> String {
                 let n = n % (27 * 27);
                 let i3 = (n / 27) as usize;
                 let i4 = (n % 27) as usize;
+                if i1 >= C4.len() || i2 >= C4.len() || i3 >= C4.len() || i4 >= C4.len() {
+                    return "<?>".to_string();
+                }
                 let suffix: String = [C4[i1], C4[i2], C4[i3], C4[i4]]
                     .iter()
                     .map(|&b| b as char)
@@ -962,6 +968,16 @@ pub fn pack77_free_text(text: &str) -> Option<[u8; 77]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: `n28` in the extended CQ-XXXX region (3..NTOKENS) could
+    /// panic with an out-of-bounds C4 access. AP-decoded garbage codewords
+    /// can land there; unpack28 must degrade gracefully.
+    #[test]
+    fn unpack28_does_not_panic_for_extended_range() {
+        for n28 in [1003u32, 532443, 532444, 1_000_000, NTOKENS - 1] {
+            let _ = unpack28(n28);
+        }
+    }
 
     /// Unpack a hex string (20 hex chars = 10 bytes) into a [u8; 77] bit array.
     fn hex_to_msg77(hex: &str) -> [u8; 77] {
