@@ -1,4 +1,5 @@
 mod bpf;
+mod ft4_sim;
 mod real_data;
 mod diag;
 mod simulator;
@@ -73,6 +74,53 @@ fn main() {
 
     // ── Extreme limit sweep ─────────────────────────────────────────────────
     run_extreme_sweep();
+
+    // ── FT4 SNR sweep (synthetic) ───────────────────────────────────────────
+    run_ft4_snr_sweep();
+}
+
+fn run_ft4_snr_sweep() {
+    use ft4_core::decode::decode_frame;
+    use mfsk_core::{MessageCodec, MessageFields};
+
+    println!("\n=== FT4 synthetic SNR sweep (20 seeds/SNR) ===");
+    println!("  {:>6}   {:>10}", "SNR", "decoded/20");
+
+    let codec = mfsk_msg::Wsjt77Message::default();
+    let msg77: [u8; 77] = {
+        let bits = codec
+            .pack(&MessageFields {
+                call1: Some("CQ".into()),
+                call2: Some("JA1ABC".into()),
+                grid: Some("PM95".into()),
+                ..Default::default()
+            })
+            .expect("pack CQ");
+        let mut out = [0u8; 77];
+        out.copy_from_slice(&bits);
+        out
+    };
+
+    for snr in [-4, -6, -8, -10, -12, -14, -16, -18] {
+        let mut ok = 0usize;
+        for seed in 0..20u64 {
+            let cfg = ft4_sim::SimConfig {
+                signals: vec![ft4_sim::SimSignal {
+                    message77: msg77,
+                    freq_hz: 1000.0,
+                    snr_db: snr as f32,
+                    dt_sec: 0.0,
+                }],
+                noise_seed: Some(0xF70000 + seed),
+            };
+            let audio = ft4_sim::generate_slot(&cfg);
+            let results = decode_frame(&audio, 800.0, 1200.0, 1.2, 50);
+            if results.iter().any(|r| r.message77 == msg77) {
+                ok += 1;
+            }
+        }
+        println!("  {:>4} dB    {:>5}/20", snr, ok);
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
