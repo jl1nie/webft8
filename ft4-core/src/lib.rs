@@ -31,7 +31,7 @@ impl ModulationParams for Ft4 {
     const GFSK_BT: f32 = 1.0;
     const GFSK_HMOD: f32 = 1.0;
     const NFFT_PER_SYMBOL_FACTOR: u32 = 4; // NFFT1 = 4 × NSPS = 2304
-    const NSTEP_PER_SYMBOL: u32 = 1; // 1-symbol coarse-sync step
+    const NSTEP_PER_SYMBOL: u32 = 2; // half-symbol coarse-sync step (24 ms)
     const NDOWN: u32 = 18; // 12 000 / 18 ≈ 666.7 Hz baseband
 }
 

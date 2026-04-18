@@ -394,7 +394,11 @@ pub fn parabolic_peak(y_neg: f32, y_0: f32, y_pos: f32) -> (f32, f32) {
     (offset.clamp(-0.5, 0.5), peak)
 }
 
-/// Refine timing by scanning ±`search_steps` samples around the candidate.
+/// Refine timing by scanning ±`search_steps` downsampled samples, then
+/// applying parabolic sub-sample interpolation around the peak for a
+/// fractional-sample refinement. The sub-sample shift is used to report a
+/// more accurate `dt_sec` but the returned score is the integer peak
+/// (interpolating correlation peaks biases small values downward).
 pub fn refine_candidate<P: Protocol>(
     cd0: &[Complex<f32>],
     candidate: &SyncCandidate,
@@ -411,9 +415,20 @@ pub fn refine_candidate<P: Protocol>(
         })
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
         .unwrap_or((0, 0.0));
+
+    // Parabolic sub-sample refinement around the integer peak.
+    let frac = if best_i0 >= 1 {
+        let y_neg = fine_sync_power::<P>(cd0, best_i0 - 1);
+        let y_pos = fine_sync_power::<P>(cd0, best_i0 + 1);
+        let (f, _) = parabolic_peak(y_neg, best_score, y_pos);
+        f
+    } else {
+        0.0
+    };
+
     SyncCandidate {
         freq_hz: candidate.freq_hz,
-        dt_sec: best_i0 as f32 / d.ds_rate - P::TX_START_OFFSET_S,
+        dt_sec: (best_i0 as f32 + frac) / d.ds_rate - P::TX_START_OFFSET_S,
         score: best_score,
     }
 }

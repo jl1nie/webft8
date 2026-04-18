@@ -41,8 +41,8 @@ pub const FT4_SUBTRACT: SubtractCfg = SubtractCfg {
     base_offset_s: 0.5,
 };
 
-/// FT4's coarse sync uses 1-symbol (48 ms = 32 downsampled-sample) steps;
-/// refine across ±1 symbol to bridge the coarse-grid quantisation.
+/// FT4's coarse sync now uses half-symbol (24 ms = 16 downsampled-sample)
+/// steps; refine across ±1 symbol (32 samples) still to bridge rounding.
 const REFINE_STEPS: i32 = 32;
 /// FT4 has 16 sync symbols (4 × 4); require at least half correct.
 const SYNC_Q_MIN: u32 = 8;
