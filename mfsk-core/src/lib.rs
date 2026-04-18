@@ -33,5 +33,5 @@ pub mod protocol;
 
 pub use protocol::{
     DecodeContext, FecCodec, FecOpts, FecResult, FrameLayout, MessageCodec, MessageFields,
-    ModulationParams, Protocol, ProtocolId,
+    ModulationParams, Protocol, ProtocolId, SyncBlock,
 };

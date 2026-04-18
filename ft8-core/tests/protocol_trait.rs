@@ -16,13 +16,27 @@ fn ft8_associated_constants() {
     assert_eq!(<Ft8 as ModulationParams>::NSPS, 1920);
     assert!(((<Ft8 as ModulationParams>::SYMBOL_DT) - 0.16).abs() < 1e-6);
     assert_eq!(<Ft8 as ModulationParams>::GRAY_MAP, &[0, 1, 3, 2, 5, 6, 4, 7]);
+    assert_eq!(<Ft8 as ModulationParams>::GFSK_BT, 2.0);
+    assert_eq!(<Ft8 as ModulationParams>::GFSK_HMOD, 1.0);
+    assert_eq!(<Ft8 as ModulationParams>::NFFT_PER_SYMBOL_FACTOR, 2);
+    assert_eq!(<Ft8 as ModulationParams>::NSTEP_PER_SYMBOL, 4);
+    assert_eq!(<Ft8 as ModulationParams>::NDOWN, 60);
 
     assert_eq!(<Ft8 as FrameLayout>::N_DATA, 58);
     assert_eq!(<Ft8 as FrameLayout>::N_SYNC, 21);
     assert_eq!(<Ft8 as FrameLayout>::N_SYMBOLS, 79);
-    assert_eq!(<Ft8 as FrameLayout>::SYNC_PATTERN, &[3, 1, 4, 0, 6, 5, 2]);
-    assert_eq!(<Ft8 as FrameLayout>::SYNC_POSITIONS, &[0, 36, 72]);
+    assert_eq!(<Ft8 as FrameLayout>::N_RAMP, 0);
+    let blocks = <Ft8 as FrameLayout>::SYNC_BLOCKS;
+    assert_eq!(blocks.len(), 3);
+    for b in blocks {
+        assert_eq!(b.pattern, &[3, 1, 4, 0, 6, 5, 2]);
+    }
+    assert_eq!(
+        blocks.iter().map(|b| b.start_symbol).collect::<Vec<_>>(),
+        vec![0, 36, 72]
+    );
     assert_eq!(<Ft8 as FrameLayout>::T_SLOT_S, 15.0);
+    assert_eq!(<Ft8 as FrameLayout>::TX_START_OFFSET_S, 0.5);
 
     assert_eq!(<<Ft8 as Protocol>::Fec as FecCodec>::N, 174);
     assert_eq!(<<Ft8 as Protocol>::Fec as FecCodec>::K, 91);

@@ -31,7 +31,7 @@ pub mod message;
 pub mod hash_table;
 pub mod resample;
 
-use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId};
+use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock};
 use mfsk_fec::Ldpc174_91;
 use mfsk_msg::Wsjt77Message;
 
@@ -48,15 +48,21 @@ impl ModulationParams for Ft8 {
     const SYMBOL_DT: f32 = params::SYMBOL_DT;
     const TONE_SPACING_HZ: f32 = 6.25;
     const GRAY_MAP: &'static [u8] = &FT8_GRAY_MAP;
+    const GFSK_BT: f32 = 2.0;
+    const GFSK_HMOD: f32 = 1.0;
+    const NFFT_PER_SYMBOL_FACTOR: u32 = 2; // NFFT1 = 2 × NSPS = 3840
+    const NSTEP_PER_SYMBOL: u32 = 4; // quarter-symbol coarse-sync step
+    const NDOWN: u32 = 60; // 12 000 / 60 = 200 Hz baseband
 }
 
 impl FrameLayout for Ft8 {
     const N_DATA: u32 = params::ND as u32;
     const N_SYNC: u32 = params::NS as u32;
     const N_SYMBOLS: u32 = params::NN as u32;
-    const SYNC_PATTERN: &'static [u8] = &FT8_COSTAS;
-    const SYNC_POSITIONS: &'static [u32] = &FT8_COSTAS_POS;
+    const N_RAMP: u32 = 0; // ramp is internal to gfsk::synth
+    const SYNC_BLOCKS: &'static [SyncBlock] = &FT8_SYNC_BLOCKS;
     const T_SLOT_S: f32 = 15.0;
+    const TX_START_OFFSET_S: f32 = 0.5;
 }
 
 impl Protocol for Ft8 {
@@ -65,9 +71,9 @@ impl Protocol for Ft8 {
     const ID: ProtocolId = ProtocolId::Ft8;
 }
 
-// `params::GRAYMAP` / `params::COSTAS` / `params::COSTAS_POS` are `[usize; _]`
-// for historical reasons, but `ModulationParams::GRAY_MAP` etc. require
-// `&'static [u8]`. Narrow them here at compile time.
+// `params::GRAYMAP` / `params::COSTAS` are `[usize; _]` for historical reasons,
+// but `ModulationParams::GRAY_MAP` etc. require `&'static [u8]`. Narrow them
+// here at compile time.
 const FT8_GRAY_MAP: [u8; 8] = {
     let mut out = [0u8; 8];
     let mut i = 0;
@@ -88,12 +94,9 @@ const FT8_COSTAS: [u8; 7] = {
     out
 };
 
-const FT8_COSTAS_POS: [u32; 3] = {
-    let mut out = [0u32; 3];
-    let mut i = 0;
-    while i < 3 {
-        out[i] = params::COSTAS_POS[i] as u32;
-        i += 1;
-    }
-    out
-};
+/// FT8 has three identical Costas arrays at symbols 0 / 36 / 72.
+const FT8_SYNC_BLOCKS: [SyncBlock; 3] = [
+    SyncBlock { start_symbol: 0, pattern: &FT8_COSTAS },
+    SyncBlock { start_symbol: 36, pattern: &FT8_COSTAS },
+    SyncBlock { start_symbol: 72, pattern: &FT8_COSTAS },
+];

@@ -29,7 +29,8 @@ pub enum ProtocolId {
     Wspr = 6,
 }
 
-/// Baseband modulation parameters (tones, symbol rate, Gray mapping).
+/// Baseband modulation parameters (tones, symbol rate, Gray mapping, Gaussian
+/// shaping and the tunable DSP ratios the pipeline reads per protocol).
 ///
 /// All constants are evaluated at compile time; the trait carries no data so
 /// implementors are typically zero-sized types.
@@ -52,30 +53,71 @@ pub trait ModulationParams: Copy + Default + 'static {
     /// Gray-code map: `GRAY_MAP[tone_index]` returns the NATURAL-bit pattern
     /// for that tone. Length must equal `NTONES`.
     const GRAY_MAP: &'static [u8];
+
+    // ── GFSK shaping ────────────────────────────────────────────────────
+    /// Gaussian bandwidth-time product. FT8 = 2.0, FT4 = 1.0, FST4 ≈ 1.0.
+    const GFSK_BT: f32;
+    /// Modulation index h — the phase increment per symbol is `2π · h`.
+    /// FT8 and FT4 both use 1.0 (orthogonal tones at `1/T` spacing).
+    const GFSK_HMOD: f32;
+
+    // ── Per-protocol DSP ratios ─────────────────────────────────────────
+    /// Per-symbol FFT size = `NSPS * NFFT_PER_SYMBOL_FACTOR`.
+    /// FT8 = 2 (window is 2·NSPS), FT4 = 4 (window is 4·NSPS) — trade-off
+    /// between frequency resolution and time localisation.
+    const NFFT_PER_SYMBOL_FACTOR: u32;
+    /// Coarse-sync time-step = `NSPS / NSTEP_PER_SYMBOL`.
+    /// FT8 = 4 (quarter-symbol resolution), FT4 = 1 (symbol-granular).
+    const NSTEP_PER_SYMBOL: u32;
+    /// Downsample decimation factor: baseband rate = `12 000 / NDOWN` Hz.
+    /// FT8 = 60 (→200 Hz), FT4 = 18 (→667 Hz). Proportional to tone spacing.
+    const NDOWN: u32;
 }
 
-/// Frame structure: data / sync symbol counts and the Costas-style sync
-/// pattern.
+/// One Costas / pilot block: a contiguous run of tones starting at a specific
+/// symbol index within the frame.
+///
+/// FT8 has three identical blocks (positions 0/36/72, same Costas-7 pattern);
+/// FT4 has four *different* blocks (positions 0/33/66/99, each a permutation
+/// of [0,1,2,3]). The trait is shaped to accommodate both.
+#[derive(Copy, Clone, Debug)]
+pub struct SyncBlock {
+    /// Symbol index (0-based) where this block starts.
+    pub start_symbol: u32,
+    /// Tone sequence for this block. `pattern.len()` is the block length.
+    pub pattern: &'static [u8],
+}
+
+/// Frame structure: data / sync symbol counts, the ordered list of sync
+/// blocks, and the TX-side nominal start offset.
 pub trait FrameLayout: Copy + Default + 'static {
     /// Data symbols carrying FEC-coded payload.
     const N_DATA: u32;
 
-    /// Sync symbols (Costas arrays, pilot tones, …).
+    /// Sync symbols (sum of `pattern.len()` across `SYNC_BLOCKS`).
     const N_SYNC: u32;
 
-    /// Total channel symbols per frame (= N_DATA + N_SYNC).
+    /// Total channel symbols per frame (= N_DATA + N_SYNC). Excludes any
+    /// GFSK ramp-up / ramp-down symbols that are a shaping artifact.
     const N_SYMBOLS: u32;
 
-    /// Repeating tone pattern of a single Costas / pilot block.
-    const SYNC_PATTERN: &'static [u8];
+    /// Extra symbol slots on each side of the frame reserved for amplitude
+    /// ramp (FT4 has 1 each side = 2; FT8 has 0 — ramp absorbed into the
+    /// first/last data symbol envelope). Applied at the transmitter.
+    const N_RAMP: u32;
 
-    /// Symbol indices at which each copy of `SYNC_PATTERN` begins within the
-    /// frame. E.g. FT8 has three Costas arrays at symbols {0, 36, 72}.
-    const SYNC_POSITIONS: &'static [u32];
+    /// Ordered list of sync blocks. For FT8 this is three entries with the
+    /// same `pattern` pointer; for FT4, four different patterns.
+    const SYNC_BLOCKS: &'static [SyncBlock];
 
-    /// Nominal TX/RX slot length in seconds (informational — used by schedulers
-    /// and UI, not by the DSP pipeline).
+    /// Nominal TX/RX slot length in seconds (informational — used by
+    /// schedulers and UI, not by the DSP pipeline). FT8 = 15 s, FT4 = 7.5 s.
     const T_SLOT_S: f32;
+
+    /// Time (seconds) from the start of the slot-audio buffer to the start
+    /// of the first frame symbol — the "dt = 0" reference point used by
+    /// sync, signal subtraction, and DT reporting. FT8 = 0.5, FT4 = 0.5.
+    const TX_START_OFFSET_S: f32;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
