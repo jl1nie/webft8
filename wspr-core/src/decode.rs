@@ -41,8 +41,9 @@ pub fn decode_at(
 /// Scan an audio buffer for any number of WSPR frames, returning all
 /// successful decodes. Runs a coarse (freq, time) search with the given
 /// [`SearchParams`], then attempts [`decode_at`] on each candidate in
-/// score-descending order. Duplicate-message suppression is left to the
-/// caller — downstream UI layers typically de-dup by (message, freq±2Hz).
+/// score-descending order. Duplicate decodes (same message within ±5 Hz
+/// and ±1 symbol) are collapsed to the single earliest-candidate hit,
+/// so each transmission appears at most once in the output.
 pub fn decode_scan(
     audio: &[f32],
     sample_rate: u32,
@@ -50,10 +51,24 @@ pub fn decode_scan(
     params: &SearchParams,
 ) -> Vec<WsprDecode> {
     let cands = coarse_search(audio, sample_rate, nominal_start_sample, params);
-    cands
-        .into_iter()
-        .filter_map(|c| decode_at(audio, sample_rate, c.start_sample, c.freq_hz))
-        .collect()
+    let mut seen: Vec<WsprDecode> = Vec::new();
+    const FREQ_DEDUP_HZ: f32 = 5.0;
+    const TIME_DEDUP_SAMPLES: i64 = 8192; // one WSPR symbol at 12 kHz
+    for c in cands {
+        let Some(d) = decode_at(audio, sample_rate, c.start_sample, c.freq_hz) else {
+            continue;
+        };
+        let dup = seen.iter().any(|prev| {
+            prev.message == d.message
+                && (prev.freq_hz - d.freq_hz).abs() <= FREQ_DEDUP_HZ
+                && (prev.start_sample as i64 - d.start_sample as i64).abs()
+                    <= TIME_DEDUP_SAMPLES
+        });
+        if !dup {
+            seen.push(d);
+        }
+    }
+    seen
 }
 
 /// Convenience: scan using [`SearchParams::default`].

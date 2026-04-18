@@ -468,16 +468,13 @@ pub fn encode_ft4_free_text(text: &str, freq_hz: f32) -> Result<Vec<f32>, JsValu
 // WSPR
 // ───────────────────────────────────────────────────────────────────────
 
-fn i16_to_f32(samples: &[i16]) -> Vec<f32> {
-    samples.iter().map(|&s| s as f32 / 32768.0).collect()
-}
-
-fn wspr_decode_to_messages(decodes: Vec<wspr_core::WsprDecode>, sample_rate: u32) -> Vec<DecodedMessage> {
+fn wspr_decode_to_messages(decodes: Vec<wspr_core::WsprDecode>) -> Vec<DecodedMessage> {
     decodes
         .into_iter()
         .map(|d| DecodedMessage {
             freq_hz: d.freq_hz,
-            dt_sec: d.start_sample as f32 / sample_rate as f32,
+            // dt_sec reported relative to the 12 kHz pipeline (post-resample).
+            dt_sec: d.start_sample as f32 / 12_000.0,
             snr_db: 0.0,
             hard_errors: 0,
             pass: 0,
@@ -486,21 +483,25 @@ fn wspr_decode_to_messages(decodes: Vec<wspr_core::WsprDecode>, sample_rate: u32
         .collect()
 }
 
-/// Decode a 120-s WSPR slot. Runs coarse (freq, time) search with the
-/// default ±4-symbol time tolerance and 1400-1600 Hz freq sweep, then
-/// Fano-decodes every candidate above the sync-score threshold.
+/// Decode a 120-s WSPR slot. Non-12 kHz input is auto-resampled. Runs
+/// coarse (freq, time) search with the default time tolerance and
+/// 1400-1600 Hz freq sweep, then Fano-decodes every candidate above
+/// the sync-score threshold.
 #[wasm_bindgen]
 pub fn decode_wspr_wav(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage> {
-    let audio_f32 = i16_to_f32(samples);
-    let decodes = wspr_core::decode::decode_scan_default(&audio_f32, sample_rate);
-    wspr_decode_to_messages(decodes, sample_rate)
+    use mfsk_core::dsp::resample::resample_i16_to_12k_f32;
+    let audio = resample_i16_to_12k_f32(samples, sample_rate);
+    let decodes = wspr_core::decode::decode_scan_default(&audio, 12_000);
+    wspr_decode_to_messages(decodes)
 }
 
 /// f32 variant of [`decode_wspr_wav`].
 #[wasm_bindgen]
 pub fn decode_wspr_wav_f32(samples: &[f32], sample_rate: u32) -> Vec<DecodedMessage> {
-    let decodes = wspr_core::decode::decode_scan_default(samples, sample_rate);
-    wspr_decode_to_messages(decodes, sample_rate)
+    use mfsk_core::dsp::resample::resample_f32_to_12k_f32;
+    let audio = resample_f32_to_12k_f32(samples, sample_rate);
+    let decodes = wspr_core::decode::decode_scan_default(&audio, 12_000);
+    wspr_decode_to_messages(decodes)
 }
 
 /// Encode a Type-1 WSPR message ("CALLSIGN GRID4 POWER_DBM") as 12 kHz

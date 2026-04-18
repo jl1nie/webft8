@@ -398,9 +398,10 @@ export function decode_wav_subtract_f32(samples, strictness, sample_rate) {
 }
 
 /**
- * Decode a 120-s WSPR slot. Runs coarse (freq, time) search with the
- * default ±4-symbol time tolerance and 1400-1600 Hz freq sweep, then
- * Fano-decodes every candidate above the sync-score threshold.
+ * Decode a 120-s WSPR slot. Non-12 kHz input is auto-resampled. Runs
+ * coarse (freq, time) search with the default time tolerance and
+ * 1400-1600 Hz freq sweep, then Fano-decodes every candidate above
+ * the sync-score threshold.
  * @param {Int16Array} samples
  * @param {number} sample_rate
  * @returns {DecodedMessage[]}

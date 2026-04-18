@@ -23,7 +23,7 @@
 
 use mfsk_core::ModulationParams;
 
-use crate::rx::{extract_tone_magnitudes, sync_score};
+use crate::spectrogram::{score_candidate, Spectrogram};
 use crate::Wspr;
 
 /// A candidate WSPR alignment, ranked by its sync-vector correlation.
@@ -63,41 +63,67 @@ impl Default for SearchParams {
         Self {
             freq_min_hz: 1400.0,
             freq_max_hz: 1600.0,
-            time_tolerance_symbols: 4,
+            // Real WSPR TX starts ~1 s into the 120-s slot (and can drift).
+            // The signal is 110.6 s long, leaving ≈ 9.4 s of slack. 8
+            // symbols ≈ 5.5 s covers the common case without blowing up
+            // the candidate count.
+            time_tolerance_symbols: 8,
             score_threshold: DEFAULT_SCORE_THRESHOLD,
-            max_candidates: 8,
+            max_candidates: 16,
         }
     }
 }
 
-/// Sweep (freq, time) grid and return top-ranked candidates. Quiet
-/// alignments (score below threshold) are dropped.
+/// Sweep (freq, time) grid and return top-ranked candidates.
+///
+/// Builds a single quarter-symbol spectrogram (~700 FFTs for a 120-s
+/// slot) and scores each (time_row, base_bin) in O(162) lookups, so
+/// total work is ~FFT_build + grid_size, independent of how fine the
+/// search grid is. Empty or below-threshold alignments are dropped.
 pub fn coarse_search(
     audio: &[f32],
     sample_rate: u32,
     nominal_start_sample: usize,
     params: &SearchParams,
 ) -> Vec<SyncCandidate> {
+    let spec = Spectrogram::build(audio, sample_rate);
+    coarse_search_on_spec(&spec, sample_rate, nominal_start_sample, params)
+}
+
+/// Variant that reuses a pre-built spectrogram. Useful when a caller
+/// decodes multiple slots of the same audio pipeline or wants to share
+/// the FFT cost across additional post-processing (waterfall display,
+/// etc).
+pub fn coarse_search_on_spec(
+    spec: &Spectrogram,
+    sample_rate: u32,
+    nominal_start_sample: usize,
+    params: &SearchParams,
+) -> Vec<SyncCandidate> {
+    if spec.n_time == 0 {
+        return Vec::new();
+    }
     let nsps = (sample_rate as f32 * <Wspr as ModulationParams>::SYMBOL_DT).round() as usize;
     let df = sample_rate as f32 / nsps as f32;
-    // Quarter-symbol time step.
-    let t_step = nsps / 4;
-    let t_span = params.time_tolerance_symbols as i64 * nsps as i64;
-    let nt = (2 * t_span / t_step as i64 + 1) as i64;
+    let rows_per_symbol = 4usize;
+
+    let t_span_rows = params.time_tolerance_symbols as i64 * rows_per_symbol as i64;
+    let nominal_row = (nominal_start_sample / spec.t_step) as i64;
+    let row_min = (nominal_row - t_span_rows).max(0);
+    let row_max = nominal_row + t_span_rows;
 
     let fmin_bin = (params.freq_min_hz / df).floor() as i64;
     let fmax_bin = (params.freq_max_hz / df).ceil() as i64;
 
     let mut out: Vec<SyncCandidate> = Vec::new();
 
-    for tk in 0..nt {
-        let offset = tk * t_step as i64 - t_span;
-        let start_i64 = nominal_start_sample as i64 + offset;
-        if start_i64 < 0 {
+    for row in row_min..=row_max {
+        if row < 0 {
             continue;
         }
-        let start = start_i64 as usize;
-        if start + 162 * nsps > audio.len() {
+        let row = row as usize;
+        // Need room for 162 symbols → 161 * 4 rows of lookahead.
+        if row + 161 * rows_per_symbol >= spec.n_time {
             continue;
         }
 
@@ -105,13 +131,17 @@ pub fn coarse_search(
             if fb < 0 {
                 continue;
             }
-            let freq_hz = fb as f32 * df;
-            let Some(tm) = extract_tone_magnitudes(audio, sample_rate, start, freq_hz) else {
+            let base_bin = fb as usize;
+            if base_bin + 4 > spec.n_freq {
                 continue;
-            };
-            let score = sync_score(&tm);
+            }
+            let score = score_candidate(spec, row, base_bin);
             if score >= params.score_threshold {
-                out.push(SyncCandidate { start_sample: start, freq_hz, score });
+                out.push(SyncCandidate {
+                    start_sample: row * spec.t_step,
+                    freq_hz: fb as f32 * df,
+                    score,
+                });
             }
         }
     }

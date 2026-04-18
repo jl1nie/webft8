@@ -24,6 +24,7 @@ use mfsk_msg::Wspr50Message;
 pub mod decode;
 pub mod rx;
 pub mod search;
+pub mod spectrogram;
 pub mod sync_vector;
 pub mod tx;
 
