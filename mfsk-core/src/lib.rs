@@ -33,6 +33,7 @@ pub mod equalize;
 pub mod llr;
 pub mod protocol;
 pub mod sync;
+pub mod tx;
 
 pub use protocol::{
     DecodeContext, FecCodec, FecOpts, FecResult, FrameLayout, MessageCodec, MessageFields,

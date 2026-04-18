@@ -10,39 +10,20 @@
 //!            →  Gray-map 3 bits/symbol  →  itone[79]
 //!            →  phase accumulation  →  PCM f32 / i16
 //! ```
+use crate::Ft8;
 use crate::{
     ldpc::osd::ldpc_encode,
-    params::{COSTAS, GRAYMAP, LDPC_K, LDPC_N, MSG_BITS, NN},
+    params::{LDPC_K, MSG_BITS, NN},
 };
 
-// ────────────────────────────────────────────────────────────────────────────
-// CRC-14
-
-/// CRC-14 (polynomial 0x2757) over `data` bytes, MSB-first.
-/// Matches boost::augmented_crc<14, 0x2757> used in WSJT-X.
-fn crc14(data: &[u8]) -> u16 {
-    let mut crc: u16 = 0;
-    for &byte in data {
-        for i in (0..8).rev() {
-            let bit = (byte >> i) & 1;
-            let msb = (crc >> 13) & 1;
-            crc = ((crc << 1) | bit as u16) & 0x3FFF;
-            if msb != 0 {
-                crc ^= 0x2757;
-            }
-        }
-    }
-    crc
-}
-
-/// Append 14 CRC bits to a 77-bit message, producing 91 info bits.
+/// Append 14 CRC bits to a 77-bit message, producing 91 info bits. Uses the
+/// shared CRC-14 implementation from mfsk-fec.
 fn append_crc14(message77: &[u8; MSG_BITS]) -> [u8; LDPC_K] {
-    // Pack 77 message bits into 10 bytes (big-endian, MSB-first).
     let mut bytes = [0u8; 12];
     for (i, &bit) in message77.iter().enumerate() {
         bytes[i / 8] |= (bit & 1) << (7 - i % 8);
     }
-    let crc = crc14(&bytes);
+    let crc = mfsk_fec::ldpc::crc14(&bytes);
 
     let mut info = [0u8; LDPC_K];
     info[..MSG_BITS].copy_from_slice(message77);
@@ -52,56 +33,14 @@ fn append_crc14(message77: &[u8; MSG_BITS]) -> [u8; LDPC_K] {
     info
 }
 
-
-// ────────────────────────────────────────────────────────────────────────────
-// Tone sequence
-
-/// Build the 79-symbol tone sequence from a 174-bit LDPC codeword.
-///
-/// Layout (symbol positions):
-///   0–6    : Costas array 1
-///   7–35   : 29 data symbols ← bits 0–86
-///   36–42  : Costas array 2
-///   43–71  : 29 data symbols ← bits 87–173
-///   72–78  : Costas array 3
-fn codeword_to_itone(cw: &[u8; LDPC_N]) -> [u8; NN] {
-    let mut itone = [0u8; NN];
-
-    // Costas arrays
-    for (i, &c) in COSTAS.iter().enumerate() {
-        itone[i]      = c as u8;
-        itone[36 + i] = c as u8;
-        itone[72 + i] = c as u8;
-    }
-
-    // First data half: symbols 7..35, bits 0..87
-    for k in 0..29usize {
-        let b = k * 3;
-        let v = (cw[b] << 2) | (cw[b + 1] << 1) | cw[b + 2];
-        itone[7 + k] = GRAYMAP[v as usize] as u8;
-    }
-
-    // Second data half: symbols 43..71, bits 87..174
-    for k in 0..29usize {
-        let b = 87 + k * 3;
-        let v = (cw[b] << 2) | (cw[b + 1] << 1) | cw[b + 2];
-        itone[43 + k] = GRAYMAP[v as usize] as u8;
-    }
-
-    itone
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Public API
-
 /// Encode a 77-bit message into a 79-symbol FT8 tone sequence.
-///
-/// Each tone is an integer 0–7.  The sequence can be passed to
-/// [`tones_to_f32`] or [`tones_to_i16`] to produce PCM audio.
 pub fn message_to_tones(message77: &[u8; MSG_BITS]) -> [u8; NN] {
     let info = append_crc14(message77);
-    let cw   = ldpc_encode(&info);
-    codeword_to_itone(&cw)
+    let cw = ldpc_encode(&info);
+    let generic = mfsk_core::tx::codeword_to_itone::<Ft8>(&cw);
+    let mut out = [0u8; NN];
+    out.copy_from_slice(&generic);
+    out
 }
 
 /// FT8 GFSK configuration: 12 kHz sample rate, 1920 samples/symbol (= 6.25 Hz
@@ -158,6 +97,7 @@ mod tests {
 
     #[test]
     fn costas_positions_correct() {
+        use crate::params::COSTAS;
         let msg = [0u8; MSG_BITS];
         let itone = message_to_tones(&msg);
         for offset in [0usize, 36, 72] {
