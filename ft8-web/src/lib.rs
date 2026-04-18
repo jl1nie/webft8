@@ -463,3 +463,55 @@ pub fn encode_ft4_free_text(text: &str, freq_hz: f32) -> Result<Vec<f32>, JsValu
     let tones = ft4_core::encode::message_to_tones(&msg77);
     Ok(ft4_core::encode::tones_to_f32(&tones, freq_hz, 1.0))
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// WSPR
+// ───────────────────────────────────────────────────────────────────────
+
+fn i16_to_f32(samples: &[i16]) -> Vec<f32> {
+    samples.iter().map(|&s| s as f32 / 32768.0).collect()
+}
+
+fn wspr_decode_to_messages(decodes: Vec<wspr_core::WsprDecode>, sample_rate: u32) -> Vec<DecodedMessage> {
+    decodes
+        .into_iter()
+        .map(|d| DecodedMessage {
+            freq_hz: d.freq_hz,
+            dt_sec: d.start_sample as f32 / sample_rate as f32,
+            snr_db: 0.0,
+            hard_errors: 0,
+            pass: 0,
+            message: d.message.to_string(),
+        })
+        .collect()
+}
+
+/// Decode a 120-s WSPR slot. Runs coarse (freq, time) search with the
+/// default ±4-symbol time tolerance and 1400-1600 Hz freq sweep, then
+/// Fano-decodes every candidate above the sync-score threshold.
+#[wasm_bindgen]
+pub fn decode_wspr_wav(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage> {
+    let audio_f32 = i16_to_f32(samples);
+    let decodes = wspr_core::decode::decode_scan_default(&audio_f32, sample_rate);
+    wspr_decode_to_messages(decodes, sample_rate)
+}
+
+/// f32 variant of [`decode_wspr_wav`].
+#[wasm_bindgen]
+pub fn decode_wspr_wav_f32(samples: &[f32], sample_rate: u32) -> Vec<DecodedMessage> {
+    let decodes = wspr_core::decode::decode_scan_default(samples, sample_rate);
+    wspr_decode_to_messages(decodes, sample_rate)
+}
+
+/// Encode a Type-1 WSPR message ("CALLSIGN GRID4 POWER_DBM") as 12 kHz
+/// PCM audio suitable for transmission.
+#[wasm_bindgen]
+pub fn encode_wspr(
+    callsign: &str,
+    grid: &str,
+    power_dbm: i32,
+    freq_hz: f32,
+) -> Result<Vec<f32>, JsValue> {
+    wspr_core::synthesize_type1(callsign, grid, power_dbm, 12_000, freq_hz, 0.3)
+        .ok_or_else(|| JsValue::from_str("Invalid WSPR message (bad callsign/grid/power)"))
+}

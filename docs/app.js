@@ -52,15 +52,20 @@ import { QsoManager, QSO_STATE } from './qso.js';
 import { CatController, loadRigProfiles, getRigProfiles, isTauriMode, listSerialPorts } from './cat.js';
 import { QsoLog } from './qso-log.js';
 
-// ── Protocol selector (FT8 default, FT4 opt-in via settings cog) ────────────
-// Stored in localStorage as 'webft8-protocol' = 'ft8' | 'ft4'. Accessed via
-// the helpers below so any flag change propagates to period scheduler and
-// decode dispatch without restarts.
+// ── Protocol selector (FT8 default; FT4/WSPR opt-in via settings cog) ──────
+// Stored in localStorage as 'webft8-protocol' = 'ft8' | 'ft4' | 'wspr'.
+// Accessed via the helpers below so any flag change propagates to period
+// scheduler and decode dispatch without restarts.
 function currentProtocol() {
-  return localStorage.getItem('webft8-protocol') === 'ft4' ? 'ft4' : 'ft8';
+  const v = localStorage.getItem('webft8-protocol');
+  if (v === 'ft4' || v === 'wspr') return v;
+  return 'ft8';
 }
 function getSlotMs() {
-  return currentProtocol() === 'ft4' ? 7500 : 15000;
+  const p = currentProtocol();
+  if (p === 'ft4') return 7500;
+  if (p === 'wspr') return 120000;
+  return 15000;
 }
 
 // ── Elements ────────────────────────────────────────────────────────────────
@@ -117,8 +122,9 @@ const protocolSelect = document.getElementById('protocol-select');
 if (protocolSelect) {
   protocolSelect.value = currentProtocol();
   protocolSelect.addEventListener('change', () => {
-    const v = protocolSelect.value === 'ft4' ? 'ft4' : 'ft8';
-    localStorage.setItem('webft8-protocol', v);
+    const v = protocolSelect.value;
+    const normalized = (v === 'ft4' || v === 'wspr') ? v : 'ft8';
+    localStorage.setItem('webft8-protocol', normalized);
     // Push the new slot length into the running scheduler (restarts it
     // safely) so the UI switches over without a page reload.
     periodMgr.setSlotMs(getSlotMs());
@@ -703,22 +709,31 @@ async function runDecode(samples, sampleRate, onPartial) {
   // Dispatch to f32 or i16 entry points based on the input array type.
   // Live capture passes Float32Array directly (worklet output) — skips
   // the JS i16 conversion loop. WAV file drops still arrive as Int16Array.
-  // FT4 mode routes to the `decode_ft4_*` family in the WASM bundle.
+  // Protocol routing: FT4 → `decode_ft4_*`, WSPR → `decode_wspr_*`.
   const isF32 = samples instanceof Float32Array;
-  const ft4   = currentProtocol() === 'ft4';
-  const fnDecodeName   = ft4
-    ? (isF32 ? 'decode_ft4_wav_f32'          : 'decode_ft4_wav')
-    : (isF32 ? 'decode_wav_f32'              : 'decode_wav');
-  const fnSniperName   = ft4
-    ? (isF32 ? 'decode_ft4_sniper_f32'       : 'decode_ft4_sniper')
-    : (isF32 ? 'decode_sniper_f32'           : 'decode_sniper');
-  // FT4 doesn't have a Phase 1 / Phase 2 split — use one-shot
-  // `decode_ft4_wav_subtract` instead, which already does 3-pass SIC.
-  const fnSubtractName = ft4
-    ? (isF32 ? 'decode_ft4_wav_subtract_f32' : 'decode_ft4_wav_subtract')
-    : null;
-  const fnPhase1Name   = ft4 ? null : (isF32 ? 'decode_phase1_f32' : 'decode_phase1');
-  const fnPhase2Name   = ft4 ? null : (isF32 ? 'decode_phase2_f32' : 'decode_phase2');
+  const proto = currentProtocol();
+  const ft4   = proto === 'ft4';
+  const wspr  = proto === 'wspr';
+  let fnDecodeName, fnSniperName, fnSubtractName, fnPhase1Name, fnPhase2Name;
+  if (wspr) {
+    fnDecodeName   = isF32 ? 'decode_wspr_wav_f32' : 'decode_wspr_wav';
+    fnSniperName   = null; // no sniper mode for WSPR yet (coarse-only path)
+    fnSubtractName = null;
+    fnPhase1Name   = null;
+    fnPhase2Name   = null;
+  } else if (ft4) {
+    fnDecodeName   = isF32 ? 'decode_ft4_wav_f32'          : 'decode_ft4_wav';
+    fnSniperName   = isF32 ? 'decode_ft4_sniper_f32'       : 'decode_ft4_sniper';
+    fnSubtractName = isF32 ? 'decode_ft4_wav_subtract_f32' : 'decode_ft4_wav_subtract';
+    fnPhase1Name   = null;
+    fnPhase2Name   = null;
+  } else {
+    fnDecodeName   = isF32 ? 'decode_wav_f32'     : 'decode_wav';
+    fnSniperName   = isF32 ? 'decode_sniper_f32'  : 'decode_sniper';
+    fnSubtractName = null;
+    fnPhase1Name   = isF32 ? 'decode_phase1_f32'  : 'decode_phase1';
+    fnPhase2Name   = isF32 ? 'decode_phase2_f32'  : 'decode_phase2';
+  }
 
   // Subtract: use if enabled and not auto-disabled
   const useSub = subtractCheck.checked && !subDisabledAuto;
@@ -726,7 +741,12 @@ async function runDecode(samples, sampleRate, onPartial) {
   const sr = sampleRate || capture.getSampleRate();
 
   let results;
-  if (useSub) {
+  if (wspr) {
+    // WSPR: one-shot scan. No subtract, no phase split, no AP yet.
+    // sampleRate argument uses the same signature convention but the
+    // decoder takes only (samples, sample_rate).
+    results = await workerDecode(fnDecodeName, [samples, sr]);
+  } else if (useSub) {
     if (ft4) {
       // FT4 one-shot subtract (internal 3-pass SIC).
       results = await workerDecode(fnSubtractName, [samples, strict, sr]);
@@ -751,10 +771,11 @@ async function runDecode(samples, sampleRate, onPartial) {
     results = await workerDecode(fnDecodeName, [samples, strict, sr]);
   }
 
-  // AP supplement: enabled by checkbox, auto-disabled by budget
+  // AP supplement: enabled by checkbox, auto-disabled by budget.
   // Skip AP when calling CQ (no target yet — AP would only produce false positives)
+  // or in WSPR mode (no sniper entry point).
   const isCqWaiting = qso.state === QSO_STATE.CALLING && !qso.dxCall;
-  const useAp = apCheck.checked && !apDisabledAuto && !isCqWaiting;
+  const useAp = apCheck.checked && !apDisabledAuto && !isCqWaiting && !wspr;
   const apTarget = useAp
     ? (apCall || (currentMode === 'scout' && qso.dxCall ? qso.dxCall : ''))
     : '';
@@ -1493,7 +1514,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '2026-04-11-k';
+const APP_VERSION = '2026-04-18-wspr';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);

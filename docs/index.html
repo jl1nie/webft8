@@ -487,6 +487,14 @@
   <details class="accordion">
     <summary>Decode</summary>
     <div class="field">
+      <label>Protocol</label>
+      <select id="protocol-select">
+        <option value="ft8" selected>FT8 (15 s)</option>
+        <option value="ft4">FT4 (7.5 s)</option>
+        <option value="wspr">WSPR (120 s)</option>
+      </select>
+    </div>
+    <div class="field">
       <label>Strictness</label>
       <select id="decode-strictness">
         <option value="0">Strict (low FP)</option>

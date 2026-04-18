@@ -398,6 +398,38 @@ export function decode_wav_subtract_f32(samples, strictness, sample_rate) {
 }
 
 /**
+ * Decode a 120-s WSPR slot. Runs coarse (freq, time) search with the
+ * default ±4-symbol time tolerance and 1400-1600 Hz freq sweep, then
+ * Fano-decodes every candidate above the sync-score threshold.
+ * @param {Int16Array} samples
+ * @param {number} sample_rate
+ * @returns {DecodedMessage[]}
+ */
+export function decode_wspr_wav(samples, sample_rate) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_wspr_wav(ptr0, len0, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * f32 variant of [`decode_wspr_wav`].
+ * @param {Float32Array} samples
+ * @param {number} sample_rate
+ * @returns {DecodedMessage[]}
+ */
+export function decode_wspr_wav_f32(samples, sample_rate) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_wspr_wav_f32(ptr0, len0, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
  * Encode a free-text FT8 message (Type 0, n3=0) as audio samples.
  *
  * `text` — up to 13 characters from the FT8 free-text alphabet.
@@ -480,6 +512,29 @@ export function encode_ft8(call1, call2, report, freq_hz) {
     var v4 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v4;
+}
+
+/**
+ * Encode a Type-1 WSPR message ("CALLSIGN GRID4 POWER_DBM") as 12 kHz
+ * PCM audio suitable for transmission.
+ * @param {string} callsign
+ * @param {string} grid
+ * @param {number} power_dbm
+ * @param {number} freq_hz
+ * @returns {Float32Array}
+ */
+export function encode_wspr(callsign, grid, power_dbm, freq_hz) {
+    const ptr0 = passStringToWasm0(callsign, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(grid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encode_wspr(ptr0, len0, ptr1, len1, power_dbm, freq_hz);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
 }
 
 function __wbg_get_imports() {
