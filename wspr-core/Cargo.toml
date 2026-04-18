@@ -9,3 +9,5 @@ description = "WebFT8 — WSPR protocol implementation on top of the generic mfs
 mfsk-core = { path = "../mfsk-core" }
 mfsk-fec = { path = "../mfsk-fec" }
 mfsk-msg = { path = "../mfsk-msg" }
+rustfft = "6"
+num-complex = "0.4"

@@ -21,9 +21,15 @@ use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncMode};
 use mfsk_fec::ConvFano;
 use mfsk_msg::Wspr50Message;
 
+pub mod decode;
+pub mod rx;
 pub mod sync_vector;
+pub mod tx;
 
+pub use decode::{decode_at, WsprDecode};
+pub use rx::demodulate_aligned;
 pub use sync_vector::WSPR_SYNC_VECTOR;
+pub use tx::{synthesize_audio, synthesize_type1};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Protocol ZST
