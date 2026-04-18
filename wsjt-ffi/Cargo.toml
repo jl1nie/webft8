@@ -15,8 +15,5 @@ ft4-core = { path = "../ft4-core" }
 mfsk-core = { path = "../mfsk-core" }
 mfsk-msg = { path = "../mfsk-msg" }
 
-# Header generation (include/wsjt.h) uses the cbindgen CLI.
-# After editing src/lib.rs, regenerate with:
-#   (cd wsjt-ffi && cbindgen --config cbindgen.toml --output include/wsjt.h)
-# The CI-style alternative of a build.rs was tried and produced empty
-# bindings under Rust 2024 — the CLI path is the reliable one.
+[build-dependencies]
+cbindgen = "0.29"
