@@ -30,6 +30,7 @@
 
 pub mod dsp;
 pub mod protocol;
+pub mod sync;
 
 pub use protocol::{
     DecodeContext, FecCodec, FecOpts, FecResult, FrameLayout, MessageCodec, MessageFields,
