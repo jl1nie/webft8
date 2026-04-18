@@ -135,13 +135,18 @@ pub fn decode_sniper_ap(
         &FT4_DOWNSAMPLE,
         target_freq,
         250.0,
-        0.8,
+        // Looser sync_min under sniper+AP: when AP locks ≥55 bits the FEC
+        // can recover signals whose coarse-sync score wouldn't qualify for
+        // a bare decode — we still need candidates to attempt the lock on.
+        0.5,
         DecodeDepth::BpAllOsd,
         max_cand,
         DecodeStrictness::Normal,
         eq_mode,
         REFINE_STEPS,
-        SYNC_Q_MIN,
+        // Halve the sync-quality gate for AP: locked bits carry the
+        // decision, so weak sync-quality signals may still succeed.
+        SYNC_Q_MIN / 2,
         ap_hint,
     )
 }

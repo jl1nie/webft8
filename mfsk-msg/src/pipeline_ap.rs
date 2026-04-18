@@ -173,24 +173,34 @@ pub fn process_candidate_ap<P: Protocol>(
                         }
                     }
                     if depth == DecodeDepth::BpAllOsd {
-                        let osd_opts = FecOpts {
-                            bp_max_iter: 30,
-                            osd_depth: 2,
-                            ap_mask: Some((&mask, &values)),
-                        };
-                        if let Some(r) = fec.decode_soft(llr, &osd_opts) {
-                            if r.hard_errors < max_errors {
-                                if let Some(res) = finalise_result::<P>(
-                                    &r,
-                                    cand,
-                                    &refined,
-                                    sync_cv,
-                                    pass_id,
-                                    cs_ref,
-                                    Some(&ap_cfg),
-                                    &fec,
-                                ) {
-                                    return Some(res);
+                        // With strong AP locks (≥55 bits) the OSD search
+                        // space shrinks dramatically — depth 3 is cheap and
+                        // adds useful recovery at moderate SNR. OSD depth 4
+                        // was measured to double the runtime for zero
+                        // threshold improvement under current sync tuning
+                        // (the bottleneck is upstream of FEC at very low
+                        // SNR), so it is not attempted here.
+                        let depths: &[u32] = if locked >= 55 { &[2, 3] } else { &[2] };
+                        for &od in depths {
+                            let osd_opts = FecOpts {
+                                bp_max_iter: 30,
+                                osd_depth: od,
+                                ap_mask: Some((&mask, &values)),
+                            };
+                            if let Some(r) = fec.decode_soft(llr, &osd_opts) {
+                                if r.hard_errors < max_errors {
+                                    if let Some(res) = finalise_result::<P>(
+                                        &r,
+                                        cand,
+                                        &refined,
+                                        sync_cv,
+                                        pass_id,
+                                        cs_ref,
+                                        Some(&ap_cfg),
+                                        &fec,
+                                    ) {
+                                        return Some(res);
+                                    }
                                 }
                             }
                         }
