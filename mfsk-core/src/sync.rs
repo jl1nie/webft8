@@ -158,7 +158,7 @@ pub fn coarse_sync<P: Protocol>(
     let d = SyncDims::of::<P>();
     let s = compute_spectra::<P>(audio);
     let ntones = P::NTONES as usize;
-    let pattern_len = P::SYNC_BLOCKS[0].pattern.len();
+    let pattern_len = P::SYNC_MODE.blocks()[0].pattern.len();
 
     // Leave room for NTONES-1 tones above the candidate bin.
     let ia = (freq_min / d.df).round() as usize;
@@ -176,7 +176,7 @@ pub fn coarse_sync<P: Protocol>(
     // Per-block (t_block_k, t0_block_k) accumulators. All-blocks score =
     // Σ t/Σ t0_mean. Trailing-(N-1)-blocks score excludes block 0 (the
     // FT8 heuristic that a late start can still sync on blocks 1..).
-    let num_blocks = P::SYNC_BLOCKS.len();
+    let num_blocks = P::SYNC_MODE.blocks().len();
 
     for (fi, i) in (ia..=ib).enumerate() {
         for lag in -d.jz..=d.jz {
@@ -184,7 +184,7 @@ pub fn coarse_sync<P: Protocol>(
             let mut t_blocks = vec![0.0f32; num_blocks];
             let mut t0_blocks = vec![0.0f32; num_blocks];
 
-            for (bk, block) in P::SYNC_BLOCKS.iter().enumerate() {
+            for (bk, block) in P::SYNC_MODE.blocks().iter().enumerate() {
                 let block_offset = d.nssy as i32 * block.start_symbol as i32;
                 for (n, &costas_n) in block.pattern.iter().enumerate() {
                     let m = lag + d.jstrt + block_offset + (d.nssy * n) as i32;
@@ -373,7 +373,7 @@ pub fn fine_sync_power<P: Protocol>(cd0: &[Complex<f32>], i0: usize) -> f32 {
 /// Per-block Costas correlation powers for diagnostics and the FT8 double-sync.
 pub fn fine_sync_power_per_block<P: Protocol>(cd0: &[Complex<f32>], i0: usize) -> Vec<f32> {
     let d = SyncDims::of::<P>();
-    P::SYNC_BLOCKS
+    P::SYNC_MODE.blocks()
         .iter()
         .map(|block| {
             let csync = make_costas_ref(block.pattern, d.ds_spb);
@@ -455,7 +455,7 @@ pub fn refine_candidate_double<P: Protocol>(
     search_steps: i32,
 ) -> FineSyncDetail {
     let d = SyncDims::of::<P>();
-    let blocks = P::SYNC_BLOCKS;
+    let blocks = P::SYNC_MODE.blocks();
     let first = &blocks[0];
     let last = &blocks[blocks.len() - 1];
     let csync_first = make_costas_ref(first.pattern, d.ds_spb);

@@ -38,7 +38,7 @@ pub fn equalize_local<P: Protocol>(cs: &mut [Complex<f32>]) {
 
     // Gather per-tone observations across all sync blocks.
     let mut obs: Vec<Vec<Complex<f32>>> = vec![Vec::new(); ntones];
-    for block in P::SYNC_BLOCKS {
+    for block in P::SYNC_MODE.blocks() {
         let start = block.start_symbol as usize;
         for (k, &tone) in block.pattern.iter().enumerate() {
             let t = tone as usize;

@@ -8,7 +8,7 @@
 //! heavy lifting is delegated to generic code in `mfsk-core`; this crate
 //! mainly wires the trait impls and provides a minimal decode entry point.
 
-use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock};
+use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock, SyncMode};
 use mfsk_fec::Ldpc174_91;
 use mfsk_msg::Wsjt77Message;
 
@@ -43,7 +43,7 @@ impl FrameLayout for Ft4 {
     const N_SYNC: u32 = 16; // 4 × 4-symbol Costas
     const N_SYMBOLS: u32 = 103; // active channel symbols (excludes 2 ramp symbols)
     const N_RAMP: u32 = 2; // 1 each side, NN2 = 105
-    const SYNC_BLOCKS: &'static [SyncBlock] = &FT4_SYNC_BLOCKS;
+    const SYNC_MODE: SyncMode = SyncMode::Block(&FT4_SYNC_BLOCKS);
     const T_SLOT_S: f32 = 7.5;
     const TX_START_OFFSET_S: f32 = 0.5;
 }

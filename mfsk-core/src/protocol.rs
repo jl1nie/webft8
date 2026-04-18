@@ -94,6 +94,41 @@ pub struct SyncBlock {
     pub pattern: &'static [u8],
 }
 
+/// How sync information is carried in the channel symbol stream.
+///
+/// * `Block` — dedicated contiguous sync blocks (Costas arrays) occupy
+///   specific symbol positions, with data symbols filling the rest. Used by
+///   FT8, FT4, FST4.
+/// * `Interleaved` — every channel symbol carries one sync bit (fixed
+///   position within the tone index) AND payload bits. The sync bits
+///   concatenated across the frame form a known pseudorandom vector.
+///   Used by WSPR: `tone = 2·data_bit + sync_bit`, so LSB of each
+///   4-FSK symbol reproduces the 162-bit `npr3` sync vector.
+#[derive(Copy, Clone, Debug)]
+pub enum SyncMode {
+    Block(&'static [SyncBlock]),
+    Interleaved {
+        /// Position of the sync bit within the tone index, LSB-first.
+        /// WSPR = 0 (LSB).
+        sync_bit_pos: u8,
+        /// Sync vector, one bit per frame symbol. Length == `N_SYMBOLS`.
+        vector: &'static [u8],
+    },
+}
+
+impl SyncMode {
+    /// Block list for `Block` mode; empty slice for `Interleaved`.
+    /// Sync/LLR/TX helpers that only handle block-structured sync can iterate
+    /// this unconditionally — they will no-op on WSPR-style protocols, which
+    /// then need their own interleaved-sync pipeline entry point.
+    pub const fn blocks(&self) -> &'static [SyncBlock] {
+        match self {
+            SyncMode::Block(b) => b,
+            SyncMode::Interleaved { .. } => &[],
+        }
+    }
+}
+
 /// Frame structure: data / sync symbol counts, the ordered list of sync
 /// blocks, and the TX-side nominal start offset.
 pub trait FrameLayout: Copy + Default + 'static {
@@ -112,9 +147,11 @@ pub trait FrameLayout: Copy + Default + 'static {
     /// first/last data symbol envelope). Applied at the transmitter.
     const N_RAMP: u32;
 
-    /// Ordered list of sync blocks. For FT8 this is three entries with the
-    /// same `pattern` pointer; for FT4, four different patterns.
-    const SYNC_BLOCKS: &'static [SyncBlock];
+    /// Sync-symbol layout. Most WSJT protocols use `SyncMode::Block` with
+    /// dedicated Costas blocks (FT8/FT4/FST4); WSPR uses `SyncMode::Interleaved`
+    /// with a per-symbol sync bit. Callers that only support block sync should
+    /// read `SYNC_MODE.blocks()` and treat an empty slice as "unsupported".
+    const SYNC_MODE: SyncMode;
 
     /// Nominal TX/RX slot length in seconds (informational — used by
     /// schedulers and UI, not by the DSP pipeline). FT8 = 15 s, FT4 = 7.5 s.

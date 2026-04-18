@@ -79,7 +79,7 @@ pub fn symbol_spectra<P: Protocol>(cd0: &[Complex<f32>], i_start: usize) -> Vec<
 ///
 /// FT8: 2 chunks `[(7, 29), (43, 29)]`. FT4: 3 chunks `[(4, 29), (37, 29), (70, 29)]`.
 fn data_chunks<P: Protocol>() -> Vec<(usize, usize)> {
-    let blocks = P::SYNC_BLOCKS;
+    let blocks = P::SYNC_MODE.blocks();
     let mut chunks = Vec::with_capacity(blocks.len().saturating_sub(1));
     for i in 0..blocks.len().saturating_sub(1) {
         let after = blocks[i].start_symbol as usize + blocks[i].pattern.len();
@@ -247,7 +247,7 @@ pub fn compute_snr_db<P: Protocol>(cs: &[Complex<f32>], itone: &[u8]) -> f32 {
 pub fn sync_quality<P: Protocol>(cs: &[Complex<f32>]) -> u32 {
     let ntones = P::NTONES as usize;
     let mut count = 0u32;
-    for block in P::SYNC_BLOCKS {
+    for block in P::SYNC_MODE.blocks() {
         let start = block.start_symbol as usize;
         for (t, &expected) in block.pattern.iter().enumerate() {
             let sym = start + t;

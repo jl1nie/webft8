@@ -18,7 +18,7 @@
 //! - K1JT et al., "The FST4 and FST4W Protocols", QEX 2021
 //! - WSJT-X `lib/fst4/` — `fst4_params.f90`, `genfst4.f90`
 
-use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock};
+use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock, SyncMode};
 use mfsk_fec::Ldpc240_101;
 use mfsk_msg::Wsjt77Message;
 
@@ -57,7 +57,7 @@ impl FrameLayout for Fst4s60 {
     const N_SYNC: u32 = 40; // 5 × 8
     const N_SYMBOLS: u32 = 160;
     const N_RAMP: u32 = 0; // GFSK synth handles ramp internally
-    const SYNC_BLOCKS: &'static [SyncBlock] = &FST4_SYNC_BLOCKS;
+    const SYNC_MODE: SyncMode = SyncMode::Block(&FST4_SYNC_BLOCKS);
     const T_SLOT_S: f32 = 60.0;
     // FST4 transmissions start ~1 s after the slot boundary (per WSJT-X).
     const TX_START_OFFSET_S: f32 = 1.0;
@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(<Fst4s60 as FrameLayout>::N_SYMBOLS, 160);
         assert_eq!(<Fst4s60 as FrameLayout>::N_DATA, 120);
         assert_eq!(<Fst4s60 as FrameLayout>::N_SYNC, 40);
-        let blocks = <Fst4s60 as FrameLayout>::SYNC_BLOCKS;
+        let blocks = <Fst4s60 as FrameLayout>::SYNC_MODE.blocks();
         assert_eq!(blocks.len(), 5);
         assert_eq!(
             blocks.iter().map(|b| b.start_symbol).collect::<Vec<_>>(),

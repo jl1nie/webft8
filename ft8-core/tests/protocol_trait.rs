@@ -26,7 +26,7 @@ fn ft8_associated_constants() {
     assert_eq!(<Ft8 as FrameLayout>::N_SYNC, 21);
     assert_eq!(<Ft8 as FrameLayout>::N_SYMBOLS, 79);
     assert_eq!(<Ft8 as FrameLayout>::N_RAMP, 0);
-    let blocks = <Ft8 as FrameLayout>::SYNC_BLOCKS;
+    let blocks = <Ft8 as FrameLayout>::SYNC_MODE.blocks();
     assert_eq!(blocks.len(), 3);
     for b in blocks {
         assert_eq!(b.pattern, &[3, 1, 4, 0, 6, 5, 2]);

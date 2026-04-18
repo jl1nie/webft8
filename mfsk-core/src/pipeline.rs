@@ -252,7 +252,7 @@ pub fn process_candidate_basic<P: Protocol>(
 
 /// Re-encode the decoded 77-bit payload (plus CRC-14) back into tones for
 /// SNR estimation. Uses the protocol's `Fec` for the LDPC encode step and
-/// `P::SYNC_BLOCKS` / `P::GRAY_MAP` for the tone layout.
+/// `P::SYNC_MODE.blocks()` / `P::GRAY_MAP` for the tone layout.
 fn encode_tones_for_snr<P: Protocol>(msg77: &[u8; 77], fec: &P::Fec) -> Vec<u8> {
     // Build 91-bit info: 77 msg + 14 CRC (the FEC expects this layout).
     let mut info = vec![0u8; 91];

@@ -14,7 +14,7 @@ use crate::Protocol;
 ///
 /// FT8: `[(7, 29), (43, 29)]`. FT4: `[(4, 29), (37, 29), (70, 29)]`.
 pub fn data_chunks<P: Protocol>() -> Vec<(usize, usize)> {
-    let blocks = P::SYNC_BLOCKS;
+    let blocks = P::SYNC_MODE.blocks();
     let mut chunks = Vec::with_capacity(blocks.len().saturating_sub(1));
     for i in 0..blocks.len().saturating_sub(1) {
         let after = blocks[i].start_symbol as usize + blocks[i].pattern.len();
@@ -39,7 +39,7 @@ pub fn codeword_to_itone<P: Protocol>(cw: &[u8]) -> Vec<u8> {
 
     let mut itone = vec![0u8; n_sym];
 
-    for block in P::SYNC_BLOCKS {
+    for block in P::SYNC_MODE.blocks() {
         let start = block.start_symbol as usize;
         for (i, &c) in block.pattern.iter().enumerate() {
             itone[start + i] = c;

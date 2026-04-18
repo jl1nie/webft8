@@ -31,7 +31,7 @@ pub mod message;
 pub mod hash_table;
 pub mod resample;
 
-use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock};
+use mfsk_core::{FrameLayout, ModulationParams, Protocol, ProtocolId, SyncBlock, SyncMode};
 use mfsk_fec::Ldpc174_91;
 use mfsk_msg::Wsjt77Message;
 
@@ -60,7 +60,7 @@ impl FrameLayout for Ft8 {
     const N_SYNC: u32 = params::NS as u32;
     const N_SYMBOLS: u32 = params::NN as u32;
     const N_RAMP: u32 = 0; // ramp is internal to gfsk::synth
-    const SYNC_BLOCKS: &'static [SyncBlock] = &FT8_SYNC_BLOCKS;
+    const SYNC_MODE: SyncMode = SyncMode::Block(&FT8_SYNC_BLOCKS);
     const T_SLOT_S: f32 = 15.0;
     const TX_START_OFFSET_S: f32 = 0.5;
 }
