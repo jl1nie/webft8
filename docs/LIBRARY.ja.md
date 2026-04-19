@@ -380,84 +380,124 @@ hound     = "3"   # WAV 読み込み用 (例示)
 必要なプロトコル分だけ依存させれば十分で、ここでは全部入りの例を
 示す。
 
-### 5.2 最小例: FT8 WAV ファイルをデコードする
+### 5.2 合成を活かした最小例 — `<P: Protocol>` 1 本で FT8 / FT4 を共通処理
 
-15 秒の WAV (どのサンプリングレートでも可) を読み、含まれる FT8 信号を
-順に標準出力へ書き出す完結したプログラム:
+§2 で見たトレイト合成 (`Ft4` / `Wspr` など) がそのまま呼び出し側でも
+使える。`mfsk_core::pipeline::decode_frame::<P>` は `P: Protocol` を型
+引数に取る汎用関数で、共通のスロットデコードロジックが入っている。
+
+以下は WAV ファイルを読み込み、同じヘルパー関数 `decode_slot::<P>` を
+型引数だけ差し替えて FT8 と FT4 の双方に適用する完結プログラム。
+出力の 77 bit メッセージも `Wsjt77Message` で共有されているため、
+`unpack77_with_hash` は両者に再利用できる。
 
 ```rust
-use ft8_core::decode::{decode_frame, DecodeDepth};
+use ft4_core::Ft4;
+use ft4_core::decode::FT4_DOWNSAMPLE;
+use ft8_core::Ft8;
+use ft8_core::downsample::FT8_CFG;
+use mfsk_core::dsp::downsample::DownsampleCfg;
+use mfsk_core::equalize::EqMode;
+use mfsk_core::pipeline::{decode_frame, DecodeDepth, DecodeResult, DecodeStrictness};
+use mfsk_core::Protocol;
 use mfsk_msg::{wsjt77::unpack77_with_hash, CallsignHashTable};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. WAV を 12 kHz i16 に揃える
-    let mut reader = hound::WavReader::open("ft8.wav")?;
-    let spec = reader.spec();
-    let samples_raw: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>()?;
-    let samples = if spec.sample_rate == 12_000 {
-        samples_raw
-    } else {
-        mfsk_core::dsp::resample::resample_to_12k(&samples_raw, spec.sample_rate)
-    };
-
-    // 2. デコード実行 (広帯域、100–3000 Hz、BP+OSD、候補上限 200)
-    let results = decode_frame(
-        &samples,
-        /*freq_min*/  100.0,
-        /*freq_max*/  3000.0,
-        /*sync_min*/  1.5,
+/// `P` を差し替えれば FT8 でも FT4 でも (FST4 でも) 同じコードが走る。
+/// 内部では `P::Fec` / `P::Msg` / `P::SYNC_MODE` などが monomorphize で
+/// 埋め込まれ、LLVM はプロトコル固有の関数として最適化する。
+fn decode_slot<P: Protocol>(
+    audio: &[i16],
+    cfg: &DownsampleCfg,
+    freq_range: (f32, f32),
+    sync_min: f32,
+    max_cand: usize,
+) -> Vec<DecodeResult> {
+    let (results, _fft_cache) = decode_frame::<P>(
+        audio,
+        cfg,
+        freq_range.0,
+        freq_range.1,
+        sync_min,
         /*freq_hint*/ None,
-        /*depth*/     DecodeDepth::BpAllOsd,
-        /*max_cand*/  200,
+        DecodeDepth::BpAllOsd,
+        max_cand,
+        DecodeStrictness::Normal,
+        EqMode::Off,
+        /*refine_steps*/ 10,
+        /*sync_q_min*/  0,
     );
+    results
+}
 
-    // 3. 77 bit メッセージをテキストに展開して出力
-    let mut hash = CallsignHashTable::new();
+fn print_results(tag: &str, hash: &mut CallsignHashTable, results: Vec<DecodeResult>) {
     for r in results {
-        if let Some(text) = unpack77_with_hash(&r.message77, &hash) {
-            println!(
-                "{:7.1} Hz  dt {:+.2} s  snr {:+.0} dB  {}",
-                r.freq_hz, r.dt_sec, r.snr_db, text,
-            );
-            // 既知のコールサインをハッシュテーブルに登録し、後続スロットで
-            // `<…>` 省略形式が実コールサインに解決できるようにする。
-            for w in text.split_whitespace() {
-                if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '/') {
-                    hash.insert(w);
-                }
+        let Some(text) = unpack77_with_hash(&r.message77, hash) else { continue };
+        println!(
+            "[{tag}] {:7.1} Hz  dt {:+.2} s  snr {:+.0} dB  {text}",
+            r.freq_hz, r.dt_sec, r.snr_db,
+        );
+        // 既知のコールサインを登録しておくと、後続スロットで `<…>` 省略形が
+        // 実コールサインに解決できるようになる。
+        for w in text.split_whitespace() {
+            if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '/') {
+                hash.insert(w);
             }
         }
     }
+}
+
+fn load_wav_12k(path: &str) -> Result<Vec<i16>, Box<dyn std::error::Error>> {
+    let mut reader = hound::WavReader::open(path)?;
+    let spec = reader.spec();
+    let raw: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>()?;
+    Ok(if spec.sample_rate == 12_000 {
+        raw
+    } else {
+        mfsk_core::dsp::resample::resample_to_12k(&raw, spec.sample_rate)
+    })
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ft8_audio = load_wav_12k("ft8.wav")?;   // 15 秒スロット
+    let ft4_audio = load_wav_12k("ft4.wav")?;   // 7.5 秒スロット
+    let mut hash = CallsignHashTable::new();
+
+    // 同じ `decode_slot` を型引数だけ差し替えて呼ぶ。
+    let ft8_results = decode_slot::<Ft8>(&ft8_audio, &FT8_CFG,
+                                         (100.0, 3000.0), 1.5, 200);
+    print_results("FT8", &mut hash, ft8_results);
+
+    let ft4_results = decode_slot::<Ft4>(&ft4_audio, &FT4_DOWNSAMPLE,
+                                         (300.0, 2700.0), 1.2, 50);
+    print_results("FT4", &mut hash, ft4_results);
+
     Ok(())
 }
 ```
 
-上から順に「WAV 読み → 12 kHz へリサンプル → `decode_frame` 呼び出し →
-77 bit 復元」と並んでおり、この段取りは FT4 / FST4 でもそのまま通用する
-(使うクレートと関数名が変わるだけ)。
+トレイト合成の効用が一行で現れる箇所が `decode_slot::<Ft8>(...)` と
+`decode_slot::<Ft4>(...)` の対比である。両者は同じ関数本体を共有
+しながら、FEC (LDPC(174, 91))・メッセージコーデック (77-bit)・
+同期方式 (`SyncMode::Block`) は各 ZST の trait 実装から自動的に
+選ばれる。FST4-60A も `Fst4s60` を渡せば同じ枠組みで動く (ただし
+FST4 のサブモード用 `DownsampleCfg` は本稿執筆時点ではまだ
+追加していない)。
 
-### 5.3 FT4 へ差し替える
+### 5.3 WSPR — 別系統の復調 (abstraction と両立する形で)
 
-呼び出し側の流れは同じで、使う型と関数だけが変わる:
-
-```rust
-use ft4_core::decode::decode_frame;   // FT8 版と同名だが別クレート
-// 7.5 秒スロットの探索は通常 300–2700 Hz、sync_min=1.2 程度
-let results = decode_frame(&samples, 300.0, 2700.0, 1.2, 50);
-```
-
-メッセージは FT8 と同じ `Wsjt77Message` (77 bit) なので、
-`unpack77_with_hash` はそのまま再利用できる。
-
-### 5.4 WSPR デコード
-
-WSPR はメッセージが 77 bit ではなく 50 bit なので、結果構造体に
-復元済みの `WsprMessage` (Type 1 / 2 / 3 を識別する enum) が
-直接入る。
+WSPR は 12 kHz で直接シンボル長 (8192 サンプル) の FFT を取る方式で、
+FT 系の「ダウンサンプリングしてからシンボル同期」という流れと
+ステージ構成が異なる。そのため `decode_frame::<Wspr>` の形では提供
+せず、`wspr-core` が独自のエントリポイントを用意している。ただし
+内部で使っている FEC (`ConvFano`) とメッセージコーデック
+(`Wspr50Message`) は `Wspr: Protocol` の関連型として宣言済みで、
+抽象の枠組みからは外れていない。
 
 ```rust
 use mfsk_msg::WsprMessage;
 use wspr_core::decode::decode_scan_default;
+
+let samples_f32: Vec<f32> = /* 120 秒 × 12 kHz の f32 サンプル */;
 
 let decodes = decode_scan_default(&samples_f32, /*sample_rate*/ 12_000);
 for d in decodes {
@@ -469,7 +509,7 @@ for d in decodes {
             println!("{:7.2} Hz  {} {}dBm", d.freq_hz, callsign, power_dbm);
         }
         WsprMessage::Type3 { callsign_hash, grid6, power_dbm } => {
-            // ハッシュは Type 1 の過去受信から解決できる場合がある
+            // ハッシュは過去の Type-1 受信から解決できる場合がある
             println!("{:7.2} Hz  <#{:05x}> {} {}dBm",
                      d.freq_hz, callsign_hash, grid6, power_dbm);
         }
@@ -477,13 +517,12 @@ for d in decodes {
 }
 ```
 
-`decode_scan_default` が粗同期 (周波数×時刻探索) も込みでスロット全体を
-スキャンするため、呼び出し側は WAV を `f32` サンプルとして渡すだけで
-よい。周波数や時刻のヒントを与える場合は
-`wspr_core::decode::decode_at(samples, rate, start_sample, freq_hz)`
-を直接呼ぶ。
+`decode_scan_default` が粗同期 (周波数×時刻探索) を込みでスロット全体を
+スキャンする。周波数・開始サンプルが既知の場合は
+`wspr_core::decode::decode_at(samples, rate, start_sample, freq_hz)` を
+直接呼べば粗同期を省略できる。
 
-### 5.5 Sniper モード + AP hint
+### 5.4 Sniper モード + AP hint
 
 狭帯域 (±500 Hz 程度) に絞って AP hint を与えると、より弱い信号まで
 引き出せる:

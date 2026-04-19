@@ -392,83 +392,127 @@ hound     = "3"   # for WAV reading (example only)
 Pull in only the protocol crates you actually need; the example below
 shows them all.
 
-### 5.2 Minimal example — decoding an FT8 WAV file
+### 5.2 Using the composition — one `<P: Protocol>` helper for FT8 and FT4
 
-A complete program that reads a 15-second WAV file at any sample
-rate, decodes it, and prints every recovered message:
+The same ZSTs shown composing in §2 (`Ft4`, `Wspr`, …) can be passed
+directly to `mfsk_core::pipeline::decode_frame::<P>`, a generic
+function that holds the shared slot-decode logic. Writing one small
+helper parameterised on `P: Protocol` and calling it with different
+ZSTs is the most direct way to see the composition at work.
+
+The program below reads FT8 and FT4 WAV files, runs them through the
+same `decode_slot::<P>` helper with only the type argument and DSP
+config changing, and prints every recovered message:
 
 ```rust
-use ft8_core::decode::{decode_frame, DecodeDepth};
+use ft4_core::Ft4;
+use ft4_core::decode::FT4_DOWNSAMPLE;
+use ft8_core::Ft8;
+use ft8_core::downsample::FT8_CFG;
+use mfsk_core::dsp::downsample::DownsampleCfg;
+use mfsk_core::equalize::EqMode;
+use mfsk_core::pipeline::{decode_frame, DecodeDepth, DecodeResult, DecodeStrictness};
+use mfsk_core::Protocol;
 use mfsk_msg::{wsjt77::unpack77_with_hash, CallsignHashTable};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Load WAV and resample to 12 kHz i16 if needed.
-    let mut reader = hound::WavReader::open("ft8.wav")?;
-    let spec = reader.spec();
-    let raw: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>()?;
-    let samples = if spec.sample_rate == 12_000 {
-        raw
-    } else {
-        mfsk_core::dsp::resample::resample_to_12k(&raw, spec.sample_rate)
-    };
-
-    // 2. Decode the slot (wide-band, 100–3000 Hz, BP+OSD, up to 200 candidates).
-    let results = decode_frame(
-        &samples,
-        /*freq_min*/  100.0,
-        /*freq_max*/  3000.0,
-        /*sync_min*/  1.5,
+/// Swap `P` for FT8 / FT4 / (FST4) and the same function works. Inside,
+/// `P::Fec`, `P::Msg`, and `P::SYNC_MODE` get specialised at monomorphisation
+/// time — LLVM sees a fully resolved per-protocol function.
+fn decode_slot<P: Protocol>(
+    audio: &[i16],
+    cfg: &DownsampleCfg,
+    freq_range: (f32, f32),
+    sync_min: f32,
+    max_cand: usize,
+) -> Vec<DecodeResult> {
+    let (results, _fft_cache) = decode_frame::<P>(
+        audio,
+        cfg,
+        freq_range.0,
+        freq_range.1,
+        sync_min,
         /*freq_hint*/ None,
-        /*depth*/     DecodeDepth::BpAllOsd,
-        /*max_cand*/  200,
+        DecodeDepth::BpAllOsd,
+        max_cand,
+        DecodeStrictness::Normal,
+        EqMode::Off,
+        /*refine_steps*/ 10,
+        /*sync_q_min*/  0,
     );
+    results
+}
 
-    // 3. Unpack each 77-bit message into text and print.
-    let mut hash = CallsignHashTable::new();
+fn print_results(tag: &str, hash: &mut CallsignHashTable, results: Vec<DecodeResult>) {
     for r in results {
-        if let Some(text) = unpack77_with_hash(&r.message77, &hash) {
-            println!(
-                "{:7.1} Hz  dt {:+.2} s  snr {:+.0} dB  {}",
-                r.freq_hz, r.dt_sec, r.snr_db, text,
-            );
-            // Remember any callsigns we see so that subsequent slots can
-            // resolve the `<…>` hash-abbreviated form back to real calls.
-            for w in text.split_whitespace() {
-                if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '/') {
-                    hash.insert(w);
-                }
+        let Some(text) = unpack77_with_hash(&r.message77, hash) else { continue };
+        println!(
+            "[{tag}] {:7.1} Hz  dt {:+.2} s  snr {:+.0} dB  {text}",
+            r.freq_hz, r.dt_sec, r.snr_db,
+        );
+        // Remember callsigns so that subsequent slots can resolve the
+        // `<…>` hash-abbreviated form back to a real call.
+        for w in text.split_whitespace() {
+            if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '/') {
+                hash.insert(w);
             }
         }
     }
+}
+
+fn load_wav_12k(path: &str) -> Result<Vec<i16>, Box<dyn std::error::Error>> {
+    let mut reader = hound::WavReader::open(path)?;
+    let spec = reader.spec();
+    let raw: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>()?;
+    Ok(if spec.sample_rate == 12_000 {
+        raw
+    } else {
+        mfsk_core::dsp::resample::resample_to_12k(&raw, spec.sample_rate)
+    })
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ft8_audio = load_wav_12k("ft8.wav")?;   // 15-second slot
+    let ft4_audio = load_wav_12k("ft4.wav")?;   // 7.5-second slot
+    let mut hash = CallsignHashTable::new();
+
+    // Same helper, different type argument.
+    let ft8_results = decode_slot::<Ft8>(&ft8_audio, &FT8_CFG,
+                                         (100.0, 3000.0), 1.5, 200);
+    print_results("FT8", &mut hash, ft8_results);
+
+    let ft4_results = decode_slot::<Ft4>(&ft4_audio, &FT4_DOWNSAMPLE,
+                                         (300.0, 2700.0), 1.2, 50);
+    print_results("FT4", &mut hash, ft4_results);
+
     Ok(())
 }
 ```
 
-The flow — load WAV → resample to 12 kHz → `decode_frame` →
-unpack 77-bit message — carries over to FT4 and FST4 unchanged; only
-the crate and entry-point names differ.
+The payoff from §2's trait composition shows up at
+`decode_slot::<Ft8>(...)` versus `decode_slot::<Ft4>(...)`: the same
+function body is reused, while the FEC (LDPC(174, 91)), message
+codec (77-bit), and sync layout (`SyncMode::Block`) are picked up
+automatically from each ZST's trait impls. FST4-60A works the same
+way when called as `decode_slot::<Fst4s60>(...)`, though the
+corresponding `DownsampleCfg` has not been exposed in the crate yet
+at the time of writing.
 
-### 5.3 Switching to FT4
+### 5.3 WSPR — a separate demod path that still fits the abstraction
 
-Same shape, different crate:
-
-```rust
-use ft4_core::decode::decode_frame;   // same name, different crate
-// 7.5-second slot — typical search is 300–2700 Hz with sync_min ≈ 1.2.
-let results = decode_frame(&samples, 300.0, 2700.0, 1.2, 50);
-```
-
-FT4's message is the same 77-bit `Wsjt77Message` FT8 uses, so
-`unpack77_with_hash` is reused as-is.
-
-### 5.4 Decoding WSPR
-
-WSPR uses a 50-bit message rather than 77-bit, so each decode result
-already carries a fully-parsed `WsprMessage` enum (Type 1 / 2 / 3):
+WSPR takes symbol-length FFTs directly at 12 kHz rather than
+decimating to an FT-style baseband first, so its demodulation
+pipeline is staged differently and isn't offered via
+`decode_frame::<Wspr>`. `wspr-core` exposes its own entry points.
+The FEC (`ConvFano`) and message codec (`Wspr50Message`) are still
+declared as associated types on `impl Protocol for Wspr`, so the
+trait surface remains consistent — only the slot-level decoder
+differs.
 
 ```rust
 use mfsk_msg::WsprMessage;
 use wspr_core::decode::decode_scan_default;
+
+let samples_f32: Vec<f32> = /* 120 s × 12 kHz of f32 samples */;
 
 let decodes = decode_scan_default(&samples_f32, /*sample_rate*/ 12_000);
 for d in decodes {
@@ -488,13 +532,12 @@ for d in decodes {
 }
 ```
 
-`decode_scan_default` handles the full (frequency × time) coarse
-search over the slot; the caller only needs to pass f32 samples.
-If a frequency / start-sample hint is already known, call
-`wspr_core::decode::decode_at(samples, rate, start_sample, freq_hz)`
-directly to skip the scan.
+`decode_scan_default` runs the (frequency × time) coarse search over
+the whole slot internally. If the frequency and start sample are
+already known, `wspr_core::decode::decode_at(samples, rate,
+start_sample, freq_hz)` bypasses the scan.
 
-### 5.5 Sniper mode + AP hint
+### 5.4 Sniper mode + AP hint
 
 Narrowing the search to ±500 Hz and supplying an a-priori hint lets
 the decoder recover weaker signals:
