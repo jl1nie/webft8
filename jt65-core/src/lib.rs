@@ -32,6 +32,7 @@ use mfsk_msg::Jt72Codec;
 pub mod gray;
 pub mod interleave;
 pub mod rx;
+pub mod search;
 pub mod sync_pattern;
 pub mod tx;
 
@@ -64,6 +65,52 @@ pub fn decode_at(
         *bit = (word >> shift) & 1;
     }
     mfsk_msg::Jt72Codec::default().unpack(&payload, &DecodeContext::default())
+}
+
+/// One successful JT65 decode with its alignment info.
+#[derive(Clone, Debug)]
+pub struct Jt65Decode {
+    pub message: mfsk_msg::Jt72Message,
+    pub freq_hz: f32,
+    pub start_sample: usize,
+}
+
+/// Scan an audio buffer for JT65 frames at any (freq, time) within
+/// the search window: runs [`search::coarse_search`] and tries
+/// [`decode_at`] on each candidate in score order, collapsing
+/// duplicate decodes (same message ±2 Hz / ±1 symbol).
+pub fn decode_scan(
+    audio: &[f32],
+    sample_rate: u32,
+    nominal_start_sample: usize,
+    params: &search::SearchParams,
+) -> Vec<Jt65Decode> {
+    use mfsk_core::ModulationParams;
+    let nsps = (sample_rate as f32 * <Jt65 as ModulationParams>::SYMBOL_DT).round() as usize;
+    let cands = search::coarse_search(audio, sample_rate, nominal_start_sample, params);
+    let mut seen: Vec<Jt65Decode> = Vec::new();
+    for c in cands {
+        let Some(msg) = decode_at(audio, sample_rate, c.start_sample, c.freq_hz) else {
+            continue;
+        };
+        let dup = seen.iter().any(|prev| {
+            prev.message == msg
+                && (prev.freq_hz - c.freq_hz).abs() <= 2.0
+                && (prev.start_sample as i64 - c.start_sample as i64).abs() <= nsps as i64
+        });
+        if !dup {
+            seen.push(Jt65Decode {
+                message: msg,
+                freq_hz: c.freq_hz,
+                start_sample: c.start_sample,
+            });
+        }
+    }
+    seen
+}
+
+pub fn decode_scan_default(audio: &[f32], sample_rate: u32) -> Vec<Jt65Decode> {
+    decode_scan(audio, sample_rate, 0, &search::SearchParams::default())
 }
 
 /// JT65A protocol marker.

@@ -26,11 +26,13 @@ use mfsk_msg::Jt72Codec;
 
 pub mod interleave;
 pub mod rx;
+pub mod search;
 pub mod sync_pattern;
 pub mod tx;
 
 pub use interleave::{deinterleave, deinterleave_llrs, interleave};
 pub use rx::demodulate_aligned;
+pub use search::{coarse_search, SearchParams, SyncCandidate};
 pub use sync_pattern::{JT9_ISYNC, JT9_SYNC_BLOCKS, JT9_SYNC_POSITIONS};
 pub use tx::{encode_channel_symbols, synthesize_audio, synthesize_standard};
 
@@ -50,6 +52,53 @@ pub fn decode_at(
     let mut payload = [0u8; 72];
     payload.copy_from_slice(&res.info);
     mfsk_msg::Jt72Codec::default().unpack(&payload, &DecodeContext::default())
+}
+
+/// One successful JT9 decode with its alignment info.
+#[derive(Clone, Debug)]
+pub struct Jt9Decode {
+    pub message: mfsk_msg::Jt72Message,
+    pub freq_hz: f32,
+    pub start_sample: usize,
+}
+
+/// Scan an audio buffer for any JT9 frames: runs coarse (freq, time)
+/// search via [`search::coarse_search`] and tries [`decode_at`] on
+/// each candidate in score order, collapsing duplicates that decode
+/// to the same message within ±2 Hz / ±1 symbol.
+pub fn decode_scan(
+    audio: &[f32],
+    sample_rate: u32,
+    nominal_start_sample: usize,
+    params: &search::SearchParams,
+) -> Vec<Jt9Decode> {
+    use mfsk_core::ModulationParams;
+    let nsps = (sample_rate as f32 * <Jt9 as ModulationParams>::SYMBOL_DT).round() as usize;
+    let cands = search::coarse_search(audio, sample_rate, nominal_start_sample, params);
+    let mut seen: Vec<Jt9Decode> = Vec::new();
+    for c in cands {
+        let Some(msg) = decode_at(audio, sample_rate, c.start_sample, c.freq_hz) else {
+            continue;
+        };
+        let dup = seen.iter().any(|prev| {
+            prev.message == msg
+                && (prev.freq_hz - c.freq_hz).abs() <= 2.0
+                && (prev.start_sample as i64 - c.start_sample as i64).abs() <= nsps as i64
+        });
+        if !dup {
+            seen.push(Jt9Decode {
+                message: msg,
+                freq_hz: c.freq_hz,
+                start_sample: c.start_sample,
+            });
+        }
+    }
+    seen
+}
+
+/// Convenience: scan using [`search::SearchParams::default`].
+pub fn decode_scan_default(audio: &[f32], sample_rate: u32) -> Vec<Jt9Decode> {
+    decode_scan(audio, sample_rate, 0, &search::SearchParams::default())
 }
 
 /// JT9 protocol marker.
