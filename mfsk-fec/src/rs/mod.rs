@@ -166,10 +166,37 @@ impl Rs63_12 {
         out
     }
 
-    /// Decode a received codeword in the native Karn layout.
-    /// Returns `Some((corrected, err_count))` on success, `None`
-    /// when uncorrectable.
-    pub fn decode_native(&self, data: &[u8; Self::N_SYMBOLS]) -> Option<([u8; Self::K_SYMBOLS], u32)> {
+    /// Decode a received codeword in the native Karn layout with no
+    /// erasures. Returns `Some((corrected, err_count))` on success,
+    /// `None` when uncorrectable.
+    pub fn decode_native(
+        &self,
+        data: &[u8; Self::N_SYMBOLS],
+    ) -> Option<([u8; Self::K_SYMBOLS], u32)> {
+        self.decode_native_erasures(data, &[])
+    }
+
+    /// Like [`decode_native`] but also accepts a list of **erasure
+    /// positions** (symbol indices 0..=62 in the native codeword
+    /// layout that the caller has flagged as unreliable). Each
+    /// erasure lets RS correct one more symbol than the
+    /// ⌊(NROOTS)/2⌋ = 25 hard-error bound: the combined limit is
+    /// `2·errors + erasures ≤ NROOTS = 51`. Passing erasures is
+    /// particularly helpful at low SNR where the demodulator has
+    /// per-symbol confidence information.
+    ///
+    /// Ported from Phil Karn's `decode_rs.c` with the `no_eras > 0`
+    /// branch active. Duplicate or out-of-range entries in
+    /// `eras_pos` will produce `None` from the Chien search.
+    pub fn decode_native_erasures(
+        &self,
+        data: &[u8; Self::N_SYMBOLS],
+        eras_pos: &[u32],
+    ) -> Option<([u8; Self::K_SYMBOLS], u32)> {
+        let no_eras = eras_pos.len();
+        if no_eras > Self::NROOTS {
+            return None; // more erasures than parity — uncorrectable a priori
+        }
         let mut recd = *data;
 
         // 1. Syndromes — evaluate recd(x) at α^(FCR + i·PRIM) for i=0..NROOTS.
@@ -201,17 +228,41 @@ impl Rs63_12 {
             return Some((info, 0));
         }
 
-        // 2. Berlekamp-Massey to find the error locator polynomial.
+        // 2. Berlekamp-Massey. When erasures are supplied, initialise
+        //    λ(x) to the erasure locator polynomial
+        //        λ(x) = Π (1 + β_j·x), β_j = α^(PRIM·(NN−1−pos_j))
+        //    and start BM at r = el = no_eras.
         let mut lambda = [0u8; Self::NROOTS + 1];
         lambda[0] = 1;
         let mut b = [0u8; Self::NROOTS + 1];
         let mut t = [0u8; Self::NROOTS + 1];
+
+        if no_eras > 0 {
+            for &pos in eras_pos {
+                if pos as usize >= Self::NN {
+                    return None;
+                }
+            }
+            let e0 = Self::modnn(Self::PRIM * (Self::NN as u32 - 1 - eras_pos[0]));
+            lambda[1] = self.alpha_to[e0 as usize];
+            for i in 1..no_eras {
+                let u = Self::modnn(Self::PRIM * (Self::NN as u32 - 1 - eras_pos[i]));
+                for j in (1..=i + 1).rev() {
+                    let tmp = self.index_of[lambda[j - 1] as usize];
+                    if tmp != A0 {
+                        lambda[j] ^=
+                            self.alpha_to[Self::modnn(u + tmp as u32) as usize];
+                    }
+                }
+            }
+        }
+
         for i in 0..Self::NROOTS + 1 {
             b[i] = self.index_of[lambda[i] as usize];
         }
 
-        let mut el: i32 = 0;
-        for r in 1..=Self::NROOTS {
+        let mut el: i32 = no_eras as i32;
+        for r in (no_eras + 1)..=Self::NROOTS {
             // Discrepancy at step r (in poly form).
             let mut discr_r: u8 = 0;
             for i in 0..r {
@@ -238,8 +289,10 @@ impl Rs63_12 {
                         t[i + 1] = lambda[i + 1];
                     }
                 }
-                if 2 * el <= r as i32 - 1 {
-                    el = r as i32 - el;
+                // With erasures the BM invariant becomes
+                // 2·el ≤ r + no_eras − 1.
+                if 2 * el <= r as i32 + no_eras as i32 - 1 {
+                    el = r as i32 + no_eras as i32 - el;
                     for i in 0..=Self::NROOTS {
                         b[i] = if lambda[i] == 0 {
                             A0
@@ -400,7 +453,24 @@ impl Rs63_12 {
 
     /// Decode JT65 symbols with the WSJT-X layout. Returns
     /// `Some((info, err_count))` or `None` if uncorrectable.
-    pub fn decode_jt65(&self, recd0: &[u8; Self::N_SYMBOLS]) -> Option<([u8; Self::K_SYMBOLS], u32)> {
+    pub fn decode_jt65(
+        &self,
+        recd0: &[u8; Self::N_SYMBOLS],
+    ) -> Option<([u8; Self::K_SYMBOLS], u32)> {
+        self.decode_jt65_erasures(recd0, &[])
+    }
+
+    /// JT65-layout decode with a caller-supplied list of **erasure
+    /// positions in the WSJT-X `sent[]` layout** (0..=50 = parity
+    /// reversed; 51..=62 = data reversed). The positions are
+    /// translated to the native Karn layout (identity mapping
+    /// `native = NN − 1 − wsjt` for both halves) before entering
+    /// [`decode_native_erasures`].
+    pub fn decode_jt65_erasures(
+        &self,
+        recd0: &[u8; Self::N_SYMBOLS],
+        eras_pos_wsjt: &[u32],
+    ) -> Option<([u8; Self::K_SYMBOLS], u32)> {
         let mut recd = [0u8; Self::N_SYMBOLS];
         for i in 0..Self::K_SYMBOLS {
             recd[i] = recd0[Self::NN - 1 - i];
@@ -408,7 +478,15 @@ impl Rs63_12 {
         for i in 0..Self::NROOTS {
             recd[Self::K_SYMBOLS + i] = recd0[Self::NROOTS - 1 - i];
         }
-        let (info_native, nerr) = self.decode_native(&recd)?;
+        // The WSJT-X ↔ native index relation is `native = NN − 1 − wsjt`
+        // on both halves of the codeword (verified against the loops
+        // above). Translate the caller's erasure positions.
+        let eras_native: Vec<u32> = eras_pos_wsjt
+            .iter()
+            .filter(|&&p| (p as usize) < Self::NN)
+            .map(|&p| (Self::NN as u32 - 1) - p)
+            .collect();
+        let (info_native, nerr) = self.decode_native_erasures(&recd, &eras_native)?;
         let mut info = [0u8; Self::K_SYMBOLS];
         for i in 0..Self::K_SYMBOLS {
             info[i] = info_native[Self::K_SYMBOLS - 1 - i];
@@ -541,6 +619,64 @@ mod tests {
                 assert_ne!(decoded, info, "must not decode to original beyond bound");
             }
         }
+    }
+
+    #[test]
+    fn erasures_only_all_51_parity() {
+        // 51 erasures on the parity block + 0 errors in data → should
+        // decode. Saturates the `2·errors + eras ≤ NROOTS = 51` bound.
+        let rs = Rs63_12::new();
+        let info: [u8; 12] = [9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 42, 21];
+        let mut cw = rs.encode_native(&info);
+        // Zero out parity (positions 12..63 in native layout) and
+        // mark them erased.
+        let mut eras = Vec::new();
+        for p in 12..63u32 {
+            cw[p as usize] = 0;
+            eras.push(p);
+        }
+        let (decoded, nerr) = rs
+            .decode_native_erasures(&cw, &eras)
+            .expect("51-erasure decode");
+        assert_eq!(decoded, info);
+        assert_eq!(nerr, 51);
+    }
+
+    #[test]
+    fn erasures_let_us_correct_beyond_25_errors() {
+        // Inject 30 symbol errors BUT tell the decoder where 20 of them
+        // are (erasures). That leaves 10 unknown error positions — well
+        // inside the new bound (`2·10 + 20 = 40 ≤ 51`).
+        let rs = Rs63_12::new();
+        let info: [u8; 12] = [1, 13, 25, 37, 49, 61, 5, 17, 29, 41, 53, 62];
+        let mut cw = rs.encode_native(&info);
+        // Flip 30 distinct positions. (i*2) mod 63 walks all residues
+        // once because gcd(2, 63) = 1, but dedupe defensively.
+        let positions: Vec<usize> = {
+            let mut s = Vec::with_capacity(30);
+            let mut used = [false; 63];
+            for i in 0..63 {
+                let p = (i * 2) % 63;
+                if !used[p] {
+                    used[p] = true;
+                    s.push(p);
+                    if s.len() == 30 {
+                        break;
+                    }
+                }
+            }
+            s
+        };
+        for (i, &p) in positions.iter().enumerate() {
+            let delta = ((i as u8 * 7 + 1) & 0x1f) | 1;
+            cw[p] ^= delta;
+        }
+        // Reveal the first 20 as erasures.
+        let eras: Vec<u32> = positions.iter().take(20).map(|&p| p as u32).collect();
+        let (decoded, _nerr) = rs
+            .decode_native_erasures(&cw, &eras)
+            .expect("20 erasures + 10 errors must decode");
+        assert_eq!(decoded, info);
     }
 
     #[test]

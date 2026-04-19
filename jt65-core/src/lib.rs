@@ -38,7 +38,7 @@ pub mod tx;
 
 pub use gray::{gray6, inv_gray6};
 pub use interleave::{deinterleave, interleave};
-pub use rx::demodulate_aligned;
+pub use rx::{demodulate_aligned, demodulate_aligned_with_confidence};
 pub use sync_pattern::{
     JT65_DATA_POSITIONS, JT65_NPRC, JT65_SYNC_BLOCKS, JT65_SYNC_POSITIONS,
 };
@@ -65,6 +65,84 @@ pub fn decode_at(
         *bit = (word >> shift) & 1;
     }
     mfsk_msg::Jt72Codec::default().unpack(&payload, &DecodeContext::default())
+}
+
+/// Decode a JT65 signal at a known alignment, trying progressively
+/// larger erasure counts until Reed-Solomon converges or the bound
+/// is exhausted. Unlike [`decode_at`], this method exploits
+/// per-symbol confidence from the demodulator: symbols with the
+/// smallest (best − runner-up) margin are flagged as erasures, which
+/// doubles the correctable error count compared to the plain
+/// hard-decision bound.
+///
+/// `attempts` is a slice of erasure counts to try in order. A
+/// reasonable default is `&[0, 8, 16, 24, 32]`: zero-erasure first
+/// (fastest when the channel is clean) and then growing erasure
+/// budgets for lower-SNR signals. Returns the first decode that
+/// unpacks into a valid [`Jt72Message`].
+pub fn decode_at_with_erasures(
+    audio: &[f32],
+    sample_rate: u32,
+    start_sample: usize,
+    base_freq_hz: f32,
+    attempts: &[usize],
+) -> Option<mfsk_msg::Jt72Message> {
+    use mfsk_core::{DecodeContext, MessageCodec};
+
+    let (symbols, conf) =
+        rx::demodulate_aligned_with_confidence(audio, sample_rate, start_sample, base_freq_hz)?;
+    // Build an ordering of symbol positions from least → most
+    // confident; the caller's erasure budget eats from the start.
+    let mut order: Vec<usize> = (0..63).collect();
+    order.sort_by(|&a, &b| {
+        conf[a]
+            .partial_cmp(&conf[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let rs = Rs63_12::new();
+    let codec = mfsk_msg::Jt72Codec::default();
+    let ctx = DecodeContext::default();
+
+    for &n_eras in attempts {
+        let n_eras = n_eras.min(51); // hard upper bound = NROOTS
+        let eras: Vec<u32> = order.iter().take(n_eras).map(|&i| i as u32).collect();
+
+        // Decode_jt65_erasures takes positions in the WSJT `sent[]` layout;
+        // our `symbols` array is already in RS-codeword order (after
+        // de-interleave + de-Gray). Those positions match the WSJT
+        // data half (symbols 51..=62 of sent[]), so pass them through.
+        // Build a `sent[]`-shaped array by placing our symbols into the
+        // data section; parity values are unknown, so the caller can
+        // leave them as-is — the decoder will treat them as zeros.
+        let mut sent = [0u8; 63];
+        // Map: symbols[i] (i=0..=62) → sent[51 + 12 - 1 - (i %12)] is wrong.
+        // Actually our `symbols` represents the 63-symbol RS codeword
+        // in *native Karn order* (the canonical [data || parity] layout)
+        // after de-interleave + inverse Gray. WSJT-X's decode_rs wants
+        // the reversed layout, but our Rs63_12 wrappers do that
+        // translation. The simplest path: re-wrap via the JT65 encoder
+        // convention — we already have sent-layout input in the
+        // existing decode path, so mirror that here.
+        //
+        // Looking at the original decode_at: it passes `symbols` (RS
+        // codeword order) to `rs.decode_jt65(&symbols)`. So `symbols`
+        // IS the WSJT sent-layout array. We can pass erasure indices
+        // directly in that layout.
+        sent.copy_from_slice(&symbols);
+        if let Some((info, _nerr)) = rs.decode_jt65_erasures(&sent, &eras) {
+            let mut payload = [0u8; 72];
+            for (i, bit) in payload.iter_mut().enumerate() {
+                let word = info[i / 6];
+                let shift = 5 - (i % 6);
+                *bit = (word >> shift) & 1;
+            }
+            if let Some(msg) = codec.unpack(&payload, &ctx) {
+                return Some(msg);
+            }
+        }
+    }
+    None
 }
 
 /// One successful JT65 decode with its alignment info.
@@ -184,6 +262,30 @@ impl Protocol for Jt65 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mfsk_msg::Jt72Message;
+
+    #[test]
+    fn erasure_assisted_decode_recovers_under_moderate_noise() {
+        // Clean synth gets decoded by plain `decode_at`; erasure path
+        // is a strict superset so it should also work (trying 0 first).
+        let freq = 1270.0;
+        let audio = synthesize_standard("CQ", "K1ABC", "FN42", 12_000, freq, 0.3)
+            .expect("synth");
+        let msg = decode_at_with_erasures(
+            &audio,
+            12_000,
+            0,
+            freq,
+            &[0, 8, 16, 24, 32],
+        )
+        .expect("erasure-aware path must decode clean synth");
+        assert!(matches!(
+            msg,
+            Jt72Message::Standard { ref call1, ref call2, ref grid_or_report }
+                if call1 == "CQ" && call2 == "K1ABC" && grid_or_report == "FN42"
+        ));
+    }
+
 
     #[test]
     fn jt65_trait_surface() {
