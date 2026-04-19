@@ -377,29 +377,141 @@ CPU budget is abundant.
 
 ## 5. Using from Rust
 
+### 5.1 Dependencies
+
 ```toml
 [dependencies]
-ft4-core = { path = "../rs-ft8n/ft4-core" }
-mfsk-msg = { path = "../rs-ft8n/mfsk-msg" }
+ft8-core  = { path = "../rs-ft8n/ft8-core" }
+ft4-core  = { path = "../rs-ft8n/ft4-core" }
+wspr-core = { path = "../rs-ft8n/wspr-core" }
+mfsk-core = { path = "../rs-ft8n/mfsk-core" }
+mfsk-msg  = { path = "../rs-ft8n/mfsk-msg" }
+hound     = "3"   # for WAV reading (example only)
 ```
 
+Pull in only the protocol crates you actually need; the example below
+shows them all.
+
+### 5.2 Minimal example — decoding an FT8 WAV file
+
+A complete program that reads a 15-second WAV file at any sample
+rate, decodes it, and prints every recovered message:
+
 ```rust
-use ft4_core::decode::{decode_frame, decode_sniper_ap, ApHint};
+use ft8_core::decode::{decode_frame, DecodeDepth};
+use mfsk_msg::{wsjt77::unpack77_with_hash, CallsignHashTable};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Load WAV and resample to 12 kHz i16 if needed.
+    let mut reader = hound::WavReader::open("ft8.wav")?;
+    let spec = reader.spec();
+    let raw: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>()?;
+    let samples = if spec.sample_rate == 12_000 {
+        raw
+    } else {
+        mfsk_core::dsp::resample::resample_to_12k(&raw, spec.sample_rate)
+    };
+
+    // 2. Decode the slot (wide-band, 100–3000 Hz, BP+OSD, up to 200 candidates).
+    let results = decode_frame(
+        &samples,
+        /*freq_min*/  100.0,
+        /*freq_max*/  3000.0,
+        /*sync_min*/  1.5,
+        /*freq_hint*/ None,
+        /*depth*/     DecodeDepth::BpAllOsd,
+        /*max_cand*/  200,
+    );
+
+    // 3. Unpack each 77-bit message into text and print.
+    let mut hash = CallsignHashTable::new();
+    for r in results {
+        if let Some(text) = unpack77_with_hash(&r.message77, &hash) {
+            println!(
+                "{:7.1} Hz  dt {:+.2} s  snr {:+.0} dB  {}",
+                r.freq_hz, r.dt_sec, r.snr_db, text,
+            );
+            // Remember any callsigns we see so that subsequent slots can
+            // resolve the `<…>` hash-abbreviated form back to real calls.
+            for w in text.split_whitespace() {
+                if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '/') {
+                    hash.insert(w);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+The flow — load WAV → resample to 12 kHz → `decode_frame` →
+unpack 77-bit message — carries over to FT4 and FST4 unchanged; only
+the crate and entry-point names differ.
+
+### 5.3 Switching to FT4
+
+Same shape, different crate:
+
+```rust
+use ft4_core::decode::decode_frame;   // same name, different crate
+// 7.5-second slot — typical search is 300–2700 Hz with sync_min ≈ 1.2.
+let results = decode_frame(&samples, 300.0, 2700.0, 1.2, 50);
+```
+
+FT4's message is the same 77-bit `Wsjt77Message` FT8 uses, so
+`unpack77_with_hash` is reused as-is.
+
+### 5.4 Decoding WSPR
+
+WSPR uses a 50-bit message rather than 77-bit, so each decode result
+already carries a fully-parsed `WsprMessage` enum (Type 1 / 2 / 3):
+
+```rust
+use mfsk_msg::WsprMessage;
+use wspr_core::decode::decode_scan_default;
+
+let decodes = decode_scan_default(&samples_f32, /*sample_rate*/ 12_000);
+for d in decodes {
+    match d.message {
+        WsprMessage::Type1 { callsign, grid, power_dbm } => {
+            println!("{:7.2} Hz  {} {} {}dBm", d.freq_hz, callsign, grid, power_dbm);
+        }
+        WsprMessage::Type2 { callsign, power_dbm } => {
+            println!("{:7.2} Hz  {} {}dBm", d.freq_hz, callsign, power_dbm);
+        }
+        WsprMessage::Type3 { callsign_hash, grid6, power_dbm } => {
+            // Hash may be resolvable via a Type-1 reception heard earlier.
+            println!("{:7.2} Hz  <#{:05x}> {} {}dBm",
+                     d.freq_hz, callsign_hash, grid6, power_dbm);
+        }
+    }
+}
+```
+
+`decode_scan_default` handles the full (frequency × time) coarse
+search over the slot; the caller only needs to pass f32 samples.
+If a frequency / start-sample hint is already known, call
+`wspr_core::decode::decode_at(samples, rate, start_sample, freq_hz)`
+directly to skip the scan.
+
+### 5.5 Sniper mode + AP hint
+
+Narrowing the search to ±500 Hz and supplying an a-priori hint lets
+the decoder recover weaker signals:
+
+```rust
+use ft4_core::decode::{decode_sniper_ap, ApHint};
 use mfsk_core::equalize::EqMode;
 
-let audio: Vec<i16> = /* 12 kHz PCM, 7.5 s */;
-
-// Wide-band decode
-for r in decode_frame(&audio, 300.0, 2700.0, 1.2, 50) {
-    println!("{:4.0} Hz  {:+.2} s  SNR {:+.0} dB", r.freq_hz, r.dt_sec, r.snr_db);
-}
-
-// Narrow-band "sniper" decode with AP hint
 let ap = ApHint::new().with_call1("CQ").with_call2("JA1ABC");
-for r in decode_sniper_ap(&audio, 1000.0, 15, EqMode::Adaptive, Some(&ap)) {
+for r in decode_sniper_ap(&samples, /*target_hz*/ 1000.0, /*max_cand*/ 15,
+                          EqMode::Adaptive, Some(&ap)) {
     // …
 }
 ```
+
+The FT8 equivalent is `ft8_core::decode::decode_sniper_sic` with the
+same signature shape.
 
 ## 6. C / C++ consumers via `wsjt-ffi`
 

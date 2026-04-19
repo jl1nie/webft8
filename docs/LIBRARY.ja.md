@@ -365,29 +365,142 @@ AP 対応版は `mfsk_msg::pipeline_ap` に配置 (AP hint 構築が
 
 ## 5. Rust から利用する
 
+### 5.1 依存関係
+
 ```toml
 [dependencies]
-ft4-core = { path = "../rs-ft8n/ft4-core" }
-mfsk-msg = { path = "../rs-ft8n/mfsk-msg" }
+ft8-core  = { path = "../rs-ft8n/ft8-core" }
+ft4-core  = { path = "../rs-ft8n/ft4-core" }
+wspr-core = { path = "../rs-ft8n/wspr-core" }
+mfsk-core = { path = "../rs-ft8n/mfsk-core" }
+mfsk-msg  = { path = "../rs-ft8n/mfsk-msg" }
+hound     = "3"   # WAV 読み込み用 (例示)
 ```
 
+必要なプロトコル分だけ依存させれば十分で、ここでは全部入りの例を
+示す。
+
+### 5.2 最小例: FT8 WAV ファイルをデコードする
+
+15 秒の WAV (どのサンプリングレートでも可) を読み、含まれる FT8 信号を
+順に標準出力へ書き出す完結したプログラム:
+
 ```rust
-use ft4_core::decode::{decode_frame, decode_sniper_ap, ApHint};
+use ft8_core::decode::{decode_frame, DecodeDepth};
+use mfsk_msg::{wsjt77::unpack77_with_hash, CallsignHashTable};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. WAV を 12 kHz i16 に揃える
+    let mut reader = hound::WavReader::open("ft8.wav")?;
+    let spec = reader.spec();
+    let samples_raw: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>()?;
+    let samples = if spec.sample_rate == 12_000 {
+        samples_raw
+    } else {
+        mfsk_core::dsp::resample::resample_to_12k(&samples_raw, spec.sample_rate)
+    };
+
+    // 2. デコード実行 (広帯域、100–3000 Hz、BP+OSD、候補上限 200)
+    let results = decode_frame(
+        &samples,
+        /*freq_min*/  100.0,
+        /*freq_max*/  3000.0,
+        /*sync_min*/  1.5,
+        /*freq_hint*/ None,
+        /*depth*/     DecodeDepth::BpAllOsd,
+        /*max_cand*/  200,
+    );
+
+    // 3. 77 bit メッセージをテキストに展開して出力
+    let mut hash = CallsignHashTable::new();
+    for r in results {
+        if let Some(text) = unpack77_with_hash(&r.message77, &hash) {
+            println!(
+                "{:7.1} Hz  dt {:+.2} s  snr {:+.0} dB  {}",
+                r.freq_hz, r.dt_sec, r.snr_db, text,
+            );
+            // 既知のコールサインをハッシュテーブルに登録し、後続スロットで
+            // `<…>` 省略形式が実コールサインに解決できるようにする。
+            for w in text.split_whitespace() {
+                if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '/') {
+                    hash.insert(w);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+上から順に「WAV 読み → 12 kHz へリサンプル → `decode_frame` 呼び出し →
+77 bit 復元」と並んでおり、この段取りは FT4 / FST4 でもそのまま通用する
+(使うクレートと関数名が変わるだけ)。
+
+### 5.3 FT4 へ差し替える
+
+呼び出し側の流れは同じで、使う型と関数だけが変わる:
+
+```rust
+use ft4_core::decode::decode_frame;   // FT8 版と同名だが別クレート
+// 7.5 秒スロットの探索は通常 300–2700 Hz、sync_min=1.2 程度
+let results = decode_frame(&samples, 300.0, 2700.0, 1.2, 50);
+```
+
+メッセージは FT8 と同じ `Wsjt77Message` (77 bit) なので、
+`unpack77_with_hash` はそのまま再利用できる。
+
+### 5.4 WSPR デコード
+
+WSPR はメッセージが 77 bit ではなく 50 bit なので、結果構造体に
+復元済みの `WsprMessage` (Type 1 / 2 / 3 を識別する enum) が
+直接入る。
+
+```rust
+use mfsk_msg::WsprMessage;
+use wspr_core::decode::decode_scan_default;
+
+let decodes = decode_scan_default(&samples_f32, /*sample_rate*/ 12_000);
+for d in decodes {
+    match d.message {
+        WsprMessage::Type1 { callsign, grid, power_dbm } => {
+            println!("{:7.2} Hz  {} {} {}dBm", d.freq_hz, callsign, grid, power_dbm);
+        }
+        WsprMessage::Type2 { callsign, power_dbm } => {
+            println!("{:7.2} Hz  {} {}dBm", d.freq_hz, callsign, power_dbm);
+        }
+        WsprMessage::Type3 { callsign_hash, grid6, power_dbm } => {
+            // ハッシュは Type 1 の過去受信から解決できる場合がある
+            println!("{:7.2} Hz  <#{:05x}> {} {}dBm",
+                     d.freq_hz, callsign_hash, grid6, power_dbm);
+        }
+    }
+}
+```
+
+`decode_scan_default` が粗同期 (周波数×時刻探索) も込みでスロット全体を
+スキャンするため、呼び出し側は WAV を `f32` サンプルとして渡すだけで
+よい。周波数や時刻のヒントを与える場合は
+`wspr_core::decode::decode_at(samples, rate, start_sample, freq_hz)`
+を直接呼ぶ。
+
+### 5.5 Sniper モード + AP hint
+
+狭帯域 (±500 Hz 程度) に絞って AP hint を与えると、より弱い信号まで
+引き出せる:
+
+```rust
+use ft4_core::decode::{decode_sniper_ap, ApHint};
 use mfsk_core::equalize::EqMode;
 
-let audio: Vec<i16> = /* 12 kHz PCM, 7.5 s */;
-
-// 全帯域デコード
-for r in decode_frame(&audio, 300.0, 2700.0, 1.2, 50) {
-    println!("{:4.0} Hz  {:+.2} s  SNR {:+.0} dB", r.freq_hz, r.dt_sec, r.snr_db);
-}
-
-// 狭帯域 sniper + AP hint
 let ap = ApHint::new().with_call1("CQ").with_call2("JA1ABC");
-for r in decode_sniper_ap(&audio, 1000.0, 15, EqMode::Adaptive, Some(&ap)) {
+for r in decode_sniper_ap(&samples, /*target_hz*/ 1000.0, /*max_cand*/ 15,
+                          EqMode::Adaptive, Some(&ap)) {
     // …
 }
 ```
+
+FT8 側も `ft8_core::decode::decode_sniper_sic` として同じ形で提供して
+いる。
 
 ## 6. C / C++ — `wsjt-ffi`
 
