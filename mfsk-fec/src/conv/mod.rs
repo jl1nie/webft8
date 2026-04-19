@@ -99,6 +99,88 @@ impl FecCodec for ConvFano {
     }
 }
 
+/// JT9 convolutional codec: 72 info bits + 31 zero-tail → 206 coded bits.
+///
+/// Shares generator polynomials with [`ConvFano`] (the Layland-Lushbaugh
+/// r=½ K=32 pair, POLY1 = 0xf2d0_5351, POLY2 = 0xe461_3c47); only the
+/// code dimensions differ. Naming echoes WSJT-X's `fano232.f90`, which
+/// is the module this one is modelled on.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct ConvFano232;
+
+impl ConvFano232 {
+    /// Total input bits the Fano decoder runs over (72 message + 31 tail).
+    pub const NBITS: usize = 103;
+    /// Fano threshold step — same scale as `ConvFano` since the metric
+    /// computation hasn't changed.
+    pub const DEFAULT_DELTA: i32 = 17;
+    /// Max cycles per bit. WSJT-X's jt9_decode varies this with depth
+    /// (5 000–100 000); 10 000 matches the wsprd default and decodes
+    /// reliably for clean / moderate-SNR signals.
+    pub const DEFAULT_MAX_CYCLES: u64 = 10_000;
+    pub const METRIC_SCALE: f32 = 16.0;
+    pub const METRIC_BIAS: f32 = 0.0;
+}
+
+/// Pack 72 message bits + 31-bit zero tail into the 13-byte buffer that
+/// [`conv_encode`](fano::conv_encode) consumes (NBITS = 103 → 13 bytes
+/// with the last 4 bits unused).
+fn pack_msg_with_tail_jt9(info: &[u8]) -> [u8; 13] {
+    assert_eq!(info.len(), 72, "JT9 info payload must be 72 bits");
+    let mut packed = [0u8; 13];
+    for (i, &b) in info.iter().enumerate() {
+        if b & 1 != 0 {
+            packed[i / 8] |= 1 << (7 - (i % 8));
+        }
+    }
+    // Bits 72..103 are the zero tail; bits 103..104 are padding.
+    packed
+}
+
+impl FecCodec for ConvFano232 {
+    const N: usize = 206;
+    const K: usize = 72;
+
+    fn encode(&self, info: &[u8], codeword: &mut [u8]) {
+        assert_eq!(info.len(), Self::K);
+        assert_eq!(codeword.len(), Self::N);
+        let packed = pack_msg_with_tail_jt9(info);
+        let mut out = vec![0u8; 2 * Self::NBITS];
+        fano::conv_encode(&packed, Self::NBITS, &mut out);
+        codeword.copy_from_slice(&out);
+    }
+
+    fn decode_soft(&self, llr: &[f32], _opts: &FecOpts) -> Option<FecResult> {
+        assert_eq!(llr.len(), Self::N);
+        let bm = fano::build_branch_metrics(llr, Self::METRIC_BIAS, Self::METRIC_SCALE);
+        let res = fano::fano_decode(
+            &bm,
+            Self::NBITS,
+            Self::DEFAULT_DELTA,
+            Self::DEFAULT_MAX_CYCLES,
+        );
+        if !res.converged {
+            return None;
+        }
+        let mut info = vec![0u8; Self::K];
+        for i in 0..Self::K {
+            info[i] = (res.data[i / 8] >> (7 - (i % 8))) & 1;
+        }
+        let mut reencoded = vec![0u8; Self::N];
+        self.encode(&info, &mut reencoded);
+        let hard_errors = llr
+            .iter()
+            .zip(reencoded.iter())
+            .filter(|&(&l, &c)| (c == 1) != (l < 0.0))
+            .count() as u32;
+        Some(FecResult {
+            info,
+            hard_errors,
+            iterations: 0,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +203,39 @@ mod tests {
             .expect("perfect LLRs must decode");
         assert_eq!(r.info, info);
         assert_eq!(r.hard_errors, 0);
+    }
+
+    #[test]
+    fn jt9_encode_decode_roundtrip() {
+        let codec = ConvFano232;
+        let mut info = vec![0u8; 72];
+        for (i, slot) in info.iter_mut().enumerate() {
+            *slot = (((i * 11) ^ 0x55) & 1) as u8;
+        }
+        let mut cw = vec![0u8; 206];
+        codec.encode(&info, &mut cw);
+        let llr: Vec<f32> = cw.iter().map(|&b| if b == 0 { 8.0 } else { -8.0 }).collect();
+        let r = codec
+            .decode_soft(&llr, &FecOpts::default())
+            .expect("perfect LLRs must decode");
+        assert_eq!(r.info, info);
+        assert_eq!(r.hard_errors, 0);
+    }
+
+    #[test]
+    fn jt9_tolerates_a_few_errors() {
+        let codec = ConvFano232;
+        let info: Vec<u8> = (0..72).map(|i| i as u8 & 1).collect();
+        let mut cw = vec![0u8; 206];
+        codec.encode(&info, &mut cw);
+        let mut llr: Vec<f32> = cw.iter().map(|&b| if b == 0 { 6.0 } else { -6.0 }).collect();
+        for &pos in &[3usize, 17, 42, 91, 155, 199] {
+            llr[pos] = -llr[pos] * 0.3;
+        }
+        let r = codec
+            .decode_soft(&llr, &FecOpts::default())
+            .expect("should correct 6 weak errors");
+        assert_eq!(r.info, info);
     }
 
     #[test]

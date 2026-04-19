@@ -12,14 +12,14 @@
 //! |--------------------------|-----------------|-------------------------|
 //! | LDPC (174, 91) + CRC-14  | [`ldpc`]        | FT8, FT4                |
 //! | LDPC (240, 101) + CRC-24 | [`ldpc240_101`] | FST4, FST4W             |
-//! | Convolutional r=1/2 K=32 | [`conv`]        | WSPR (and future JT9)   |
+//! | Convolutional r=1/2 K=32 | [`conv`]        | WSPR, JT9               |
 //! | (future) RS (63, 12)     | `rs`            | JT65                    |
 
 pub mod conv;
 pub mod ldpc;
 pub mod ldpc240_101;
 
-pub use conv::ConvFano;
+pub use conv::{ConvFano, ConvFano232};
 pub use ldpc::Ldpc174_91;
 pub use ldpc240_101::Ldpc240_101;
 
