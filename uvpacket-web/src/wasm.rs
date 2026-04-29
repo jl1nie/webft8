@@ -453,12 +453,16 @@ pub fn decode_uvpacket_multichannel(
     band_lo_hz: f32,
     band_hi_hz: f32,
     coarse_step_hz: f32,
+    peak_rel_threshold: f32,
 ) -> Vec<DecodedSignedFrame> {
     let mut mc_opts = MultiChannelOpts::default();
     mc_opts.band_lo_hz = band_lo_hz;
     mc_opts.band_hi_hz = band_hi_hz;
     if coarse_step_hz > 0.0 {
         mc_opts.coarse_step_hz = coarse_step_hz;
+    }
+    if peak_rel_threshold > 0.0 {
+        mc_opts.peak_rel_threshold = peak_rel_threshold;
     }
     let fec_opts = mfsk_core::core::FecOpts {
         bp_max_iter: 50,

@@ -364,7 +364,7 @@ $('loopback-btn').onclick = async () => {
   const samplesCopy = new Float32Array(r.samples);
   const payload = state.mode === 'fm'
     ? { type: 'decode-fm', samples: samplesCopy, audio_centre_hz: r.centre }
-    : { type: 'decode-ssb', samples: samplesCopy, band_lo: 300, band_hi: 2700, step: 50 };
+    : { type: 'decode-ssb', samples: samplesCopy, band_lo: 300, band_hi: 2700, step: 50, peak_rel: 0.7 };
   try {
     const reply = await decoderRequest(payload, [samplesCopy.buffer]);
     console.log('[uvpacket-web] loopback reply', reply);
@@ -465,11 +465,12 @@ $('listen-btn').onclick = async () => {
 let decodeInFlight = false;
 let decodePassCount = 0;
 // Anything quieter than this in the snapshot peak is treated as silence
-// and skipped — the multichannel SSB matched-filter sweep is the
-// dominant CPU user, ~500 ms per call, so silent skipping makes the
-// background load near zero. `loopback` and forced post-TX paths
-// override this gate (label === 'force').
-const ENERGY_GATE = 0.005;
+// and skipped. Tuned above the typical idle-mic noise floor (~0.005-
+// 0.02 on common Mac/PC built-in mics) so the SSB multichannel sweep
+// doesn't fire on noise — false peaks in noise yield hundreds of LDPC
+// BP+OSD-2 attempts and peg the CPU. Loopback and forced post-TX
+// paths override this gate (label includes 'force').
+const ENERGY_GATE = 0.03;
 
 async function runDecode(label = '') {
   if (decodeInFlight) return;
@@ -513,11 +514,13 @@ async function runDecode(label = '') {
         samples,
         audio_centre_hz: parseFloat($('f-centre').value) || 1500,
       }
-    // 50 Hz coarse step (default mfsk-core is 25 Hz). The LMS phase fit
-    // inside the per-peak decoder absorbs the residual ≤ 25 Hz, so the
-    // throughput cost of doubling the step is approximately zero while
-    // the CPU drops 2×.
-    : { type: 'decode-ssb', samples, band_lo: 300, band_hi: 2700, step: 50 };
+    // 50 Hz coarse step (default mfsk-core is 25 Hz) and stricter
+    // peak threshold 0.7 (default 0.5) — both halve the per-pass
+    // worst-case decode work and, more importantly, reject the dozens
+    // of weak false peaks that an idle-noise snapshot produces and
+    // each of which would otherwise eat a 4 mode × 32 n_blocks LDPC
+    // BP+OSD-2 sweep before being rejected.
+    : { type: 'decode-ssb', samples, band_lo: 300, band_hi: 2700, step: 50, peak_rel: 0.7 };
   const reply = await decoderRequest(payload, [samples.buffer]);
   decodeInFlight = false;
   const ms = Math.round(performance.now() - t0);

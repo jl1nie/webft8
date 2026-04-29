@@ -72,6 +72,7 @@ self.onmessage = async (e) => {
         msg.band_lo,
         msg.band_hi,
         msg.step || 0,
+        msg.peak_rel || 0,
       );
       self.postMessage({ type: 'decoded', frames: frames.map(frameToObj), req_id: id });
     } else if (msg.type === 'measure-slots') {

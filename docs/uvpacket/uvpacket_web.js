@@ -420,12 +420,13 @@ export function decode_uvpacket(samples, audio_centre_hz) {
  * @param {number} band_lo_hz
  * @param {number} band_hi_hz
  * @param {number} coarse_step_hz
+ * @param {number} peak_rel_threshold
  * @returns {DecodedSignedFrame[]}
  */
-export function decode_uvpacket_multichannel(samples, band_lo_hz, band_hi_hz, coarse_step_hz) {
+export function decode_uvpacket_multichannel(samples, band_lo_hz, band_hi_hz, coarse_step_hz, peak_rel_threshold) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_uvpacket_multichannel(ptr0, len0, band_lo_hz, band_hi_hz, coarse_step_hz);
+    const ret = wasm.decode_uvpacket_multichannel(ptr0, len0, band_lo_hz, band_hi_hz, coarse_step_hz, peak_rel_threshold);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
