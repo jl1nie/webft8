@@ -46,17 +46,26 @@ let _nextReqId = 1;
 const _pending = new Map();
 decoder.addEventListener('message', (e) => {
   const id = e.data?.req_id;
+  console.log('[uvpacket-web] worker reply', e.data?.type, 'req_id=', id);
   if (id == null) return;
   const entry = _pending.get(id);
   if (!entry) return;
   _pending.delete(id);
+  clearTimeout(entry.timer);
   entry.resolve(e.data);
 });
 
-function decoderRequest(payload, transfer) {
+function decoderRequest(payload, transfer, timeoutMs = 15000) {
   const req_id = _nextReqId++;
-  return new Promise((resolve, reject) => {
-    _pending.set(req_id, { resolve, reject });
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (_pending.has(req_id)) {
+        _pending.delete(req_id);
+        console.warn(`[uvpacket-web] decoder request ${req_id} (${payload.type}) timed out after ${timeoutMs} ms`);
+        resolve({ type: 'error', error: 'timeout', req_id });
+      }
+    }, timeoutMs);
+    _pending.set(req_id, { resolve, timer });
     decoder.postMessage({ ...payload, req_id }, transfer || []);
   });
 }
@@ -335,7 +344,12 @@ $('tx-btn').onclick = async () => {
 // Loopback test: encode → feed straight to the decoder worker, no audio
 // I/O. Validates the WASM TX/RX chain end-to-end without depending on
 // the speaker→mic acoustic path or radio.
+let loopbackInFlight = false;
 $('loopback-btn').onclick = async () => {
+  if (loopbackInFlight) {
+    console.log('[uvpacket-web] loopback already in flight; ignoring click');
+    return;
+  }
   let r;
   try {
     r = buildEncoded();
@@ -343,17 +357,26 @@ $('loopback-btn').onclick = async () => {
     alert(e.message || String(e));
     return;
   }
+  loopbackInFlight = true;
+  $('loopback-btn').disabled = true;
   setStatus(`Loopback: ${r.samples.length} samples to decoder…`);
+  console.log('[uvpacket-web] loopback start, mode=', state.mode, 'centre=', r.centre);
   const samplesCopy = new Float32Array(r.samples);
   const payload = state.mode === 'fm'
     ? { type: 'decode-fm', samples: samplesCopy, audio_centre_hz: r.centre }
     : { type: 'decode-ssb', samples: samplesCopy, band_lo: 300, band_hi: 2700, step: 50 };
-  const reply = await decoderRequest(payload, [samplesCopy.buffer]);
-  if (reply.type === 'decoded') {
-    setStatus(`Loopback: ${reply.frames.length} frame(s) decoded.`);
-    for (const f of reply.frames) appendDecoded(f, { force: true });
-  } else if (reply.type === 'error') {
-    setStatus('Loopback decoder error: ' + reply.error);
+  try {
+    const reply = await decoderRequest(payload, [samplesCopy.buffer]);
+    console.log('[uvpacket-web] loopback reply', reply);
+    if (reply.type === 'decoded') {
+      setStatus(`Loopback: ${reply.frames.length} frame(s) decoded.`);
+      for (const f of reply.frames) appendDecoded(f, { force: true });
+    } else if (reply.type === 'error') {
+      setStatus('Loopback decoder error: ' + reply.error);
+    }
+  } finally {
+    loopbackInFlight = false;
+    $('loopback-btn').disabled = false;
   }
 };
 
