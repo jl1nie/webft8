@@ -521,6 +521,8 @@ pub fn decode_uvpacket_multichannel(
     band_hi_hz: f32,
     coarse_step_hz: f32,
     peak_rel_threshold: f32,
+    mode_codes: Vec<u8>,
+    n_blocks: Vec<u8>,
 ) -> Vec<DecodedSignedFrame> {
     let mut mc_opts = MultiChannelOpts::default();
     mc_opts.band_lo_hz = band_lo_hz;
@@ -537,7 +539,27 @@ pub fn decode_uvpacket_multichannel(
         ap_mask: None,
         verify_info: None,
     };
-    rx::decode_multichannel(samples, &mc_opts, &fec_opts)
+    let n = mode_codes.len().min(n_blocks.len());
+    let mut layouts: Vec<(Mode, u8)> = Vec::with_capacity(n);
+    for i in 0..n {
+        let mode = match mode_codes[i] {
+            0 => Mode::Robust,
+            1 => Mode::Standard,
+            2 => Mode::Fast,
+            3 => Mode::Express,
+            _ => continue,
+        };
+        let nb = n_blocks[i];
+        if (1..=32).contains(&nb) {
+            layouts.push((mode, nb));
+        }
+    }
+    let frames = if layouts.is_empty() {
+        rx::decode_multichannel(samples, &mc_opts, &fec_opts)
+    } else {
+        rx::decode_multichannel_with_layouts(samples, &mc_opts, &fec_opts, &layouts)
+    };
+    frames
         .into_iter()
         .map(|(centre, frame)| frame_to_signed(frame, centre))
         .collect()

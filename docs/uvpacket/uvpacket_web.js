@@ -421,15 +421,21 @@ export function decode_uvpacket(samples, audio_centre_hz) {
  * @param {number} band_hi_hz
  * @param {number} coarse_step_hz
  * @param {number} peak_rel_threshold
+ * @param {Uint8Array} mode_codes
+ * @param {Uint8Array} n_blocks
  * @returns {DecodedSignedFrame[]}
  */
-export function decode_uvpacket_multichannel(samples, band_lo_hz, band_hi_hz, coarse_step_hz, peak_rel_threshold) {
+export function decode_uvpacket_multichannel(samples, band_lo_hz, band_hi_hz, coarse_step_hz, peak_rel_threshold, mode_codes, n_blocks) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_uvpacket_multichannel(ptr0, len0, band_lo_hz, band_hi_hz, coarse_step_hz, peak_rel_threshold);
-    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    const ptr1 = passArray8ToWasm0(mode_codes, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(n_blocks, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_uvpacket_multichannel(ptr0, len0, band_lo_hz, band_hi_hz, coarse_step_hz, peak_rel_threshold, ptr1, len1, ptr2, len2);
+    var v4 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-    return v2;
+    return v4;
 }
 
 /**

@@ -100,7 +100,7 @@ function setMode(m) {
   if (m === 'fm') {
     $('f-centre').value = '1500';
   }
-  redrawSlotMarkers();
+  redrawCentreMarker();
 }
 $('mode-fm').onclick = () => setMode('fm');
 $('mode-ssb').onclick = () => setMode('ssb');
@@ -377,7 +377,15 @@ $('loopback-btn').onclick = async () => {
         // encoded is in there.
         layouts: QSL_LAYOUTS,
       }
-    : { type: 'decode-ssb', samples: samplesCopy, band_lo: 300, band_hi: 2700, step: 50, peak_rel: 0.7 };
+    : {
+        type: 'decode-ssb',
+        samples: samplesCopy,
+        band_lo: 300,
+        band_hi: 2700,
+        step: 50,
+        peak_rel: 0.7,
+        layouts: QSL_LAYOUTS,
+      };
   try {
     const reply = await decoderRequest(payload, [samplesCopy.buffer]);
     console.log('[uvpacket-web] loopback reply', reply);
@@ -578,7 +586,18 @@ async function runDecode(label = '') {
     // of weak false peaks that an idle-noise snapshot produces and
     // each of which would otherwise eat a 4 mode × 32 n_blocks LDPC
     // BP+OSD-2 sweep before being rejected.
-    : { type: 'decode-ssb', samples, band_lo: 300, band_hi: 2700, step: 50, peak_rel: 0.7 };
+    : {
+        type: 'decode-ssb',
+        samples,
+        band_lo: 300,
+        band_hi: 2700,
+        step: 50,
+        peak_rel: 0.7,
+        // Same QSL-shaped layout subset as FM — bounds per-peak LDPC
+        // sweep at ~22 attempts so a clean SSB peak that ultimately
+        // doesn't decode (e.g. acoustic distortion) doesn't run away.
+        layouts: QSL_LAYOUTS,
+      };
   const reply = await decoderRequest(payload, [samples.buffer]);
   decodeInFlight = false;
   const ms = Math.round(performance.now() - t0);

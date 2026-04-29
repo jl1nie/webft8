@@ -82,12 +82,15 @@ self.onmessage = async (e) => {
         : decode_uvpacket(msg.samples, msg.audio_centre_hz);
       self.postMessage({ type: 'decoded', frames: frames.map(frameToObj), req_id: id });
     } else if (msg.type === 'decode-ssb') {
+      const lay = msg.layouts || [];
       const frames = decode_uvpacket_multichannel(
         msg.samples,
         msg.band_lo,
         msg.band_hi,
         msg.step || 0,
         msg.peak_rel || 0,
+        new Uint8Array(lay.map((l) => l[0])),
+        new Uint8Array(lay.map((l) => l[1])),
       );
       self.postMessage({ type: 'decoded', frames: frames.map(frameToObj), req_id: id });
     } else if (msg.type === 'measure-slots') {
