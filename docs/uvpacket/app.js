@@ -333,7 +333,7 @@ $('loopback-btn').onclick = async () => {
       decoder.removeEventListener('message', replyHandler);
       const n = e.data.frames.length;
       setStatus(`Loopback: ${n} frame(s) decoded.`);
-      for (const f of e.data.frames) appendDecoded(f);
+      for (const f of e.data.frames) appendDecoded(f, { force: true });
     } else if (e.data.type === 'error') {
       decoder.removeEventListener('message', replyHandler);
       setStatus('Loopback decoder error: ' + e.data.error);
@@ -454,7 +454,15 @@ async function runDecode(label = '') {
   }
   // Force the decoder input to 12 kHz regardless of what the
   // AudioContext actually negotiated.
+  const rawLen = samples.length;
   if (captureRate !== 12000) samples = resampleTo12k(samples, captureRate);
+  // Extra detail in the console about every snapshot: rate, length
+  // (post-resample), and peak amplitude. Lets the user diagnose
+  // whether the mic is picking up the burst at all without having to
+  // open the WF in another tool.
+  console.log(
+    `[uvpacket-web] snapshot raw=${rawLen}@${captureRate}Hz → decoder=${samples.length}@12000Hz`,
+  );
   // Snapshot peak — used both as a CPU gate and as a diagnostic on
   // success / miss. If the post-TX peak is < 0.01 the mic basically
   // didn't hear the speaker; if it's saturated near 1.0 the AGC may
@@ -468,6 +476,7 @@ async function runDecode(label = '') {
     decodeInFlight = false;
     return;
   }
+  console.log(`[uvpacket-web] decoding label=${label || 'idle'} peak=${peak.toFixed(4)}`);
   const pass = ++decodePassCount;
   const t0 = performance.now();
   const tag = label ? ` [${label}]` : '';
@@ -512,10 +521,15 @@ async function runDecode(label = '') {
 }
 
 const seenSigs = new Set();
-function appendDecoded(f) {
+function appendDecoded(f, opts = {}) {
   if (!f.sig_b64) return;
+  // k256 produces deterministic ECDSA signatures (RFC 6979), so same
+  // key + same JSON = identical sig_b64. The dedup avoids spamming the
+  // log with the same acoustic burst captured across multiple
+  // overlapping snapshots — but it must be skipped for explicit
+  // loopback clicks, otherwise pressing 🔁 N times only shows one card.
   const key = f.json + f.sig_b64;
-  if (seenSigs.has(key)) return;
+  if (!opts.force && seenSigs.has(key)) return;
   seenSigs.add(key);
 
   const card = document.createElement('div');
