@@ -30,10 +30,17 @@ class UvAudioProcessor extends AudioWorkletProcessor {
     const waterfallTargetRate = opts.waterfallTargetRate || 6000;
     this.bufferSeconds = opts.bufferSeconds || 8;
 
-    // Snapshot buffer: ring at outputRate.
+    // Snapshot buffer: ring at outputRate. `totalSamples` tracks how
+    // many samples have been written since the last reset — without it,
+    // a Listen ▶ → snapshot() pair issued before the ring is full
+    // returns mostly-zero audio (the unfilled portion of the buffer),
+    // which on a noise-only mic input corrupts the mfsk-core sync gate
+    // (median(scores) collapses to 0) and lets noise through to the
+    // LDPC sweep.
     this.bufferSize = Math.round(this.outputRate * this.bufferSeconds);
     this.buffer = new Float32Array(this.bufferSize);
     this.writePos = 0;
+    this.totalSamples = 0;
 
     // Waterfall path: boxcar averager + phase-accumulator decimator,
     // exactly the ft8-web pattern.
@@ -54,18 +61,24 @@ class UvAudioProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (e) => {
       const m = e.data;
       if (m.type === 'snapshot') {
+        // Cap by what's actually been written — never include the
+        // pre-fill zeros from the ring buffer's initial state.
         const wantSamples = Math.min(
           this.bufferSize,
+          this.totalSamples,
           Math.round((m.seconds || this.bufferSeconds) * this.outputRate),
         );
         const snap = new Float32Array(wantSamples);
-        const start = (this.writePos - wantSamples + this.bufferSize) % this.bufferSize;
-        for (let i = 0; i < wantSamples; i++) {
-          snap[i] = this.buffer[(start + i) % this.bufferSize];
+        if (wantSamples > 0) {
+          const start = (this.writePos - wantSamples + this.bufferSize) % this.bufferSize;
+          for (let i = 0; i < wantSamples; i++) {
+            snap[i] = this.buffer[(start + i) % this.bufferSize];
+          }
         }
         this.port.postMessage({ type: 'snapshot', samples: snap }, [snap.buffer]);
       } else if (m.type === 'reset') {
         this.writePos = 0;
+        this.totalSamples = 0;
         this.buffer.fill(0);
       }
     };
@@ -108,6 +121,7 @@ class UvAudioProcessor extends AudioWorkletProcessor {
       // Snapshot ring buffer.
       buf[this.writePos] = s;
       this.writePos = (this.writePos + 1) % bufSize;
+      if (this.totalSamples < bufSize) this.totalSamples++;
 
       // Waterfall: boxcar accumulate + phase-accumulator decimate.
       this.wfBoxSum += s;
