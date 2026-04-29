@@ -738,10 +738,9 @@ $('f-centre').addEventListener('input', redrawSlotMarkers);
 // ───────────────────────────── Audio device pickers ───────────────────
 
 async function populateAudioDevices() {
-  // Calling getUserMedia with default constraints triggers the permission
-  // prompt and lets enumerateDevices() return the device labels.
-  // Caller should already have prompted via `set-mic-grant`; if not, the
-  // device list shows blank labels and we still populate the IDs.
+  const inSel = $('set-audio-in');
+  const outSel = $('set-audio-out');
+  if (!inSel || !outSel) return; // settings dialog not in this page
   let devices = [];
   try {
     devices = await navigator.mediaDevices.enumerateDevices();
@@ -749,8 +748,6 @@ async function populateAudioDevices() {
     console.warn('[uvpacket-web] enumerateDevices:', e);
     return;
   }
-  const inSel = $('set-audio-in');
-  const outSel = $('set-audio-out');
   inSel.innerHTML = '<option value="">— select input —</option>';
   outSel.innerHTML = '<option value="">— default —</option>';
   for (const d of devices) {
@@ -772,37 +769,61 @@ async function populateAudioDevices() {
   if (savedOut) outSel.value = savedOut;
 }
 
-$('set-mic-grant').onclick = async () => {
-  try {
-    const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
-    tmp.getTracks().forEach((t) => t.stop());
-  } catch (e) {
-    alert('Mic permission failed: ' + e);
-    return;
-  }
-  await populateAudioDevices();
-};
+// Defensive `?.` bindings: if a stale cached index.html is served
+// without the audio dialog elements, the app should still boot and the
+// loopback / TX paths should work without exploding at module top
+// level.
+const micGrantBtn = $('set-mic-grant');
+if (micGrantBtn) {
+  micGrantBtn.addEventListener('click', async () => {
+    try {
+      const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
+      tmp.getTracks().forEach((t) => t.stop());
+    } catch (e) {
+      alert('Mic permission failed: ' + e);
+      return;
+    }
+    await populateAudioDevices();
+  });
+}
 
-$('set-audio-in').onchange = (e) => {
-  localStorage.setItem('uvpacket-audio-in', e.target.value || '');
-};
-$('set-audio-out').onchange = (e) => {
-  localStorage.setItem('uvpacket-audio-out', e.target.value || '');
-};
+const audioInSel = $('set-audio-in');
+if (audioInSel) {
+  audioInSel.onchange = (e) => {
+    localStorage.setItem('uvpacket-audio-in', e.target.value || '');
+  };
+}
+const audioOutSel = $('set-audio-out');
+if (audioOutSel) {
+  audioOutSel.onchange = (e) => {
+    localStorage.setItem('uvpacket-audio-out', e.target.value || '');
+  };
+}
 
 const txGainSlider = $('set-tx-gain');
 const txGainVal = $('set-tx-gain-val');
 function applyTxGain() {
+  if (!txGainSlider) return;
   const v = parseInt(txGainSlider.value, 10);
-  txGainVal.textContent = v + '%';
+  if (txGainVal) txGainVal.textContent = v + '%';
   audioOut.setGain(v / 100);
   localStorage.setItem('uvpacket-tx-gain', String(v));
 }
-txGainSlider.oninput = applyTxGain;
+if (txGainSlider) txGainSlider.oninput = applyTxGain;
 
 // ───────────────────────────── Boot ────────────────────────────────────
 
+window.addEventListener('error', (e) => {
+  console.error('[uvpacket-web] uncaught:', e.error || e.message);
+  setStatus('Uncaught error: ' + (e.message || e));
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[uvpacket-web] unhandled rejection:', e.reason);
+  setStatus('Unhandled rejection: ' + (e.reason?.message || e.reason));
+});
+
 (async () => {
+ try {
   await bootWasm();
   const slot = await loadActive();
   if (slot) {
@@ -838,4 +859,8 @@ txGainSlider.oninput = applyTxGain;
   applyTxGain();
 
   console.log('uvpacket-web', APP_VERSION, 'ready');
+ } catch (e) {
+  console.error('[uvpacket-web] boot failed:', e);
+  setStatus('Boot failed: ' + (e?.message || e));
+ }
 })();
