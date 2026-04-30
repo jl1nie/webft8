@@ -378,12 +378,12 @@ $('loopback-btn').onclick = async () => {
         layouts: QSL_LAYOUTS,
       }
     : {
-        // Loopback uses the same slot-centred SSB path as live RX —
-        // the TX picks one of the slot centres so a fixed-centre
-        // decode at the same slots will catch it.
-        type: 'decode-ssb-slots',
+        // Loopback knows the exact TX centre — single-station decode
+        // there is identical to the FM path. Cheaper than a band sweep.
+        type: 'decode-fm',
         samples: samplesCopy,
-        centres: SSB_SLOT_CENTRES,
+        audio_centre_hz: r.centre,
+        layouts: QSL_LAYOUTS,
       };
   try {
     const reply = await decoderRequest(payload, [samplesCopy.buffer]);
@@ -517,12 +517,13 @@ const QSL_LAYOUTS = (() => {
 // spin up a structuredClone of 84 000 zeros on idle.
 const ENERGY_GATE = 0.0005;
 
-// SSB slot grid (matches the TX slot survey at slot=1200 Hz over band
-// 300–2700: centres land at band_lo + slot/2 + k*slot = 900, 2100).
-// Decoding at these two centres only is the cheap path for the typical
-// private-group QSL use case; the wide-band 'decode-ssb' sweep is kept
-// in the wasm API for callers that need it but is no longer used here.
-const SSB_SLOT_CENTRES = [900, 2100];
+// SSB coarse-grid step. The actual TX centre is whatever slot was free
+// at TX time — RX has to listen across the band. Step 300 Hz keeps the
+// worst-case TX-to-nearest-grid distance at 150 Hz, well inside the
+// inner ±200 Hz AFC range. With band 300–2700 Hz that's 8 centres,
+// vs the prior 50 Hz step (49 centres) that ran the worker permanently
+// hot.
+const SSB_COARSE_STEP_HZ = 300;
 
 async function runDecode(label = '') {
   if (decodeInFlight) return;
@@ -606,16 +607,19 @@ async function runDecode(label = '') {
         // signals.
         layouts: QSL_LAYOUTS,
       }
-    // SSB: decode at fixed slot centres only. Replaces the wide-band
-    // multichannel sweep that ran ~49 centres × dual-NSPS MF per
-    // snapshot in 0.4 (~2 sec/snapshot, the worker never caught up).
-    // Group SSB QSL use always TXs on the 1200 Hz slot grid so band
-    // sweeping is wasted work — N centres × FM-equivalent cost is
-    // ~12 × cheaper at N=2.
+    // SSB: wide-band sweep — TX picks any free slot at TX time, RX
+    // can't predict where. Coarse step 300 Hz (vs default 25, prior
+    // app default 50) keeps the per-snapshot 0.4 dual-NSPS cost down
+    // to ~8 centres' worth of MF; AFC ±200 Hz inside the inner decode
+    // covers the worst-case 150 Hz coarse-grid offset.
     : {
-        type: 'decode-ssb-slots',
+        type: 'decode-ssb',
         samples,
-        centres: SSB_SLOT_CENTRES,
+        band_lo: 300,
+        band_hi: 2700,
+        step: SSB_COARSE_STEP_HZ,
+        peak_rel: 0,
+        layouts: [],
       };
   const reply = await decoderRequest(payload, [samples.buffer]);
   decodeInFlight = false;
