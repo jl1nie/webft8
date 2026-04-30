@@ -564,6 +564,27 @@ pub fn decode_uvpacket_multichannel(
         .collect()
 }
 
+/// SSB slot-centred decode. Calls the single-station `rx::decode` at
+/// each centre in `centres_hz` and concatenates the results. This is
+/// the cheap path for SSB receive when the group uses a fixed slot
+/// grid (e.g. 900 / 2100 Hz at 1200 Hz spacing) — replaces the wide
+/// `decode_uvpacket_multichannel` sweep when slots are known, costing
+/// ~`centres × FM-decode` instead of `49 × FM-decode` for a 50 Hz
+/// coarse step over 300–2700 Hz.
+#[wasm_bindgen]
+pub fn decode_uvpacket_at_centres(
+    samples: &[f32],
+    centres_hz: Vec<f32>,
+) -> Vec<DecodedSignedFrame> {
+    let mut out: Vec<DecodedSignedFrame> = Vec::new();
+    for c in centres_hz {
+        for f in rx::decode(samples, c) {
+            out.push(frame_to_signed(f, c));
+        }
+    }
+    out
+}
+
 /// Per-slot energy survey. Used by the SSB TX path before transmitting:
 /// inspect the audio passband, find a slot with low matched-filter
 /// energy, transmit there. Internally calls

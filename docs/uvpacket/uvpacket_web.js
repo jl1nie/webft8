@@ -406,6 +406,29 @@ export function decode_uvpacket(samples, audio_centre_hz) {
 }
 
 /**
+ * SSB slot-centred decode. Calls the single-station `rx::decode` at
+ * each centre in `centres_hz` and concatenates the results. This is
+ * the cheap path for SSB receive when the group uses a fixed slot
+ * grid (e.g. 900 / 2100 Hz at 1200 Hz spacing) — replaces the wide
+ * `decode_uvpacket_multichannel` sweep when slots are known, costing
+ * ~`centres × FM-decode` instead of `49 × FM-decode` for a 50 Hz
+ * coarse step over 300–2700 Hz.
+ * @param {Float32Array} samples
+ * @param {Float32Array} centres_hz
+ * @returns {DecodedSignedFrame[]}
+ */
+export function decode_uvpacket_at_centres(samples, centres_hz) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(centres_hz, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_uvpacket_at_centres(ptr0, len0, ptr1, len1);
+    var v3 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
+}
+
+/**
  * Multi-station decode by sweeping the SSB audio passband. Suitable
  * for **SSB** receive on a private group sharing one RF channel
  * (e.g., 430.090 MHz USB) where every TX picks an audio slot inside

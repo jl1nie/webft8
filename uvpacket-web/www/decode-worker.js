@@ -13,6 +13,7 @@ import init, {
   decode_uvpacket,
   decode_uvpacket_with_layouts,
   decode_uvpacket_multichannel,
+  decode_uvpacket_at_centres,
   measure_slots,
   version_info,
   diag_sync_stats,
@@ -96,6 +97,17 @@ self.onmessage = async (e) => {
         msg.peak_rel || 0,
         new Uint8Array(lay.map((l) => l[0])),
         new Uint8Array(lay.map((l) => l[1])),
+      );
+      self.postMessage({ type: 'decoded', frames: frames.map(frameToObj), req_id: id });
+    } else if (msg.type === 'decode-ssb-slots') {
+      // Cheap SSB path: decode at fixed slot centres (e.g. 900/2100 Hz
+      // for the 1200 Hz slot grid) instead of sweeping the band. ~12 ×
+      // cheaper than 'decode-ssb' on a 50 Hz step, suitable for the
+      // typical private-group SSB QSL use case where every TX uses a
+      // known slot.
+      const frames = decode_uvpacket_at_centres(
+        msg.samples,
+        new Float32Array(msg.centres),
       );
       self.postMessage({ type: 'decoded', frames: frames.map(frameToObj), req_id: id });
     } else if (msg.type === 'measure-slots') {

@@ -378,13 +378,12 @@ $('loopback-btn').onclick = async () => {
         layouts: QSL_LAYOUTS,
       }
     : {
-        type: 'decode-ssb',
+        // Loopback uses the same slot-centred SSB path as live RX —
+        // the TX picks one of the slot centres so a fixed-centre
+        // decode at the same slots will catch it.
+        type: 'decode-ssb-slots',
         samples: samplesCopy,
-        band_lo: 300,
-        band_hi: 2700,
-        step: 50,
-        peak_rel: 0.7,
-        layouts: QSL_LAYOUTS,
+        centres: SSB_SLOT_CENTRES,
       };
   try {
     const reply = await decoderRequest(payload, [samplesCopy.buffer]);
@@ -518,6 +517,13 @@ const QSL_LAYOUTS = (() => {
 // spin up a structuredClone of 84 000 zeros on idle.
 const ENERGY_GATE = 0.0005;
 
+// SSB slot grid (matches the TX slot survey at slot=1200 Hz over band
+// 300–2700: centres land at band_lo + slot/2 + k*slot = 900, 2100).
+// Decoding at these two centres only is the cheap path for the typical
+// private-group QSL use case; the wide-band 'decode-ssb' sweep is kept
+// in the wasm API for callers that need it but is no longer used here.
+const SSB_SLOT_CENTRES = [900, 2100];
+
 async function runDecode(label = '') {
   if (decodeInFlight) return;
   decodeInFlight = true;
@@ -600,23 +606,16 @@ async function runDecode(label = '') {
         // signals.
         layouts: QSL_LAYOUTS,
       }
-    // 50 Hz coarse step (default mfsk-core is 25 Hz) and stricter
-    // peak threshold 0.7 (default 0.5) — both halve the per-pass
-    // worst-case decode work and, more importantly, reject the dozens
-    // of weak false peaks that an idle-noise snapshot produces and
-    // each of which would otherwise eat a 4 mode × 32 n_blocks LDPC
-    // BP+OSD-2 sweep before being rejected.
+    // SSB: decode at fixed slot centres only. Replaces the wide-band
+    // multichannel sweep that ran ~49 centres × dual-NSPS MF per
+    // snapshot in 0.4 (~2 sec/snapshot, the worker never caught up).
+    // Group SSB QSL use always TXs on the 1200 Hz slot grid so band
+    // sweeping is wasted work — N centres × FM-equivalent cost is
+    // ~12 × cheaper at N=2.
     : {
-        type: 'decode-ssb',
+        type: 'decode-ssb-slots',
         samples,
-        band_lo: 300,
-        band_hi: 2700,
-        step: 50,
-        peak_rel: 0.7,
-        // Same QSL-shaped layout subset as FM — bounds per-peak LDPC
-        // sweep at ~22 attempts so a clean SSB peak that ultimately
-        // doesn't decode (e.g. acoustic distortion) doesn't run away.
-        layouts: QSL_LAYOUTS,
+        centres: SSB_SLOT_CENTRES,
       };
   const reply = await decoderRequest(payload, [samples.buffer]);
   decodeInFlight = false;
