@@ -27,26 +27,44 @@ pub fn version_info() -> String {
     )
 }
 
-/// Diagnostic: returns `[global_max, median, ratio, n_scores]` for the
-/// preamble-correlation distribution that mfsk-core's auto-detect
-/// decoder computes internally. `ratio = global_max / median` is the
-/// quantity the sync gate compares to its 20× threshold. Values around
-/// 16 indicate pure-noise input; ≥ 20 trips the gate and the LDPC
-/// sweep runs; ≥ 56 is a real signal at +1 dB Robust threshold.
+/// Diagnostic: returns `[global_max, median, ratio, n_scores]` for
+/// the differential preamble-correlation distribution that
+/// mfsk-core's auto-detect decoder computes internally across the
+/// 4-variant preamble catalogue. `ratio = global_max / median` is
+/// the quantity the sync gate compares against its internal
+/// threshold. Empty vector if the buffer is too short.
+///
+/// (0.4.0: replaces the old single-preamble coherence-ratio
+/// statistic with the multi-variant differential one. Schema
+/// `[max, median, ratio, n_scores]` is unchanged.)
 #[wasm_bindgen]
 pub fn diag_sync_stats(samples: &[f32], audio_centre_hz: f32) -> Vec<f32> {
-    let s = rx::diag_sync_stats(samples, audio_centre_hz);
-    vec![s.global_max, s.median, s.ratio, s.n_scores as f32]
+    match rx::diag_sync_at(samples, audio_centre_hz) {
+        Some((_mode, s)) => vec![s.global_max, s.median, s.ratio, s.n_scores as f32],
+        None => Vec::new(),
+    }
 }
 
 /// Pre-AFC vs post-AFC sync stats + estimated delta_f, packed as
 /// `[pre_max, pre_median, pre_ratio, delta_f,
 ///   post_max, post_median, post_ratio]`.
 ///
+/// (0.4.0: rebuilt on the new 4-variant preamble catalogue. The
+/// `delta_f` step uses the winning preamble's mode for AFC search;
+/// post-AFC stats are evaluated at `audio_centre_hz + delta_f`.)
+///
 /// Empty vector if the buffer is too short for a sync evaluation.
 #[wasm_bindgen]
 pub fn diag_sync_with_afc(samples: &[f32], audio_centre_hz: f32) -> Vec<f32> {
-    let (pre, df, post) = rx::diag_sync_with_afc(samples, audio_centre_hz);
+    let Some((mode, pre)) = rx::diag_sync_at(samples, audio_centre_hz) else {
+        return Vec::new();
+    };
+    let afc_opts = rx::AfcOpts::default();
+    let df = rx::diag_estimate_freq_offset(samples, 0, audio_centre_hz, mode, &afc_opts)
+        .unwrap_or(0.0);
+    let post = rx::diag_sync_at(samples, audio_centre_hz + df)
+        .map(|(_, s)| s)
+        .unwrap_or(pre);
     vec![
         pre.global_max,
         pre.median,
@@ -80,13 +98,15 @@ fn mode_from_u8(m: u8) -> Result<Mode, JsValue> {
 }
 
 fn pick_block_count(payload_len: usize) -> Result<u8, JsValue> {
-    // payload_capacity = block_count * 12 - 4
-    // → block_count = ceil((payload_len + 4) / 12), clamped to 1..=32.
-    if payload_len + 4 > MAX_PAYLOAD_BYTES + 4 {
-        return Err(JsValue::from_str("payload exceeds 380 bytes"));
+    // 0.4.0: dedicated header LDPC block carries the 4-byte header
+    // separately, so payload bytes pack into payload-only blocks at
+    // 12 byte each — no header subtraction. Capacity = 32 * 12 = 384.
+    // → block_count = ceil(payload_len / 12), clamped to 1..=32.
+    if payload_len > MAX_PAYLOAD_BYTES {
+        return Err(JsValue::from_str("payload exceeds 384 bytes"));
     }
-    let needed = ((payload_len + 4) + 11) / 12;
-    Ok(needed.max(1).min(32) as u8)
+    let needed = payload_len.div_ceil(12);
+    Ok(needed.clamp(1, 32) as u8)
 }
 
 fn encode_signed_payload(
@@ -481,43 +501,23 @@ pub fn decode_uvpacket(samples: &[f32], audio_centre_hz: f32) -> Vec<DecodedSign
 }
 
 /// Single-station decode constrained to a caller-supplied list of
-/// (mode_code, n_blocks) layouts. Bounds worst-case LDPC sweep to
-/// `len(layouts)` per peak, regardless of how many peaks pass the
-/// sync gate.
+/// `(mode_code, n_blocks)` layouts.
 ///
-/// `mode_codes`/`n_blocks` are paired by index (must be the same
-/// length). `mode_code` is `Mode::header_code()` — `0=Robust,
-/// 1=Standard, 2=Fast, 3=Express`. n_blocks must be `1..=32`.
-///
-/// For the QSL signed-card use case, pass the layouts that the
-/// application's TX path actually emits (typically Standard with
-/// `n_blocks ≈ ceil((payload_bytes + 4) / 12)`). This caps worst-case
-/// decode work at a known bound — important for browsers because
-/// the unconstrained 128-layout sweep can take 15 s in WASM and time
-/// out the worker.
+/// **Compatibility shim (0.4.0):** the new mfsk-core uvpacket
+/// pipeline reads `(mode, n_blocks)` from the preamble + dedicated
+/// header block in 1 + n_blocks LDPC decodes per frame, so the
+/// `layouts` constraint is no longer load-bearing — the unconstrained
+/// `decode` is already O(n_blocks) per peak. The function signature
+/// is preserved for JS-side compatibility; `mode_codes` /
+/// `n_blocks` are accepted but ignored.
 #[wasm_bindgen]
 pub fn decode_uvpacket_with_layouts(
     samples: &[f32],
     audio_centre_hz: f32,
-    mode_codes: Vec<u8>,
-    n_blocks: Vec<u8>,
+    _mode_codes: Vec<u8>,
+    _n_blocks: Vec<u8>,
 ) -> Vec<DecodedSignedFrame> {
-    let n = mode_codes.len().min(n_blocks.len());
-    let mut layouts: Vec<(Mode, u8)> = Vec::with_capacity(n);
-    for i in 0..n {
-        let mode = match mode_codes[i] {
-            0 => Mode::Robust,
-            1 => Mode::Standard,
-            2 => Mode::Fast,
-            3 => Mode::Express,
-            _ => continue,
-        };
-        let nb = n_blocks[i];
-        if (1..=32).contains(&nb) {
-            layouts.push((mode, nb));
-        }
-    }
-    rx::decode_with_layouts(samples, audio_centre_hz, &layouts)
+    rx::decode(samples, audio_centre_hz)
         .into_iter()
         .map(|f| frame_to_signed(f, audio_centre_hz))
         .collect()
@@ -539,46 +539,27 @@ pub fn decode_uvpacket_multichannel(
     band_lo_hz: f32,
     band_hi_hz: f32,
     coarse_step_hz: f32,
-    peak_rel_threshold: f32,
-    mode_codes: Vec<u8>,
-    n_blocks: Vec<u8>,
+    _peak_rel_threshold: f32, // ignored in 0.4.0 (internal sync gate)
+    _mode_codes: Vec<u8>,     // ignored: preamble identifies mode
+    _n_blocks: Vec<u8>,       // ignored: header block carries n_blocks
 ) -> Vec<DecodedSignedFrame> {
-    let mut mc_opts = MultiChannelOpts::default();
-    mc_opts.band_lo_hz = band_lo_hz;
-    mc_opts.band_hi_hz = band_hi_hz;
-    if coarse_step_hz > 0.0 {
-        mc_opts.coarse_step_hz = coarse_step_hz;
-    }
-    if peak_rel_threshold > 0.0 {
-        mc_opts.peak_rel_threshold = peak_rel_threshold;
-    }
+    let mc_opts = MultiChannelOpts {
+        band_lo_hz,
+        band_hi_hz,
+        coarse_step_hz: if coarse_step_hz > 0.0 {
+            coarse_step_hz
+        } else {
+            MultiChannelOpts::default().coarse_step_hz
+        },
+        ..MultiChannelOpts::default()
+    };
     let fec_opts = mfsk_core::core::FecOpts {
         bp_max_iter: 50,
         osd_depth: 2,
         ap_mask: None,
         verify_info: None,
     };
-    let n = mode_codes.len().min(n_blocks.len());
-    let mut layouts: Vec<(Mode, u8)> = Vec::with_capacity(n);
-    for i in 0..n {
-        let mode = match mode_codes[i] {
-            0 => Mode::Robust,
-            1 => Mode::Standard,
-            2 => Mode::Fast,
-            3 => Mode::Express,
-            _ => continue,
-        };
-        let nb = n_blocks[i];
-        if (1..=32).contains(&nb) {
-            layouts.push((mode, nb));
-        }
-    }
-    let frames = if layouts.is_empty() {
-        rx::decode_multichannel(samples, &mc_opts, &fec_opts)
-    } else {
-        rx::decode_multichannel_with_layouts(samples, &mc_opts, &fec_opts, &layouts)
-    };
-    frames
+    rx::decode_multichannel(samples, &mc_opts, &fec_opts)
         .into_iter()
         .map(|(centre, frame)| frame_to_signed(frame, centre))
         .collect()
@@ -600,9 +581,11 @@ pub fn measure_slots(
     band_hi_hz: f32,
     slot_spacing_hz: f32,
 ) -> Vec<f32> {
-    let mut mc_opts = MultiChannelOpts::default();
-    mc_opts.band_lo_hz = band_lo_hz;
-    mc_opts.band_hi_hz = band_hi_hz;
+    let mc_opts = MultiChannelOpts {
+        band_lo_hz,
+        band_hi_hz,
+        ..MultiChannelOpts::default()
+    };
     let energies: Vec<SlotEnergy> = rx::measure_slot_energies(samples, &mc_opts, slot_spacing_hz);
     let mut out = Vec::with_capacity(energies.len() * 2);
     for s in energies {

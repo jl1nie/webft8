@@ -420,19 +420,19 @@ export function decode_uvpacket(samples, audio_centre_hz) {
  * @param {number} band_lo_hz
  * @param {number} band_hi_hz
  * @param {number} coarse_step_hz
- * @param {number} peak_rel_threshold
- * @param {Uint8Array} mode_codes
- * @param {Uint8Array} n_blocks
+ * @param {number} _peak_rel_threshold
+ * @param {Uint8Array} _mode_codes
+ * @param {Uint8Array} _n_blocks
  * @returns {DecodedSignedFrame[]}
  */
-export function decode_uvpacket_multichannel(samples, band_lo_hz, band_hi_hz, coarse_step_hz, peak_rel_threshold, mode_codes, n_blocks) {
+export function decode_uvpacket_multichannel(samples, band_lo_hz, band_hi_hz, coarse_step_hz, _peak_rel_threshold, _mode_codes, _n_blocks) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(mode_codes, wasm.__wbindgen_malloc);
+    const ptr1 = passArray8ToWasm0(_mode_codes, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray8ToWasm0(n_blocks, wasm.__wbindgen_malloc);
+    const ptr2 = passArray8ToWasm0(_n_blocks, wasm.__wbindgen_malloc);
     const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_uvpacket_multichannel(ptr0, len0, band_lo_hz, band_hi_hz, coarse_step_hz, peak_rel_threshold, ptr1, len1, ptr2, len2);
+    const ret = wasm.decode_uvpacket_multichannel(ptr0, len0, band_lo_hz, band_hi_hz, coarse_step_hz, _peak_rel_threshold, ptr1, len1, ptr2, len2);
     var v4 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v4;
@@ -440,32 +440,27 @@ export function decode_uvpacket_multichannel(samples, band_lo_hz, band_hi_hz, co
 
 /**
  * Single-station decode constrained to a caller-supplied list of
- * (mode_code, n_blocks) layouts. Bounds worst-case LDPC sweep to
- * `len(layouts)` per peak, regardless of how many peaks pass the
- * sync gate.
+ * `(mode_code, n_blocks)` layouts.
  *
- * `mode_codes`/`n_blocks` are paired by index (must be the same
- * length). `mode_code` is `Mode::header_code()` — `0=Robust,
- * 1=Standard, 2=Fast, 3=Express`. n_blocks must be `1..=32`.
- *
- * For the QSL signed-card use case, pass the layouts that the
- * application's TX path actually emits (typically Standard with
- * `n_blocks ≈ ceil((payload_bytes + 4) / 12)`). This caps worst-case
- * decode work at a known bound — important for browsers because
- * the unconstrained 128-layout sweep can take 15 s in WASM and time
- * out the worker.
+ * **Compatibility shim (0.4.0):** the new mfsk-core uvpacket
+ * pipeline reads `(mode, n_blocks)` from the preamble + dedicated
+ * header block in 1 + n_blocks LDPC decodes per frame, so the
+ * `layouts` constraint is no longer load-bearing — the unconstrained
+ * `decode` is already O(n_blocks) per peak. The function signature
+ * is preserved for JS-side compatibility; `mode_codes` /
+ * `n_blocks` are accepted but ignored.
  * @param {Float32Array} samples
  * @param {number} audio_centre_hz
- * @param {Uint8Array} mode_codes
- * @param {Uint8Array} n_blocks
+ * @param {Uint8Array} _mode_codes
+ * @param {Uint8Array} _n_blocks
  * @returns {DecodedSignedFrame[]}
  */
-export function decode_uvpacket_with_layouts(samples, audio_centre_hz, mode_codes, n_blocks) {
+export function decode_uvpacket_with_layouts(samples, audio_centre_hz, _mode_codes, _n_blocks) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(mode_codes, wasm.__wbindgen_malloc);
+    const ptr1 = passArray8ToWasm0(_mode_codes, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray8ToWasm0(n_blocks, wasm.__wbindgen_malloc);
+    const ptr2 = passArray8ToWasm0(_n_blocks, wasm.__wbindgen_malloc);
     const len2 = WASM_VECTOR_LEN;
     const ret = wasm.decode_uvpacket_with_layouts(ptr0, len0, audio_centre_hz, ptr1, len1, ptr2, len2);
     var v4 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
@@ -474,12 +469,16 @@ export function decode_uvpacket_with_layouts(samples, audio_centre_hz, mode_code
 }
 
 /**
- * Diagnostic: returns `[global_max, median, ratio, n_scores]` for the
- * preamble-correlation distribution that mfsk-core's auto-detect
- * decoder computes internally. `ratio = global_max / median` is the
- * quantity the sync gate compares to its 20× threshold. Values around
- * 16 indicate pure-noise input; ≥ 20 trips the gate and the LDPC
- * sweep runs; ≥ 56 is a real signal at +1 dB Robust threshold.
+ * Diagnostic: returns `[global_max, median, ratio, n_scores]` for
+ * the differential preamble-correlation distribution that
+ * mfsk-core's auto-detect decoder computes internally across the
+ * 4-variant preamble catalogue. `ratio = global_max / median` is
+ * the quantity the sync gate compares against its internal
+ * threshold. Empty vector if the buffer is too short.
+ *
+ * (0.4.0: replaces the old single-preamble coherence-ratio
+ * statistic with the multi-variant differential one. Schema
+ * `[max, median, ratio, n_scores]` is unchanged.)
  * @param {Float32Array} samples
  * @param {number} audio_centre_hz
  * @returns {Float32Array}
@@ -497,6 +496,10 @@ export function diag_sync_stats(samples, audio_centre_hz) {
  * Pre-AFC vs post-AFC sync stats + estimated delta_f, packed as
  * `[pre_max, pre_median, pre_ratio, delta_f,
  *   post_max, post_median, post_ratio]`.
+ *
+ * (0.4.0: rebuilt on the new 4-variant preamble catalogue. The
+ * `delta_f` step uses the winning preamble's mode for AFC search;
+ * post-AFC stats are evaluated at `audio_centre_hz + delta_f`.)
  *
  * Empty vector if the buffer is too short for a sync evaluation.
  * @param {Float32Array} samples

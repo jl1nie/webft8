@@ -20,7 +20,7 @@ import { UvAudioCapture } from './audio-capture.js';
 import { UvAudioOutput } from './audio-output.js';
 import { loadActive, saveActive } from './keystore.js';
 
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.2.0';
 
 const $ = (id) => document.getElementById(id);
 

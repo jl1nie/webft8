@@ -9,13 +9,13 @@ exclude = [
 ]
 resolver = "2"
 
-# Library layer lives in https://github.com/jl1nie/mfsk-core. The 0.3
+# Library layer lives in https://github.com/jl1nie/mfsk-core. The 0.4
 # line is not yet on crates.io, so the workspace temporarily resolves
 # `mfsk-core` against the sibling working tree via the `[patch.crates-io]`
-# block below. Bump the requested version once 0.3 is published and
+# block below. Bump the requested version once 0.4 is published and
 # remove the patch block.
 [workspace.dependencies]
-mfsk-core = { version = "0.3", default-features = false }
+mfsk-core = { version = "0.4", default-features = false }
 
 [patch.crates-io]
 mfsk-core = { path = "../mfsk-core/mfsk-core" }
