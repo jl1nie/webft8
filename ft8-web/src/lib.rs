@@ -580,16 +580,47 @@ macro_rules! dispatch_q65_submode {
     };
 }
 
+/// Wide-tolerance search params for offline WAV decode. The
+/// `SearchParams::default()` lives at the live-audio operating point
+/// (±1.5 s around a known UTC-aligned slot start, 8 candidates) — it
+/// returns nothing on a WAV-drop where the signal can begin anywhere
+/// in the slot. Mirror the `q65_wsjtx_samples` test config: scan the
+/// full slot, lower the score threshold so weak ionoscatter / EME
+/// signals reach the BP / fast-fading metric.
+fn q65_wav_search_params() -> mfsk_core::q65::search::SearchParams {
+    mfsk_core::q65::search::SearchParams {
+        freq_min_hz: 200.0,
+        freq_max_hz: 3_000.0,
+        // ±50 symbols × 0.3 s/sym ≈ ±15 s — covers the full 30 s slot
+        // for Q65-30A; for Q65-60* we centre on the slot midpoint
+        // below so this still captures the whole 60 s slot.
+        time_tolerance_symbols: 50,
+        score_threshold: 0.05,
+        max_candidates: 32,
+    }
+}
+
+/// Slot-midpoint nominal-start sample for the WSJT-X reference WAVs:
+/// Q65-30A is 30 s (midpoint = 15 s × 12 kHz), Q65-60A‥E are 60 s
+/// (midpoint = 30 s × 12 kHz). With `time_tolerance_symbols = 50`
+/// (±15 s) the search window then covers the full slot in both cases.
+fn q65_slot_midpoint_samples(submode: u8) -> usize {
+    match submode {
+        0 => 12_000 * 15,
+        _ => 12_000 * 30,
+    }
+}
+
 /// Plain Q65 BP decode (basic AWGN strategy). f32 audio.
 #[wasm_bindgen]
 pub fn decode_q65_wav_f32(samples: &[f32], submode: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     use mfsk_core::core::dsp::resample::resample_f32_to_12k_f32;
-    use mfsk_core::q65::search::SearchParams;
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
-    let params = SearchParams::default();
+    let params = q65_wav_search_params();
+    let nominal_mid = q65_slot_midpoint_samples(submode);
     macro_rules! scan_body {
         ($p:ty) => {
-            mfsk_core::q65::decode_scan_for::<$p>(&audio, 12_000, 0, &params)
+            mfsk_core::q65::decode_scan_for::<$p>(&audio, 12_000, nominal_mid, &params)
         };
     }
     let decodes = dispatch_q65_submode!(submode, scan_body);
@@ -600,12 +631,12 @@ pub fn decode_q65_wav_f32(samples: &[f32], submode: u8, sample_rate: u32) -> Vec
 #[wasm_bindgen]
 pub fn decode_q65_wav(samples: &[i16], submode: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     use mfsk_core::core::dsp::resample::resample_i16_to_12k_f32;
-    use mfsk_core::q65::search::SearchParams;
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
-    let params = SearchParams::default();
+    let params = q65_wav_search_params();
+    let nominal_mid = q65_slot_midpoint_samples(submode);
     macro_rules! scan_body {
         ($p:ty) => {
-            mfsk_core::q65::decode_scan_for::<$p>(&audio, 12_000, 0, &params)
+            mfsk_core::q65::decode_scan_for::<$p>(&audio, 12_000, nominal_mid, &params)
         };
     }
     let decodes = dispatch_q65_submode!(submode, scan_body);
@@ -627,9 +658,9 @@ pub fn decode_q65_wav_fading_f32(
 ) -> Vec<DecodedMessage> {
     use mfsk_core::core::dsp::resample::resample_f32_to_12k_f32;
     use mfsk_core::fec::qra::FadingModel;
-    use mfsk_core::q65::search::SearchParams;
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
-    let params = SearchParams::default();
+    let params = q65_wav_search_params();
+    let nominal_mid = q65_slot_midpoint_samples(submode);
     let fading = match model {
         1 => FadingModel::Lorentzian,
         _ => FadingModel::Gaussian,
@@ -637,7 +668,13 @@ pub fn decode_q65_wav_fading_f32(
     macro_rules! scan_body {
         ($p:ty) => {
             mfsk_core::q65::decode_scan_fading_for::<$p>(
-                &audio, 12_000, 0, &params, b90_ts, fading, None,
+                &audio,
+                12_000,
+                nominal_mid,
+                &params,
+                b90_ts,
+                fading,
+                None,
             )
         };
     }
@@ -657,9 +694,9 @@ pub fn decode_q65_wav_fading(
 ) -> Vec<DecodedMessage> {
     use mfsk_core::core::dsp::resample::resample_i16_to_12k_f32;
     use mfsk_core::fec::qra::FadingModel;
-    use mfsk_core::q65::search::SearchParams;
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
-    let params = SearchParams::default();
+    let params = q65_wav_search_params();
+    let nominal_mid = q65_slot_midpoint_samples(submode);
     let fading = match model {
         1 => FadingModel::Lorentzian,
         _ => FadingModel::Gaussian,
@@ -667,7 +704,13 @@ pub fn decode_q65_wav_fading(
     macro_rules! scan_body {
         ($p:ty) => {
             mfsk_core::q65::decode_scan_fading_for::<$p>(
-                &audio, 12_000, 0, &params, b90_ts, fading, None,
+                &audio,
+                12_000,
+                nominal_mid,
+                &params,
+                b90_ts,
+                fading,
+                None,
             )
         };
     }
