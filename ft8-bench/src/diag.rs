@@ -1,12 +1,14 @@
 /// Diagnostic tracing for the decode pipeline.
 use std::path::Path;
 
+use mfsk_core::core::sync::refine_candidate;
 use mfsk_core::ft8::{
+    decode_block::{coarse_sync, compute_spectrogram, fill_symbol_spectra, symbol_spectra_direct, SymMask},
     downsample::downsample,
     ldpc::{bp::bp_decode, osd::osd_decode},
-    llr::{compute_llr, symbol_spectra, sync_quality},
+    llr::{compute_llr, sync_quality},
     params::BP_MAX_ITER,
-    sync::{coarse_sync, refine_candidate},
+    Ft8,
 };
 
 fn llr_stats(llr: &[f32]) -> (f32, f32, usize) {
@@ -41,8 +43,8 @@ pub fn trace_near(wav_path: &Path, target_hz: f32, label: &str) -> Result<(), St
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("read: {e}"))?;
 
-    // Pull all candidates; look at the best one within ±30 Hz of target.
-    let cands = coarse_sync(&samples, 200.0, 2800.0, 0.0, None, 1000);
+    let spec = compute_spectrogram(&samples, 2800.0);
+    let cands = coarse_sync(&spec, 200.0, 2800.0, 0.0, 1000);
 
     let near: Vec<_> = cands.iter()
         .filter(|c| (c.freq_hz - target_hz).abs() < 30.0)
@@ -56,11 +58,13 @@ pub fn trace_near(wav_path: &Path, target_hz: f32, label: &str) -> Result<(), St
         let (cd0, new_cache) = downsample(&samples, cand.freq_hz, fft_cache.as_deref());
         fft_cache = Some(new_cache);
 
-        let refined = refine_candidate(&cd0, cand, 10);
-        let i_start = ((refined.dt_sec + 0.5) * 200.0).round() as usize;
-        let cs = symbol_spectra(&cd0, i_start);
-        let nsync = sync_quality(&cs);
-        let llr_set = compute_llr(&cs);
+        let refined = refine_candidate::<Ft8>(&cd0, cand, 10);
+
+        // Fill Costas symbols first for sync_quality, then data symbols for LLR.
+        let mut cs = symbol_spectra_direct::<i16>(&samples, cand.freq_hz, refined.dt_sec, SymMask::SyncOnly);
+        let nsync = sync_quality(&*cs);
+        fill_symbol_spectra(&mut *cs, &samples, cand.freq_hz, refined.dt_sec, SymMask::DataOnly, fft_cache.as_deref());
+        let llr_set = compute_llr::<f32>(&*cs);
         let (lmin, lmax, lpos) = llr_stats(&llr_set.llra);
         let verdict = try_all(
             &llr_set.llra, &llr_set.llrb, &llr_set.llrc, &llr_set.llrd);

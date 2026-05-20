@@ -1,9 +1,9 @@
-use ft8_core::decode::{
+use mfsk_core::ft8::decode::{
     decode_frame, decode_frame_subtract, decode_sniper_ap,
-    ApHint, DecodeDepth, DecodeStrictness, EqMode,
+    ApHint, DecodeDepth, DecodeStrictness,
 };
-use ft8_core::hash_table::CallsignHashTable;
-use ft8_core::message::{is_plausible_message, unpack77_with_hash};
+use mfsk_core::msg::hash_table::CallsignHashTable;
+use mfsk_core::msg::wsjt77::{is_plausible_message, unpack77_with_hash};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -32,7 +32,7 @@ impl DecoderState {
 
     fn decode_and_register(
         &self,
-        results: Vec<ft8_core::decode::DecodeResult>,
+        results: Vec<mfsk_core::ft8::decode::DecodeResult>,
     ) -> Vec<DecodedMessage> {
         let mut ht = self.hash_table.lock().unwrap();
         let mut out = Vec::new();
@@ -141,17 +141,19 @@ pub fn decode_subtract(
     strictness: u8,
 ) -> Vec<DecodedMessage> {
     let audio = normalize_to_i16(&samples);
-    let results = decode_frame_subtract(
+    let phase1 = decode_frame(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200);
+    let phase2 = decode_frame_subtract(
         &audio,
         100.0,
         3000.0,
         1.0,
-        None,
         DecodeDepth::BpAllOsd,
-        200,
         to_strictness(strictness),
+        200,
+        &phase1,
     );
-    state.decode_and_register(results)
+    let all: Vec<_> = phase1.into_iter().chain(phase2).collect();
+    state.decode_and_register(all)
 }
 
 /// Sniper-mode decode with AP
@@ -164,8 +166,8 @@ pub fn decode_sniper(
     mycall: String,
     eq_on: bool,
 ) -> Vec<DecodedMessage> {
+    let _ = eq_on;
     let audio = normalize_to_i16(&samples);
-    let eq_mode = if eq_on { EqMode::Adaptive } else { EqMode::Off };
 
     let ap = if callsign.is_empty() {
         None
@@ -176,7 +178,7 @@ pub fn decode_sniper(
     };
 
     let results =
-        decode_sniper_ap(&audio, target_freq, DecodeDepth::BpAllOsd, 20, eq_mode, ap.as_ref());
+        decode_sniper_ap(&audio, target_freq, DecodeDepth::BpAllOsd, DecodeStrictness::Normal, 20, ap.as_ref());
     state.decode_and_register(results)
 }
 
@@ -188,8 +190,8 @@ pub fn encode_ft8(
     report: String,
     freq_hz: f32,
 ) -> Result<Vec<f32>, String> {
-    use ft8_core::message::pack77;
-    use ft8_core::wave_gen::{message_to_tones, tones_to_f32};
+    use mfsk_core::ft8::wave_gen::{message_to_tones, tones_to_f32};
+    use mfsk_core::msg::wsjt77::pack77;
 
     let msg77 = pack77(&call1, &call2, &report).ok_or("Failed to pack message")?;
     let tones = message_to_tones(&msg77);
