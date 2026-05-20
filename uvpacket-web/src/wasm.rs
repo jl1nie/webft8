@@ -566,6 +566,7 @@ pub fn decode_uvpacket_multichannel(
         osd_depth: 2,
         ap_mask: None,
         verify_info: None,
+        ..mfsk_core::core::FecOpts::default()
     };
     rx::decode_multichannel(samples, &mc_opts, &fec_opts)
         .into_iter()
