@@ -6,6 +6,8 @@ use mfsk_core::ft8::decode::{
 use mfsk_core::ft8::hash_table::CallsignHashTable;
 use mfsk_core::ft8::message::{unpack77_with_hash, is_plausible_message};
 use mfsk_core::ft8::resample::{resample_to_12k, resample_f32_to_12k};
+use mfsk_core::ft8::decode_block::{coarse_sync, compute_spectrogram};
+use mfsk_core::core::sync::bootstrap_dt_median;
 
 use std::cell::RefCell;
 
@@ -153,7 +155,7 @@ fn build_ap_hint(callsign: &str, grid: &str, mycall: &str) -> Option<mfsk_core::
 pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str, grid: &str, mycall: &str, eq_on: bool, sample_rate: u32) -> Vec<DecodedMessage> {
     use mfsk_core::ft8::decode::{decode_sniper_sic, EqMode};
 
-    let eq_mode = if eq_on { EqMode::Adaptive } else { EqMode::Off };
+    let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
 
     let ap = build_ap_hint(callsign, grid, mycall);
 
@@ -229,12 +231,38 @@ pub fn decode_wav_subtract_f32(samples: &[f32], strictness: u8, sample_rate: u32
     )
 }
 
+/// Cold-start DT estimate from `coarse_sync` candidates.
+///
+/// Returns the DT median of the top-5 highest-score coarse-sync candidates
+/// (mfsk-core 0.6.6 `bootstrap_dt_median`), which lands within ±100 ms of
+/// the confirmed-decode DT median on reference recordings — useful for
+/// seeding the JS-side period manager when the device clock is skewed >2 s
+/// from UTC and no confirmed decode can be obtained yet.
+///
+/// Returns `None` (→ `undefined` in JS) when no candidates are found.
+#[wasm_bindgen]
+pub fn bootstrap_dt_f32(samples: &[f32], sample_rate: u32) -> Option<f32> {
+    let audio = resample_f32_to_12k(samples, sample_rate);
+    let spec = compute_spectrogram(&audio, 3000.0);
+    let cands = coarse_sync(&spec, 100.0, 3000.0, 1.0, 200);
+    bootstrap_dt_median(&cands, 5)
+}
+
+/// i16 variant of [`bootstrap_dt_f32`].
+#[wasm_bindgen]
+pub fn bootstrap_dt(samples: &[i16], sample_rate: u32) -> Option<f32> {
+    let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
+    let spec = compute_spectrogram(&audio, 3000.0);
+    let cands = coarse_sync(&spec, 100.0, 3000.0, 1.0, 200);
+    bootstrap_dt_median(&cands, 5)
+}
+
 /// f32 variant of `decode_sniper`. See `decode_sniper` for parameters.
 #[wasm_bindgen]
 pub fn decode_sniper_f32(samples: &[f32], target_freq: f32, callsign: &str, grid: &str, mycall: &str, eq_on: bool, sample_rate: u32) -> Vec<DecodedMessage> {
     use mfsk_core::ft8::decode::{decode_sniper_sic, EqMode};
 
-    let eq_mode = if eq_on { EqMode::Adaptive } else { EqMode::Off };
+    let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
 
     let ap = build_ap_hint(callsign, grid, mycall);
 
@@ -418,7 +446,7 @@ pub fn decode_ft4_sniper(
     use mfsk_core::ft4::decode::ApHint;
     use mfsk_core::core::equalize::EqMode;
 
-    let eq_mode = if eq_on { EqMode::Adaptive } else { EqMode::Off };
+    let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
     let ap = if callsign.is_empty() {
         None
     } else if mycall.is_empty() {
@@ -450,7 +478,7 @@ pub fn decode_ft4_sniper_f32(
     use mfsk_core::ft4::decode::ApHint;
     use mfsk_core::core::equalize::EqMode;
 
-    let eq_mode = if eq_on { EqMode::Adaptive } else { EqMode::Off };
+    let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
     let ap = if callsign.is_empty() {
         None
     } else if mycall.is_empty() {

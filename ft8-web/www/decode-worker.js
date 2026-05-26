@@ -29,6 +29,8 @@ import init, {
   // Q65 — basic BP scan + fast-fading metric. (sub-mode passed as u8)
   decode_q65_wav, decode_q65_wav_f32,
   decode_q65_wav_fading, decode_q65_wav_fading_f32,
+  // Cold-start DT bootstrap (mfsk-core 0.6.6 bootstrap_dt_median)
+  bootstrap_dt, bootstrap_dt_f32,
 } from '../pkg/ft8_web.js';
 
 const FN_MAP = {
@@ -42,6 +44,7 @@ const FN_MAP = {
   decode_wspr_wav, decode_wspr_wav_f32,
   decode_q65_wav, decode_q65_wav_f32,
   decode_q65_wav_fading, decode_q65_wav_fading_f32,
+  bootstrap_dt, bootstrap_dt_f32,
 };
 
 const initPromise = init().then(() => {
@@ -75,7 +78,9 @@ self.onmessage = async (e) => {
     const f = FN_MAP[fn];
     if (!f) throw new Error(`unknown decode fn: ${fn}`);
     const results = f(...args);
-    self.postMessage({ id, ok: true, results: toPlain(results) });
+    // Non-decode helpers (e.g. bootstrap_dt) return scalars, not Vec<DecodedMessage>.
+    const payload = (results && typeof results.length === 'number') ? toPlain(results) : results;
+    self.postMessage({ id, ok: true, results: payload });
   } catch (err) {
     self.postMessage({ id, ok: false, error: String(err?.message || err) });
   }

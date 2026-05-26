@@ -145,6 +145,25 @@ export class FT8PeriodManager {
     this._dtAutoCorrect = enabled;
   }
 
+  /**
+   * Single-shot cold-start bootstrap from `bootstrap_dt_median` (mfsk-core
+   * 0.6.6). Use when no confirmed decode is available this period AND the
+   * EMA has never been seeded — typically only the first 1-2 slots after
+   * audio starts on a device whose clock is skewed >2 s from UTC.
+   *
+   * Ignored once the steady-state EMA has any samples — those are more
+   * accurate than coarse_sync candidates and we don't want to clobber them.
+   * Clamped to ±3 s (coarse_sync's native search lag is ±2.5 s; anything
+   * larger is a false candidate).
+   */
+  applyBootstrap(estimateSec) {
+    if (!Number.isFinite(estimateSec)) return;
+    if (!this._dtAutoCorrect) return;
+    if (this._dtHistory.length > 0) return;
+    if (Math.abs(estimateSec) > 3) return;
+    this.setClockOffset(estimateSec);
+  }
+
   // ── Internal ────────────────────────────────────────────────────────────
 
   _tick() {

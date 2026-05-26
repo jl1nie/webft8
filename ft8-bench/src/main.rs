@@ -131,7 +131,7 @@ fn run_ft4_snr_sweep() {
             {
                 ok_basic += 1;
             }
-            if decode_sniper_ap(&audio, 1000.0, 30, EqMode::Adaptive, Some(&ap))
+            if decode_sniper_ap(&audio, 1000.0, 30, EqMode::Local, Some(&ap))
                 .iter()
                 .any(|r| r.message77() == msg77)
             {
@@ -499,7 +499,7 @@ fn run_sniper_story_scenario() {
                     let audio: Vec<i16> = filt.iter()
                         .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16).collect();
                     if decode_sniper_sic(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20,
-                            EqMode::Adaptive, Some(&ap))
+                            EqMode::Local, Some(&ap))
                         .iter().any(|r| r.message77 == target_msg) { $ok += 1; }
                 }};
             }
@@ -626,7 +626,7 @@ fn run_bpf_scenarios() {
             let r_off = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off);
             if r_off.iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
 
-            let r_on = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive);
+            let r_on = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local);
             if r_on.iter().any(|r| r.message77 == target_msg) { ok_on += 1; }
         }
 
@@ -799,7 +799,7 @@ fn run_bpf_subtract_scenario() {
 
     // Sniper-SIC (in-band successive interference cancellation)
     let results_sic = decode_sniper_sic(
-        &audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, None,
+        &audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, None,
     );
     let target_sic = results_sic.iter().any(|r| r.message77 == target_msg);
     println!(
@@ -867,9 +867,9 @@ fn run_bpf_subtract_scenario() {
             if decode_frame_subtract(&au, BPF_LO as f32, BPF_HI as f32, 0.8, None,
                     DecodeDepth::BpAllOsd, 20, DecodeStrictness::Normal)
                 .iter().any(|r| r.message77 == target_msg) { ok_sub += 1; }
-            if decode_sniper_sic(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, None)
+            if decode_sniper_sic(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, None)
                 .iter().any(|r| r.message77 == target_msg) { ok_sic += 1; }
-            if decode_sniper_sic(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap))
+            if decode_sniper_sic(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap))
                 .iter().any(|r| r.message77 == target_msg) { ok_sic_ap += 1; }
         }
         println!("  {:+4} dB  {:>5}/{N_SEEDS} ({:>3.0}%)  {:>5}/{N_SEEDS} ({:>3.0}%)  {:>5}/{N_SEEDS} ({:>3.0}%)  {:>5}/{N_SEEDS} ({:>3.0}%)",
@@ -969,7 +969,7 @@ fn run_wsjt_stress_test() {
     let t_off = r_off.iter().any(|r| r.message77 == target_msg);
 
     // Sniper decode: EQ Adaptive
-    let r_on = decode_sniper_eq(&audio_bpf, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive);
+    let r_on = decode_sniper_eq(&audio_bpf, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local);
     let t_on = r_on.iter().any(|r| r.message77 == target_msg);
 
     println!(
@@ -1010,7 +1010,7 @@ fn run_wsjt_stress_test() {
             let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
             let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
             let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
-            decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive)
+            decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local)
                 .iter().any(|r| r.message77 == target_msg)
         });
 
@@ -1072,9 +1072,9 @@ fn run_wsjt_stress_test() {
 
             if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off)
                 .iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
-            if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive)
+            if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local)
                 .iter().any(|r| r.message77 == target_msg) { ok_eq += 1; }
-            if decode_sniper_ap(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap))
+            if decode_sniper_ap(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap))
                 .iter().any(|r| r.message77 == target_msg) { ok_ap += 1; }
         }
         println!("  {:+4} dB  {:>5}/{N_SEEDS}  {:>5}/{N_SEEDS}  {:>5}/{N_SEEDS}",
@@ -1162,12 +1162,12 @@ fn run_speed_bench() {
 
     // ── sniper mode (±250 Hz around 1000 Hz) ──────────────────────────────────
     for _ in 0..N_WARM {
-        let _ = decode_sniper_eq(&audio, 1000.0, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive);
+        let _ = decode_sniper_eq(&audio, 1000.0, DecodeDepth::BpAllOsd, 20, EqMode::Local);
     }
     let mut times_sniper = Vec::with_capacity(N_MEASURE);
     for _ in 0..N_MEASURE {
         let t0 = Instant::now();
-        let r = decode_sniper_eq(&audio, 1000.0, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive);
+        let r = decode_sniper_eq(&audio, 1000.0, DecodeDepth::BpAllOsd, 20, EqMode::Local);
         let elapsed = t0.elapsed();
         times_sniper.push((elapsed, r.len()));
     }
@@ -1316,7 +1316,7 @@ fn run_extreme_sweep() {
             let r_sub = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200, DecodeStrictness::Normal);
             if r_sub.iter().any(|r| r.message77 == target_msg) { ok_sub += 1; }
 
-            let r_sniper = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap));
+            let r_sniper = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap));
             if r_sniper.iter().any(|r| r.message77 == target_msg) { ok_sniper += 1; }
         }
         println!("  {:+4} dB  {:>4}/{:<4}  {:>4}/{:<4}", snr, ok_sub, N_SEEDS, ok_sniper, N_SEEDS);
@@ -1358,11 +1358,11 @@ fn run_extreme_sweep() {
 
             let r_off = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off, None);
             if r_off.iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
-            let r_eq = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, None);
+            let r_eq = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, None);
             if r_eq.iter().any(|r| r.message77 == target_msg) { ok_eq += 1; }
-            let r_ap = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap_cq));
+            let r_ap = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap_cq));
             if r_ap.iter().any(|r| r.message77 == target_msg) { ok_ap += 1; }
-            let r_full = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap_full));
+            let r_full = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap_full));
             if r_full.iter().any(|r| r.message77 == target_msg) { ok_full += 1; }
         }
         println!("  {:+4} dB  {:>4}/{:<4}  {:>4}/{:<4}  {:>4}/{:<4}  {:>4}/{:<4}", snr, ok_off, N_SEEDS, ok_eq, N_SEEDS, ok_ap, N_SEEDS, ok_full, N_SEEDS);
@@ -1412,7 +1412,7 @@ fn run_extreme_sweep() {
                     let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
                     let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
                     let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
-                    let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(ap_hint));
+                    let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(ap_hint));
                     let found = r.iter().any(|r| r.message77 == *target_msg_qso);
                     if found { ok += 1; }
                     // Count false positives: any decode that isn't the target
@@ -1472,7 +1472,7 @@ fn run_extreme_sweep() {
         let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("testdata").join("sim_extreme_edge.wav");
         let _ = simulator::write_wav(&out, &audio);
-        let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap));
+        let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap));
         let found = r.iter().any(|r| r.message77 == target_msg);
         println!("  WAV: sim_extreme_edge.wav (BPF edge, target -22)  rs-ft8n: {}  decoded: {}", if found {"3Y0Z FOUND"} else {"3Y0Z missed"}, r.len());
     }
@@ -1497,7 +1497,7 @@ fn run_extreme_sweep() {
         let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("testdata").join("sim_extreme_edge_24.wav");
         let _ = simulator::write_wav(&out, &audio);
-        let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Adaptive, Some(&ap));
+        let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap));
         let found = r.iter().any(|r| r.message77 == target_msg);
         println!("  WAV: sim_extreme_edge_24.wav (BPF edge, target -24)  rs-ft8n: {}  decoded: {}", if found {"3Y0Z FOUND"} else {"3Y0Z missed"}, r.len());
     }

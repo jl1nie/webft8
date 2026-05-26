@@ -1360,7 +1360,20 @@ const periodMgr = new FT8PeriodManager({
       const dtVals = results
         .filter(r => (r.pass ?? 0) <= 5 && r.dt_sec != null)
         .map(r => r.dt_sec);
-      if (dtVals.length >= 1) periodMgr.addDtSamples(dtVals);
+      if (dtVals.length >= 1) {
+        periodMgr.addDtSamples(dtVals);
+      } else if (periodMgr.clockOffsetMs === 0 && currentMode !== 'snipe') {
+        // Cold start: no confirmed decode AND EMA never seeded. Phone clock
+        // may be skewed >2 s from UTC, putting every candidate outside the
+        // decoder's DT tolerance. Fall back to coarse_sync candidate DT
+        // median (mfsk-core 0.6.6) to seed the period manager from one slot.
+        try {
+          const est = await workerDecode('bootstrap_dt_f32', [float32, 12000]);
+          if (est != null) periodMgr.applyBootstrap(est);
+        } catch (e) {
+          console.warn('bootstrap_dt failed:', e);
+        }
+      }
     }
 
     const shed = [subDisabledAuto && 'sub', apDisabledAuto && 'AP'].filter(Boolean);

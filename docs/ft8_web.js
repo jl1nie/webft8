@@ -102,6 +102,40 @@ export class DecodedMessage {
 if (Symbol.dispose) DecodedMessage.prototype[Symbol.dispose] = DecodedMessage.prototype.free;
 
 /**
+ * i16 variant of [`bootstrap_dt_f32`].
+ * @param {Int16Array} samples
+ * @param {number} sample_rate
+ * @returns {number | undefined}
+ */
+export function bootstrap_dt(samples, sample_rate) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.bootstrap_dt(ptr0, len0, sample_rate);
+    return ret === 0x100000001 ? undefined : ret;
+}
+
+/**
+ * Cold-start DT estimate from `coarse_sync` candidates.
+ *
+ * Returns the DT median of the top-5 highest-score coarse-sync candidates
+ * (mfsk-core 0.6.6 `bootstrap_dt_median`), which lands within ±100 ms of
+ * the confirmed-decode DT median on reference recordings — useful for
+ * seeding the JS-side period manager when the device clock is skewed >2 s
+ * from UTC and no confirmed decode can be obtained yet.
+ *
+ * Returns `None` (→ `undefined` in JS) when no candidates are found.
+ * @param {Float32Array} samples
+ * @param {number} sample_rate
+ * @returns {number | undefined}
+ */
+export function bootstrap_dt_f32(samples, sample_rate) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.bootstrap_dt_f32(ptr0, len0, sample_rate);
+    return ret === 0x100000001 ? undefined : ret;
+}
+
+/**
  * FT4 sniper-mode decode at a target frequency with optional AP hints.
  * @param {Int16Array} samples
  * @param {number} target_freq
