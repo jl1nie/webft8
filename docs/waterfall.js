@@ -205,22 +205,40 @@ export class Waterfall {
     ctx.font = '10px monospace';
     ctx.textBaseline = 'bottom';
 
+    const ROW_H = 12;       // label height
+    const ROW_GAP = 1;      // gap between stacked rows
+    const PAD = 2;          // horizontal padding to consider as "overlap"
+
+    // Pre-compute layout: sort by x ascending, then greedy-pack into rows so
+    // that horizontally overlapping labels stack vertically instead of
+    // colliding into an unreadable smear. Same algorithm as a 1-D interval
+    // scheduler: each row tracks its current rightmost edge.
+    const items = [];
     for (const msg of messages) {
       const x = ((msg.freq_hz - this.freqMin) / freqRange) * w;
       if (x < 0 || x > w) continue;
-
       const text = msg.message || '';
       if (!text) continue;
-      const tw = ctx.measureText(text).width + 4;
-      const y = h - yOffset;
+      items.push({ x, text, tw: ctx.measureText(text).width + 4 });
+    }
+    items.sort((a, b) => a.x - b.x);
 
+    const rowRightEdge = [];  // rightmost X currently occupied per row
+    for (const it of items) {
+      let row = 0;
+      while (row < rowRightEdge.length && rowRightEdge[row] + PAD > it.x) row++;
+      rowRightEdge[row] = it.x + it.tw;
+      it.row = row;
+    }
+
+    for (const it of items) {
+      const y = h - yOffset - it.row * (ROW_H + ROW_GAP);
       // Background
       ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-      ctx.fillRect(x - 1, y - 12, tw, 12);
-
+      ctx.fillRect(it.x - 1, y - ROW_H, it.tw, ROW_H);
       // Text
       ctx.fillStyle = '#ffeb3b';
-      ctx.fillText(text, x + 1, y);
+      ctx.fillText(it.text, it.x + 1, y);
     }
   }
 
