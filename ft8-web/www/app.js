@@ -204,6 +204,13 @@ const bandSelect = document.getElementById('band-header');
 const subtractCheck = document.getElementById('subtract-mode');
 const apCheck = document.getElementById('ap-mode');
 const dtAutoCorrectCheck = document.getElementById('dt-auto-correct');
+const wfLabelsCheck = document.getElementById('wf-labels-enable');
+// Persist the WF-labels toggle. Default ON; user can hide labels when they
+// obscure the DF marker / waterfall content.
+wfLabelsCheck.checked = localStorage.getItem('webft8-wf-labels') !== '0';
+wfLabelsCheck.addEventListener('change', () => {
+  localStorage.setItem('webft8-wf-labels', wfLabelsCheck.checked ? '1' : '0');
+});
 const strictnessSelect = document.getElementById('decode-strictness');
 const btnCat = document.getElementById('btn-cat');
 const catStatusEl = document.getElementById('cat-status');
@@ -1523,7 +1530,7 @@ const periodMgr = new FT8PeriodManager({
     }
 
     lastDecodedMsgs = msgs;
-    waterfall.drawLabels(msgs);
+    if (wfLabelsCheck.checked) waterfall.drawLabels(msgs);
     waterfall.drawFreqAxis();
 
     // Sync AP target from QSO
