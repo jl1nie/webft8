@@ -67,6 +67,9 @@
   .timer.dt-corrected { color: var(--c-warn, #f90); }
   .timer.tx-on { color: var(--c-danger); font-weight: bold; }
   #dt-status { font-size: var(--fs-xs); color: var(--c-text2); margin-top: 4px; display: none; }
+  .dt-offset { font-size: var(--fs-xs); color: var(--c-text2); font-variant-numeric: tabular-nums;
+    line-height: 1; min-height: 1em; transition: color .2s; }
+  .dt-offset.drifting { color: var(--c-warn, #f90); }
   .header .gear { font-size: var(--fs-lg); color: var(--c-text2); cursor: pointer;
     padding: var(--sp-xs); border: 1px solid var(--c-border); border-radius: var(--radius-sm);
     line-height: 1; flex-shrink: 0; }
@@ -347,7 +350,10 @@
     <option value="432.065">432.065</option>
     <option value="1296.065">1296.065</option>
   </select>
-  <span class="timer" id="period-timer">--</span>
+  <span class="timer-wrap">
+    <span class="timer" id="period-timer">--</span>
+    <span class="dt-offset" id="dt-offset"></span>
+  </span>
   <span class="gear" id="btn-settings">&#9881;</span>
 </div>
 

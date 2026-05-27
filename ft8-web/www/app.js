@@ -102,6 +102,7 @@ function addUnread(mode) {
   badgeSnipe.style.display = '';
 }
 const timerEl = document.getElementById('period-timer');
+const dtOffsetEl = document.getElementById('dt-offset');
 const headerEl = document.querySelector('.header');
 const btnSettings = document.getElementById('btn-settings');
 const btnNtp = document.getElementById('btn-ntp');
@@ -1207,6 +1208,22 @@ const periodMgr = new FT8PeriodManager({
     const dtWarn = Math.abs(periodMgr.clockOffsetSec) >= 1.0;
     timerEl.classList.toggle('dt-corrected', dtWarn);
     headerEl.classList.toggle('dt-warn', dtWarn);
+    // Always reflect the current clock-offset compensation. Hide when below
+    // 0.1 s (typical NTP-stable steady state) to avoid noise; show signed
+    // seconds with one decimal otherwise. `.drifting` class is added by the
+    // onPeriodDtMedian callback when the last period's raw residual exceeds
+    // 0.3 s — signals that drift is outpacing our correction.
+    const off = periodMgr.clockOffsetSec;
+    if (Math.abs(off) >= 0.1) {
+      dtOffsetEl.textContent = `${off >= 0 ? '+' : ''}${off.toFixed(1)}s`;
+    } else {
+      dtOffsetEl.textContent = '';
+    }
+  },
+  onPeriodDtMedian: (medianSec) => {
+    // Raw per-period residual after correction. >0.3 s suggests the EMA
+    // hasn't caught up with drift yet — paint the offset indicator amber.
+    dtOffsetEl.classList.toggle('drifting', Math.abs(medianSec) > 0.3);
   },
   onClockOffset: (offsetSec) => {
     // Show DT correction value below the NTP button.

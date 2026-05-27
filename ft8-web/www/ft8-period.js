@@ -192,6 +192,12 @@ export class FT8PeriodManager {
     // Clamp: ignore implausible values (> ±5 s are measurement errors)
     if (Math.abs(median) > 5) return;
 
+    // Surface the raw per-period median DT (post-correction residual) so the
+    // UI can flag ongoing drift. Fires BEFORE the EMA absorbs the value.
+    if (this.callbacks.onPeriodDtMedian) {
+      this.callbacks.onPeriodDtMedian(median);
+    }
+
     // EMA update — smooths period-to-period jitter
     const prev = this._dtHistory.length > 0
       ? this._dtHistory[this._dtHistory.length - 1]
