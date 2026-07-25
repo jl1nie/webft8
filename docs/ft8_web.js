@@ -2,7 +2,6 @@
 
 export class DecodedMessage {
     static __wrap(ptr) {
-        ptr = ptr >>> 0;
         const obj = Object.create(DecodedMessage.prototype);
         obj.__wbg_ptr = ptr;
         DecodedMessageFinalization.register(obj, obj.__wbg_ptr, obj);
@@ -111,7 +110,7 @@ export function bootstrap_dt(samples, sample_rate) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.bootstrap_dt(ptr0, len0, sample_rate);
-    return ret === 0x100000001 ? undefined : ret;
+    return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
 }
 
 /**
@@ -132,7 +131,7 @@ export function bootstrap_dt_f32(samples, sample_rate) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.bootstrap_dt_f32(ptr0, len0, sample_rate);
-    return ret === 0x100000001 ? undefined : ret;
+    return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
 }
 
 /**
@@ -677,11 +676,10 @@ export function encode_wspr(callsign, grid, power_dbm, freq_hz) {
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v3;
 }
-
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_throw_81fc77679af83bc6: function(arg0, arg1) {
+        __wbg___wbindgen_throw_344f42d3211c4765: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_decodedmessage_new: function(arg0) {
@@ -711,7 +709,7 @@ function __wbg_get_imports() {
 
 const DecodedMessageFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_decodedmessage_free(ptr >>> 0, 1));
+    : new FinalizationRegistry(ptr => wasm.__wbg_decodedmessage_free(ptr, 1));
 
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
@@ -746,8 +744,7 @@ function getFloat32ArrayMemory0() {
 }
 
 function getStringFromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return decodeText(ptr, len);
+    return decodeText(ptr >>> 0, len);
 }
 
 let cachedUint16ArrayMemory0 = null;
@@ -852,8 +849,9 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-let wasmModule, wasm;
+let wasmModule, wasmInstance, wasm;
 function __wbg_finalize_init(instance, module) {
+    wasmInstance = instance;
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;
