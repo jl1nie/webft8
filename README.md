@@ -59,9 +59,11 @@ WebFT8's sniper mode uses the transceiver's **500 Hz hardware narrow filter** to
 |----------|--------|--------|
 | crowd +5 dB, target −12 dB | 7 decoded | **16 decoded** |
 | crowd +40 dB, target −14 dB (54 dB gap) | 0% | **100% with 500 Hz HW BPF** |
-| BPF edge −18 dB, no AP | — | **45% (EQ)** |
-| BPF edge −18 dB, EQ + AP | — | **100%** |
-| Butterworth vs Elliptic 4-pole (center, −18 dB) | — | **95% both** |
+| BPF edge −18 dB, no AP | — | **100% (EQ)** |
+| BPF edge −20 dB, EQ + AP | — | **100%** |
+| Butterworth vs Elliptic 4-pole (center, −20 dB) | — | **100% both** |
+
+Numbers current as of 2026-07-25 (mfsk-core 0.7.4); see [docs/bench.md](docs/bench.md) for before/after deltas vs. the previous decode engine.
 
 Full benchmark data (all scenarios, SNR sweeps, filter comparison): **[docs/bench.md](docs/bench.md)**
 
@@ -69,9 +71,8 @@ Full benchmark data (all scenarios, SNR sweeps, filter comparison): **[docs/benc
 
 ```
 webft8/
-├── ft8-core/      Pure Rust FT8 decoder/encoder library
 ├── ft8-bench/     Benchmark & simulation suite
-├── ft8-web/       WASM bindings + PWA frontend
+├── ft8-web/       WASM bindings + PWA frontend (decode engine: mfsk-core, github.com/jl1nie/mfsk-core)
 ├── ft8-desktop/   Tauri native wrapper
 └── docs/          GitHub Pages deployment
 ```

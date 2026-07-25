@@ -66,10 +66,12 @@ WebFT8 のスナイパーモードは、トランシーバの **500 Hz ハード
 |----------|--------|--------|
 | 混信 +5 dB、ターゲット −12 dB | 7 局 | **16 局** |
 | 混信 +40 dB、ターゲット −14 dB（54 dB ギャップ） | 0% | **500 Hz HW BPF で 100%** |
-| BPF エッジ −18 dB（EQ のみ） | — | **45%** |
+| BPF エッジ −18 dB（EQ のみ） | — | **100%** |
 | BPF エッジ −18 dB（EQ + AP） | — | **100%** |
 | BPF 内混信 +8 dB、ターゲット −12 dB（SIC+AP） | — | **100%** |
-| BPF 内混信 +8 dB、ターゲット −14 dB（SIC+AP） | — | **65%** |
+| BPF 内混信 +8 dB、ターゲット −14 dB（SIC+AP） | — | **100%** |
+
+2026-07-25 時点の数値（mfsk-core 0.7.4）。旧デコードエンジンからの変化量は [docs/bench.md](docs/bench.md) を参照。
 
 全シナリオの詳細ベンチマーク（SNR スイープ・速度計測）: **[docs/bench.md](docs/bench.md)**
 
@@ -77,9 +79,8 @@ WebFT8 のスナイパーモードは、トランシーバの **500 Hz ハード
 
 ```
 webft8/
-├── ft8-core/      Pure Rust FT8 デコーダ/エンコーダライブラリ
 ├── ft8-bench/     ベンチマーク＆シミュレーションスイート
-├── ft8-web/       WASM バインディング + PWA フロントエンド
+├── ft8-web/       WASM バインディング + PWA フロントエンド（デコードエンジン: mfsk-core, github.com/jl1nie/mfsk-core）
 ├── ft8-desktop/   Tauri ネイティブラッパー
 └── docs/          GitHub Pages デプロイ
 ```
