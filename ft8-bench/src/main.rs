@@ -111,33 +111,30 @@ fn run_ft4_snr_sweep() {
 
     let ap = ApHint::new().with_call1("CQ").with_call2("JA1ABC");
 
+    use rayon::prelude::*;
     for snr in [-4, -6, -8, -10, -12, -14, -16, -18, -20] {
-        let mut ok_basic = 0usize;
-        let mut ok_ap = 0usize;
-        for seed in 0..20u64 {
-            let cfg = ft4_sim::SimConfig {
-                signals: vec![ft4_sim::SimSignal {
-                    message77: msg77,
-                    freq_hz: 1000.0,
-                    snr_db: snr as f32,
-                    dt_sec: 0.0,
-                }],
-                noise_seed: Some(0xF70000 + seed),
-            };
-            let audio = ft4_sim::generate_slot(&cfg);
-            if decode_frame(&audio, 800.0, 1200.0, 1.2, 50)
-                .iter()
-                .any(|r| r.message77() == msg77)
-            {
-                ok_basic += 1;
-            }
-            if decode_sniper_ap(&audio, 1000.0, 30, EqMode::Local, Some(&ap))
-                .iter()
-                .any(|r| r.message77() == msg77)
-            {
-                ok_ap += 1;
-            }
-        }
+        let (ok_basic, ok_ap) = (0..20u64)
+            .into_par_iter()
+            .map(|seed| {
+                let cfg = ft4_sim::SimConfig {
+                    signals: vec![ft4_sim::SimSignal {
+                        message77: msg77,
+                        freq_hz: 1000.0,
+                        snr_db: snr as f32,
+                        dt_sec: 0.0,
+                    }],
+                    noise_seed: Some(0xF70000 + seed),
+                };
+                let audio = ft4_sim::generate_slot(&cfg);
+                let hit_basic = decode_frame(&audio, 800.0, 1200.0, 1.2, 50)
+                    .iter()
+                    .any(|r| r.message77() == msg77);
+                let hit_ap = decode_sniper_ap(&audio, 1000.0, 30, EqMode::Local, Some(&ap))
+                    .iter()
+                    .any(|r| r.message77() == msg77);
+                (hit_basic as usize, hit_ap as usize)
+            })
+            .reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
         println!("  {:>4} dB    {:>5}/20    {:>5}/20", snr, ok_basic, ok_ap);
     }
 }
@@ -337,32 +334,31 @@ fn run_busy_band_hard_scenario() {
     // they tie, i16 LSB quantisation itself is the limit (→ a future
     // f32-native ft8-core would unlock more).
     const SWEEP_SEEDS: u64 = 30;
-    let mut agc_full_ok    = 0usize;
-    let mut agc_sniper_ok  = 0usize;
-    let mut clean_full_ok  = 0usize;
-    let mut clean_sniper_ok = 0usize;
-    for seed in 0..SWEEP_SEEDS {
-        let cfg = make_busy_band_scenario(
-            target_msg, TARGET_FREQ, TARGET_SNR,
-            &interferer_msgs, INTERFERER_SNR,
-            Some(seed),
-        );
-        let f32_mix = simulator::generate_frame_f32(&cfg);
-        let audio_agc   = simulator::quantise_crowd_agc(&f32_mix, INTERFERER_SNR, num_crowd);
-        let audio_clean = simulator::generate_frame(&cfg);
+    use rayon::prelude::*;
+    let (agc_full_ok, agc_sniper_ok, clean_full_ok, clean_sniper_ok) = (0..SWEEP_SEEDS)
+        .into_par_iter()
+        .map(|seed| {
+            let cfg = make_busy_band_scenario(
+                target_msg, TARGET_FREQ, TARGET_SNR,
+                &interferer_msgs, INTERFERER_SNR,
+                Some(seed),
+            );
+            let f32_mix = simulator::generate_frame_f32(&cfg);
+            let audio_agc   = simulator::quantise_crowd_agc(&f32_mix, INTERFERER_SNR, num_crowd);
+            let audio_clean = simulator::generate_frame(&cfg);
 
-        let r1 = decode_frame(&audio_agc,   200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200);
-        if r1.iter().any(|r| r.message77 == target_msg) { agc_full_ok += 1; }
+            let hit1 = decode_frame(&audio_agc,   200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200)
+                .iter().any(|r| r.message77 == target_msg);
+            let hit2 = decode_sniper(&audio_agc,   TARGET_FREQ, DecodeDepth::BpAllOsd, 20)
+                .iter().any(|r| r.message77 == target_msg);
+            let hit3 = decode_frame(&audio_clean, 200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200)
+                .iter().any(|r| r.message77 == target_msg);
+            let hit4 = decode_sniper(&audio_clean, TARGET_FREQ, DecodeDepth::BpAllOsd, 20)
+                .iter().any(|r| r.message77 == target_msg);
 
-        let r2 = decode_sniper(&audio_agc,   TARGET_FREQ, DecodeDepth::BpAllOsd, 20);
-        if r2.iter().any(|r| r.message77 == target_msg) { agc_sniper_ok += 1; }
-
-        let r3 = decode_frame(&audio_clean, 200.0, 2800.0, 1.0, None, DecodeDepth::BpAllOsd, 200);
-        if r3.iter().any(|r| r.message77 == target_msg) { clean_full_ok += 1; }
-
-        let r4 = decode_sniper(&audio_clean, TARGET_FREQ, DecodeDepth::BpAllOsd, 20);
-        if r4.iter().any(|r| r.message77 == target_msg) { clean_sniper_ok += 1; }
-    }
+            (hit1 as usize, hit2 as usize, hit3 as usize, hit4 as usize)
+        })
+        .reduce(|| (0, 0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3));
     println!("  ── i16 quantisation sweep ({} seeds) ──", SWEEP_SEEDS);
     println!("  [AGC   full-band ] target hits: {:2}/{SWEEP_SEEDS}  ({:>3.0}%)",
         agc_full_ok, 100.0 * agc_full_ok as f32 / SWEEP_SEEDS as f32);
@@ -460,66 +456,77 @@ fn run_sniper_story_scenario() {
         println!();
     }
 
+    use rayon::prelude::*;
+
     for snr in [-10i32, -12, -14, -16, -18, -20, -22] {
         let target_snr = snr as f32;
-        let mut ok_noisy     = 0usize;
-        let mut ok_bw_edge   = 0usize;
-        let mut ok_bw_ctr    = 0usize;
-        let mut ok_el_edge   = 0usize;
-        let mut ok_el_ctr    = 0usize;
 
-        for seed in 0..N_SEEDS {
-            // --- 1. No-BPF ---------------------------------------------------
-            let cfg_full = simulator::make_busy_band_scenario(
-                target_msg, TARGET_FREQ, target_snr, &crowd_msgs, CROWD_SNR, Some(seed),
+        let (ok_noisy, ok_bw_edge, ok_bw_ctr, ok_el_edge, ok_el_ctr) = (0..N_SEEDS)
+            .into_par_iter()
+            .map(|seed| {
+                // --- 1. No-BPF ---------------------------------------------------
+                let cfg_full = simulator::make_busy_band_scenario(
+                    target_msg, TARGET_FREQ, target_snr, &crowd_msgs, CROWD_SNR, Some(seed),
+                );
+                let mix_full = simulator::generate_frame_f32(&cfg_full);
+                let audio_noisy = simulator::quantise_crowd_agc(&mix_full, CROWD_SNR, num_crowd);
+                let hit_noisy = decode_sniper(&audio_noisy, TARGET_FREQ, DecodeDepth::BpAllOsd, 20)
+                    .iter().any(|r| r.message77 == target_msg);
+
+                // Target-only mix (hardware BPF removes crowd before ADC)
+                let cfg_bpf = simulator::SimConfig {
+                    signals: vec![simulator::SimSignal {
+                        message77: target_msg,
+                        freq_hz: TARGET_FREQ,
+                        snr_db: target_snr,
+                        dt_sec: 0.0,
+                    }],
+                    noise_seed: Some(seed),
+                };
+                let mix_bpf = simulator::generate_frame_f32(&cfg_bpf);
+
+                // helper: filter → normalise → i16 → decode
+                macro_rules! try_bpf {
+                    ($filtered:expr) => {{
+                        let filt = $filtered;
+                        let peak = filt.iter().map(|s: &f32| s.abs()).fold(0.0_f32, f32::max);
+                        let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
+                        let audio: Vec<i16> = filt.iter()
+                            .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16).collect();
+                        decode_sniper_sic(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20,
+                                EqMode::Local, Some(&ap))
+                            .iter().any(|r| r.message77 == target_msg)
+                    }};
+                }
+
+                // --- 2. Butterworth-edge -----------------------------------------
+                let mut bpf = ButterworthBpf::design(N_POLES, 1000.0, 1500.0, FS);
+                let hit_bw_edge = try_bpf!(bpf.filter(&mix_bpf));
+
+                // --- 3. Butterworth-center ----------------------------------------
+                let mut bpf = ButterworthBpf::design(N_POLES, 750.0, 1250.0, FS);
+                let hit_bw_ctr = try_bpf!(bpf.filter(&mix_bpf));
+
+                // --- 4. Elliptic-edge ---------------------------------------------
+                let mut bpf = EllipticBpf::design(N_POLES, 1000.0, 1500.0, FS);
+                let hit_el_edge = try_bpf!(bpf.filter(&mix_bpf));
+
+                // --- 5. Elliptic-center -------------------------------------------
+                let mut bpf = EllipticBpf::design(N_POLES, 750.0, 1250.0, FS);
+                let hit_el_ctr = try_bpf!(bpf.filter(&mix_bpf));
+
+                (
+                    hit_noisy as usize,
+                    hit_bw_edge as usize,
+                    hit_bw_ctr as usize,
+                    hit_el_edge as usize,
+                    hit_el_ctr as usize,
+                )
+            })
+            .reduce(
+                || (0, 0, 0, 0, 0),
+                |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3, a.4 + b.4),
             );
-            let mix_full = simulator::generate_frame_f32(&cfg_full);
-            let audio_noisy = simulator::quantise_crowd_agc(&mix_full, CROWD_SNR, num_crowd);
-            if decode_sniper(&audio_noisy, TARGET_FREQ, DecodeDepth::BpAllOsd, 20)
-                .iter().any(|r| r.message77 == target_msg) { ok_noisy += 1; }
-
-            // Target-only mix (hardware BPF removes crowd before ADC)
-            let cfg_bpf = simulator::SimConfig {
-                signals: vec![simulator::SimSignal {
-                    message77: target_msg,
-                    freq_hz: TARGET_FREQ,
-                    snr_db: target_snr,
-                    dt_sec: 0.0,
-                }],
-                noise_seed: Some(seed),
-            };
-            let mix_bpf = simulator::generate_frame_f32(&cfg_bpf);
-
-            // helper: filter → normalise → i16 → decode
-            macro_rules! try_bpf {
-                ($filtered:expr, $ok:ident) => {{
-                    let filt = $filtered;
-                    let peak = filt.iter().map(|s: &f32| s.abs()).fold(0.0_f32, f32::max);
-                    let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
-                    let audio: Vec<i16> = filt.iter()
-                        .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16).collect();
-                    if decode_sniper_sic(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20,
-                            EqMode::Local, Some(&ap))
-                        .iter().any(|r| r.message77 == target_msg) { $ok += 1; }
-                }};
-            }
-
-            // --- 2. Butterworth-edge -----------------------------------------
-            let mut bpf = ButterworthBpf::design(N_POLES, 1000.0, 1500.0, FS);
-            try_bpf!(bpf.filter(&mix_bpf), ok_bw_edge);
-
-            // --- 3. Butterworth-center ----------------------------------------
-            let mut bpf = ButterworthBpf::design(N_POLES, 750.0, 1250.0, FS);
-            try_bpf!(bpf.filter(&mix_bpf), ok_bw_ctr);
-
-            // --- 4. Elliptic-edge ---------------------------------------------
-            let mut bpf = EllipticBpf::design(N_POLES, 1000.0, 1500.0, FS);
-            try_bpf!(bpf.filter(&mix_bpf), ok_el_edge);
-
-            // --- 5. Elliptic-center -------------------------------------------
-            let mut bpf = EllipticBpf::design(N_POLES, 750.0, 1250.0, FS);
-            try_bpf!(bpf.filter(&mix_bpf), ok_el_ctr);
-        }
 
         let pct = |ok: usize| 100.0 * ok as f64 / N_SEEDS as f64;
         println!("  {:+4} dB  {:>4}/{N_SEEDS}({:>3.0}%)  {:>4}/{N_SEEDS}({:>3.0}%)  {:>4}/{N_SEEDS}({:>3.0}%)  {:>4}/{N_SEEDS}({:>3.0}%)  {:>4}/{N_SEEDS}({:>3.0}%)",
@@ -556,6 +563,7 @@ fn run_bpf_scenarios() {
     use mfsk_core::ft8::decode::{decode_sniper, DecodeDepth};
     use mfsk_core::ft8::message::pack77_type1;
     use bpf::ButterworthBpf;
+    use rayon::prelude::*;
 
     const TARGET_FREQ: f32 = 1000.0;
     const TARGET_SNR: f32 = -18.0;
@@ -599,36 +607,39 @@ fn run_bpf_scenarios() {
         };
 
         // Sweep seeds — compare EQ OFF vs EQ ON
-        let mut ok_off = 0usize;
-        let mut ok_on = 0usize;
-        for seed in 0..N_SEEDS {
-            let config = simulator::SimConfig {
-                signals: vec![simulator::SimSignal {
-                    message77: target_msg,
-                    freq_hz: TARGET_FREQ,
-                    snr_db: TARGET_SNR,
-                    dt_sec: 0.0,
-                }],
-                noise_seed: Some(seed),
-            };
-            let mix = simulator::generate_frame_f32(&config);
+        let (ok_off, ok_on) = (0..N_SEEDS)
+            .into_par_iter()
+            .map(|seed| {
+                let config = simulator::SimConfig {
+                    signals: vec![simulator::SimSignal {
+                        message77: target_msg,
+                        freq_hz: TARGET_FREQ,
+                        snr_db: TARGET_SNR,
+                        dt_sec: 0.0,
+                    }],
+                    noise_seed: Some(seed),
+                };
+                let mix = simulator::generate_frame_f32(&config);
 
-            let mut bpf = ButterworthBpf::design(N_POLES, bpf_lo, bpf_hi, FS);
-            let filtered = bpf.filter(&mix);
+                let mut bpf = ButterworthBpf::design(N_POLES, bpf_lo, bpf_hi, FS);
+                let filtered = bpf.filter(&mix);
 
-            let peak = filtered.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-            let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
-            let audio: Vec<i16> = filtered
-                .iter()
-                .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
-                .collect();
+                let peak = filtered.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+                let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
+                let audio: Vec<i16> = filtered
+                    .iter()
+                    .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
+                    .collect();
 
-            let r_off = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off);
-            if r_off.iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
+                let r_off = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off);
+                let hit_off = r_off.iter().any(|r| r.message77 == target_msg);
 
-            let r_on = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local);
-            if r_on.iter().any(|r| r.message77 == target_msg) { ok_on += 1; }
-        }
+                let r_on = decode_sniper_eq(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local);
+                let hit_on = r_on.iter().any(|r| r.message77 == target_msg);
+
+                (hit_off as usize, hit_on as usize)
+            })
+            .reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
 
         println!(
             "  [{label:8}] BPF {bpf_lo:.0}–{bpf_hi:.0} Hz  atten={target_atten:+.1} dB  \
@@ -667,21 +678,23 @@ fn run_bpf_scenarios() {
 
     // Baseline (no BPF) for reference
     {
-        let mut ok_ref = 0usize;
-        for seed in 0..N_SEEDS {
-            let config = simulator::SimConfig {
-                signals: vec![simulator::SimSignal {
-                    message77: target_msg,
-                    freq_hz: TARGET_FREQ,
-                    snr_db: TARGET_SNR,
-                    dt_sec: 0.0,
-                }],
-                noise_seed: Some(seed),
-            };
-            let audio = simulator::generate_frame(&config);
-            let results = decode_sniper(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20);
-            if results.iter().any(|r| r.message77 == target_msg) { ok_ref += 1; }
-        }
+        let ok_ref = (0..N_SEEDS)
+            .into_par_iter()
+            .filter(|&seed| {
+                let config = simulator::SimConfig {
+                    signals: vec![simulator::SimSignal {
+                        message77: target_msg,
+                        freq_hz: TARGET_FREQ,
+                        snr_db: TARGET_SNR,
+                        dt_sec: 0.0,
+                    }],
+                    noise_seed: Some(seed),
+                };
+                let audio = simulator::generate_frame(&config);
+                let results = decode_sniper(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20);
+                results.iter().any(|r| r.message77 == target_msg)
+            })
+            .count();
         println!(
             "  [no-BPF  ] reference (target+noise only)  {ok_ref}/{N_SEEDS} decoded ({:.0}%)",
             100.0 * ok_ref as f64 / N_SEEDS as f64
@@ -832,46 +845,48 @@ fn run_bpf_subtract_scenario() {
     println!("  SNR sweep ({N_SEEDS} seeds each, AP = call2 '3Y0Z' known):");
     println!("  {:>6}  {:>14}  {:>14}  {:>18}  {:>22}",
         "SNR", "single-pass", "subtract", "sniper-SIC", "sniper-SIC+AP");
+    use rayon::prelude::*;
     for snr in [-10, -12, -14, -16, -18, -20] {
-        let mut ok_single  = 0usize;
-        let mut ok_sub     = 0usize;
-        let mut ok_sic     = 0usize;
-        let mut ok_sic_ap  = 0usize;
-        for seed in 0..N_SEEDS {
-            let mut sigs = vec![simulator::SimSignal {
-                message77: target_msg,
-                freq_hz: TARGET_FREQ,
-                snr_db: snr as f32,
-                dt_sec: 0.0,
-            }];
-            for &(freq, ref msg) in &in_band_crowd {
-                sigs.push(simulator::SimSignal {
-                    message77: *msg,
-                    freq_hz: freq,
-                    snr_db: crowd_snr,
+        let (ok_single, ok_sub, ok_sic, ok_sic_ap) = (0..N_SEEDS)
+            .into_par_iter()
+            .map(|seed| {
+                let mut sigs = vec![simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: snr as f32,
                     dt_sec: 0.0,
-                });
-            }
-            let cfg = simulator::SimConfig { signals: sigs, noise_seed: Some(seed) };
-            let mix = simulator::generate_frame_f32(&cfg);
-            let mut bpf_s = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
-            let filt = bpf_s.filter(&mix);
-            let peak = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-            let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
-            let au: Vec<i16> = filt.iter()
-                .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
-                .collect();
+                }];
+                for &(freq, ref msg) in &in_band_crowd {
+                    sigs.push(simulator::SimSignal {
+                        message77: *msg,
+                        freq_hz: freq,
+                        snr_db: crowd_snr,
+                        dt_sec: 0.0,
+                    });
+                }
+                let cfg = simulator::SimConfig { signals: sigs, noise_seed: Some(seed) };
+                let mix = simulator::generate_frame_f32(&cfg);
+                let mut bpf_s = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+                let filt = bpf_s.filter(&mix);
+                let peak = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+                let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
+                let au: Vec<i16> = filt.iter()
+                    .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
+                    .collect();
 
-            if decode_sniper(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20)
-                .iter().any(|r| r.message77 == target_msg) { ok_single += 1; }
-            if decode_frame_subtract(&au, BPF_LO as f32, BPF_HI as f32, 0.8, None,
-                    DecodeDepth::BpAllOsd, 20, DecodeStrictness::Normal)
-                .iter().any(|r| r.message77 == target_msg) { ok_sub += 1; }
-            if decode_sniper_sic(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, None)
-                .iter().any(|r| r.message77 == target_msg) { ok_sic += 1; }
-            if decode_sniper_sic(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap))
-                .iter().any(|r| r.message77 == target_msg) { ok_sic_ap += 1; }
-        }
+                let hit_single = decode_sniper(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20)
+                    .iter().any(|r| r.message77 == target_msg);
+                let hit_sub = decode_frame_subtract(&au, BPF_LO as f32, BPF_HI as f32, 0.8, None,
+                        DecodeDepth::BpAllOsd, 20, DecodeStrictness::Normal)
+                    .iter().any(|r| r.message77 == target_msg);
+                let hit_sic = decode_sniper_sic(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, None)
+                    .iter().any(|r| r.message77 == target_msg);
+                let hit_sic_ap = decode_sniper_sic(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap))
+                    .iter().any(|r| r.message77 == target_msg);
+
+                (hit_single as usize, hit_sub as usize, hit_sic as usize, hit_sic_ap as usize)
+            })
+            .reduce(|| (0, 0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3));
         println!("  {:+4} dB  {:>5}/{N_SEEDS} ({:>3.0}%)  {:>5}/{N_SEEDS} ({:>3.0}%)  {:>5}/{N_SEEDS} ({:>3.0}%)  {:>5}/{N_SEEDS} ({:>3.0}%)",
             snr,
             ok_single, 100.0 * ok_single  as f64 / N_SEEDS as f64,
@@ -1049,34 +1064,37 @@ fn run_wsjt_stress_test() {
     let ap = ApHint::new().with_call2("3Y0Z");
     println!("  SNR sweep (BPF edge, {N_SEEDS} seeds each):");
     println!("  {:>6}  {:>8}  {:>8}  {:>8}", "SNR", "EQ OFF", "EQ", "EQ+AP");
+    use rayon::prelude::*;
     for snr in [-16, -18, -20, -22, -24, -26] {
-        let mut ok_off = 0usize;
-        let mut ok_eq = 0usize;
-        let mut ok_ap = 0usize;
-        for seed in 0..N_SEEDS {
-            let cfg = simulator::SimConfig {
-                signals: vec![simulator::SimSignal {
-                    message77: target_msg,
-                    freq_hz: TARGET_FREQ,
-                    snr_db: snr as f32,
-                    dt_sec: 0.0,
-                }],
-                noise_seed: Some(seed),
-            };
-            let mix = simulator::generate_frame_f32(&cfg);
-            let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
-            let filt = bpf.filter(&mix);
-            let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-            let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
-            let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+        let (ok_off, ok_eq, ok_ap) = (0..N_SEEDS)
+            .into_par_iter()
+            .map(|seed| {
+                let cfg = simulator::SimConfig {
+                    signals: vec![simulator::SimSignal {
+                        message77: target_msg,
+                        freq_hz: TARGET_FREQ,
+                        snr_db: snr as f32,
+                        dt_sec: 0.0,
+                    }],
+                    noise_seed: Some(seed),
+                };
+                let mix = simulator::generate_frame_f32(&cfg);
+                let mut bpf = ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+                let filt = bpf.filter(&mix);
+                let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+                let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+                let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
 
-            if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off)
-                .iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
-            if decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local)
-                .iter().any(|r| r.message77 == target_msg) { ok_eq += 1; }
-            if decode_sniper_ap(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap))
-                .iter().any(|r| r.message77 == target_msg) { ok_ap += 1; }
-        }
+                let hit_off = decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off)
+                    .iter().any(|r| r.message77 == target_msg);
+                let hit_eq = decode_sniper_eq(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local)
+                    .iter().any(|r| r.message77 == target_msg);
+                let hit_ap = decode_sniper_ap(&au, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap))
+                    .iter().any(|r| r.message77 == target_msg);
+
+                (hit_off as usize, hit_eq as usize, hit_ap as usize)
+            })
+            .reduce(|| (0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2));
         println!("  {:+4} dB  {:>5}/{N_SEEDS}  {:>5}/{N_SEEDS}  {:>5}/{N_SEEDS}",
             snr, ok_off, ok_eq, ok_ap);
     }
@@ -1290,35 +1308,39 @@ fn run_extreme_sweep() {
     // ── (1) Hard-mixed: crowd +40 dB, target SNR sweep ─────────────────────
     println!("--- Hard-mixed: 15 crowd @ +40 dB, target SNR sweep ({N_SEEDS} seeds) ---");
     println!("  {:>6}  {:>10}  {:>10}", "SNR", "subtract", "sniper+AP");
+    use rayon::prelude::*;
     for snr in [-14, -16, -18, -20, -22, -24, -26] {
-        let mut ok_sub = 0usize;
-        let mut ok_sniper = 0usize;
-        for seed in 0..N_SEEDS {
-            let mut signals: Vec<simulator::SimSignal> = crowd_data.iter().enumerate().map(|(i, (call, grid))| {
-                let msg = pack77_type1("CQ", call, grid).unwrap();
-                simulator::SimSignal {
-                    message77: msg,
-                    freq_hz: 200.0 + (i as f32 / crowd_data.len() as f32) * 2600.0,
-                    snr_db: 40.0,
+        let (ok_sub, ok_sniper) = (0..N_SEEDS)
+            .into_par_iter()
+            .map(|seed| {
+                let mut signals: Vec<simulator::SimSignal> = crowd_data.iter().enumerate().map(|(i, (call, grid))| {
+                    let msg = pack77_type1("CQ", call, grid).unwrap();
+                    simulator::SimSignal {
+                        message77: msg,
+                        freq_hz: 200.0 + (i as f32 / crowd_data.len() as f32) * 2600.0,
+                        snr_db: 40.0,
+                        dt_sec: 0.0,
+                    }
+                }).collect();
+                signals.push(simulator::SimSignal {
+                    message77: target_msg,
+                    freq_hz: TARGET_FREQ,
+                    snr_db: snr as f32,
                     dt_sec: 0.0,
-                }
-            }).collect();
-            signals.push(simulator::SimSignal {
-                message77: target_msg,
-                freq_hz: TARGET_FREQ,
-                snr_db: snr as f32,
-                dt_sec: 0.0,
-            });
-            let audio = simulator::generate_frame(&simulator::SimConfig {
-                signals,
-                noise_seed: Some(seed),
-            });
-            let r_sub = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200, DecodeStrictness::Normal);
-            if r_sub.iter().any(|r| r.message77 == target_msg) { ok_sub += 1; }
+                });
+                let audio = simulator::generate_frame(&simulator::SimConfig {
+                    signals,
+                    noise_seed: Some(seed),
+                });
+                let r_sub = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200, DecodeStrictness::Normal);
+                let hit_sub = r_sub.iter().any(|r| r.message77 == target_msg);
 
-            let r_sniper = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap));
-            if r_sniper.iter().any(|r| r.message77 == target_msg) { ok_sniper += 1; }
-        }
+                let r_sniper = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap));
+                let hit_sniper = r_sniper.iter().any(|r| r.message77 == target_msg);
+
+                (hit_sub as usize, hit_sniper as usize)
+            })
+            .reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
         println!("  {:+4} dB  {:>4}/{:<4}  {:>4}/{:<4}", snr, ok_sub, N_SEEDS, ok_sniper, N_SEEDS);
     }
 
@@ -1331,40 +1353,41 @@ fn run_extreme_sweep() {
     const BPF_HI: f64 = 1250.0;
     const N_POLES: usize = 4;
     for snr in [-18, -20, -22, -24, -26, -28] {
-        let mut ok_off = 0usize;
-        let mut ok_eq = 0usize;
-        let mut ok_ap = 0usize;
-        let mut ok_full = 0usize;
         // CQ + call2 AP (61-bit, pass 7)
         let ap_cq = ApHint::new().with_call1("CQ").with_call2("3Y0Z");
         // Full AP: simulated "JA1ABC" as mycall (77-bit passes 9-11)
         let ap_full = ApHint::new().with_call1("JA1ABC").with_call2("3Y0Z");
-        for seed in 0..N_SEEDS {
-            let cfg = simulator::SimConfig {
-                signals: vec![simulator::SimSignal {
-                    message77: target_msg,
-                    freq_hz: TARGET_FREQ,
-                    snr_db: snr as f32,
-                    dt_sec: 0.0,
-                }],
-                noise_seed: Some(seed),
-            };
-            let mix = simulator::generate_frame_f32(&cfg);
-            let mut bpf = bpf::ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
-            let filt = bpf.filter(&mix);
-            let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-            let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
-            let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+        let (ok_off, ok_eq, ok_ap, ok_full) = (0..N_SEEDS)
+            .into_par_iter()
+            .map(|seed| {
+                let cfg = simulator::SimConfig {
+                    signals: vec![simulator::SimSignal {
+                        message77: target_msg,
+                        freq_hz: TARGET_FREQ,
+                        snr_db: snr as f32,
+                        dt_sec: 0.0,
+                    }],
+                    noise_seed: Some(seed),
+                };
+                let mix = simulator::generate_frame_f32(&cfg);
+                let mut bpf = bpf::ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+                let filt = bpf.filter(&mix);
+                let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+                let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+                let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
 
-            let r_off = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off, None);
-            if r_off.iter().any(|r| r.message77 == target_msg) { ok_off += 1; }
-            let r_eq = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, None);
-            if r_eq.iter().any(|r| r.message77 == target_msg) { ok_eq += 1; }
-            let r_ap = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap_cq));
-            if r_ap.iter().any(|r| r.message77 == target_msg) { ok_ap += 1; }
-            let r_full = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap_full));
-            if r_full.iter().any(|r| r.message77 == target_msg) { ok_full += 1; }
-        }
+                let hit_off = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Off, None)
+                    .iter().any(|r| r.message77 == target_msg);
+                let hit_eq = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, None)
+                    .iter().any(|r| r.message77 == target_msg);
+                let hit_ap = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap_cq))
+                    .iter().any(|r| r.message77 == target_msg);
+                let hit_full = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(&ap_full))
+                    .iter().any(|r| r.message77 == target_msg);
+
+                (hit_off as usize, hit_eq as usize, hit_ap as usize, hit_full as usize)
+            })
+            .reduce(|| (0, 0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3));
         println!("  {:+4} dB  {:>4}/{:<4}  {:>4}/{:<4}  {:>4}/{:<4}  {:>4}/{:<4}", snr, ok_off, N_SEEDS, ok_eq, N_SEEDS, ok_ap, N_SEEDS, ok_full, N_SEEDS);
     }
 
@@ -1394,30 +1417,31 @@ fn run_extreme_sweep() {
         for snr in [-18, -20, -22, -24, -26] {
             let mut results = Vec::new();
             for (_label, target_msg_qso, ap_hint) in &scenarios {
-                let mut ok = 0usize;
-                let mut fp = 0usize;
-                for seed in 0..N_SEEDS {
-                    let cfg = simulator::SimConfig {
-                        signals: vec![simulator::SimSignal {
-                            message77: *target_msg_qso,
-                            freq_hz: TARGET_FREQ,
-                            snr_db: snr as f32,
-                            dt_sec: 0.0,
-                        }],
-                        noise_seed: Some(seed),
-                    };
-                    let mix = simulator::generate_frame_f32(&cfg);
-                    let mut bpf = bpf::ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
-                    let filt = bpf.filter(&mix);
-                    let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-                    let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
-                    let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
-                    let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(ap_hint));
-                    let found = r.iter().any(|r| r.message77 == *target_msg_qso);
-                    if found { ok += 1; }
-                    // Count false positives: any decode that isn't the target
-                    fp += r.iter().filter(|r| r.message77 != *target_msg_qso).count();
-                }
+                let (ok, fp) = (0..N_SEEDS)
+                    .into_par_iter()
+                    .map(|seed| {
+                        let cfg = simulator::SimConfig {
+                            signals: vec![simulator::SimSignal {
+                                message77: *target_msg_qso,
+                                freq_hz: TARGET_FREQ,
+                                snr_db: snr as f32,
+                                dt_sec: 0.0,
+                            }],
+                            noise_seed: Some(seed),
+                        };
+                        let mix = simulator::generate_frame_f32(&cfg);
+                        let mut bpf = bpf::ButterworthBpf::design(N_POLES, BPF_LO, BPF_HI, FS);
+                        let filt = bpf.filter(&mix);
+                        let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+                        let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
+                        let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
+                        let r = decode_sniper_ap(&audio, TARGET_FREQ, DecodeDepth::BpAllOsd, 20, EqMode::Local, Some(ap_hint));
+                        let found = r.iter().any(|r| r.message77 == *target_msg_qso);
+                        // Count false positives: any decode that isn't the target
+                        let fp = r.iter().filter(|r| r.message77 != *target_msg_qso).count();
+                        (found as usize, fp)
+                    })
+                    .reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
                 let fp_str = if fp > 0 { format!(" FP:{fp}") } else { String::new() };
                 results.push(format!("{:>4}/{:<4}{}", ok, N_SEEDS, fp_str));
             }

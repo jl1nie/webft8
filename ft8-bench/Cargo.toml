@@ -8,3 +8,4 @@ description = "WebFT8 benchmark and FT8 simulation suite"
 [dependencies]
 mfsk-core = { workspace = true, features = ["full"] }
 hound = "3"
+rayon = "1"
