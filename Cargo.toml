@@ -10,7 +10,7 @@ exclude = [
 resolver = "2"
 
 [workspace.dependencies]
-mfsk-core = { version = "0.6.7", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", branch = "main", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
