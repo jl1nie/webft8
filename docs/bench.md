@@ -1,10 +1,30 @@
 # WebFT8 Decoder Benchmark Results
 
-**mfsk-core 0.7.4 (GitHub `jl1nie/mfsk-core@28a1f03f`) — 2026-07-25**
+**mfsk-core 0.7.4 (GitHub `jl1nie/mfsk-core@7bc1684a`) — 2026-07-25**
 
 Simulator-based evaluation of the WebFT8 decoder against reference conditions.
 All results are reproducible: `cargo run -p ft8-bench --release`.
 
+> **Updated same-day from the `28a1f03f` run below** (mfsk-core issues
+> [#177](https://github.com/jl1nie/mfsk-core/issues/177)/[#179](https://github.com/jl1nie/mfsk-core/issues/179)/[#180](https://github.com/jl1nie/mfsk-core/issues/180),
+> merged [jl1nie/mfsk-core#178](https://github.com/jl1nie/mfsk-core/pull/178)).
+> Root cause: `subtract_tones_lpf`'s SIC low-pass kernel had its cosine²
+> window argument divided by `lpf_half` instead of `NFILT` (`=
+> 2*lpf_half`), doubling the taper's argument range — instead of a
+> smooth taper to 0 at the window edges, the kernel gave samples 166 ms
+> away **full weight**, same as the current sample, actively corrupting
+> the QSB/channel estimate instead of smoothing it. This bug had been
+> present since `subtract_tones_lpf` became the canonical FT8/FT4 SIC
+> path (mfsk-core v0.6.2) — i.e. every prior "since 2026-04-12" number
+> below that involves `subtract`/`sniper-SIC` was itself already
+> running on a broken SIC low-pass; this update is the first time that
+> path has been numerically correct. **Only scenarios that exercise
+> in-band-crowd SIC moved** (Scenario 5, and the real-recording jt9
+> comparison below) — every other scenario (1–4, 6–8, FT4 sweep,
+> speed benchmark) reproduced byte-identical to the `28a1f03f` numbers,
+> confirming the fix's effect is correctly scoped. Deltas vs.
+> `28a1f03f` are called out inline where they exist.
+>
 > **Updated from the 2026-04-12 (ft8-core v0.3.0) run.** The decode engine
 > moved from the in-repo `ft8-core` crate to the external
 > [`mfsk-core`](https://github.com/jl1nie/mfsk-core) crate, which brought
@@ -151,7 +171,9 @@ BPF: 750–1250 Hz, 4-pole Butterworth.
   +2.7 dB  1050 Hz  pass=0  CQ JQ1QRN PM96
   +2.8 dB   850 Hz  pass=0  CQ JQ1QSO PM95
   +2.9 dB  1150 Hz  pass=0  CQ JQ1QRP PM85
- -16.4 dB  1000 Hz  pass=0  CQ 3Y0Z JD34 ★   (subtract — now found on the FIRST pass, was missed entirely)
+ -15.7 dB  1000 Hz  pass=0  CQ 3Y0Z JD34 ★   (subtract, 7bc1684a — was -16.4 dB @ 28a1f03f;
+                                               small shift because the LPF fix changed the
+                                               post-subtract residual the SNR is estimated from)
 ```
 
 ### Statistical sweep (20 seeds × target SNR)
@@ -160,18 +182,22 @@ AP = call2 `3Y0Z` known (実運用でターゲットをロック済みの状態)
 
 | Target SNR | Gap | single-pass | subtract | sniper-SIC | **sniper-SIC+AP** |
 |------------|-----|-------------|----------|------------|-------------------|
-| −10 dB | 18 dB | 0/20 (0%)¹ (was 100%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**) |
-| −12 dB | 20 dB | 0/20 (0%)¹ (was 70%) | 20/20 (**100%**, was 85%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**) |
-| −14 dB | 22 dB | 0/20 (0%)¹ (was 5%) | 20/20 (**100%**, was 5%) | 20/20 (**100%**, was 65%) | 20/20 (**100%**, was 65%) |
-| −16 dB | 24 dB | 0/20 (0%) | 9/20 (**45%**, was 0%) | 9/20 (**45%**, was 0%) | 9/20 (**45%**, was 0%) |
-| −18 dB | 26 dB | 0/20 (0%) | 0/20 (0%) | 0/20 (0%) | 0/20 (0%) |
-| −20 dB | 28 dB | 0/20 (0%) | 0/20 (0%) | 0/20 (0%) | 0/20 (0%) |
+| −10 dB | 18 dB | 0/20 (0%)¹ | 20/20 (**100%**) | 20/20 (**100%**) | 20/20 (**100%**) |
+| −12 dB | 20 dB | 0/20 (0%)¹ | 20/20 (**100%**) | 20/20 (**100%**) | 20/20 (**100%**) |
+| −14 dB | 22 dB | 0/20 (0%)¹ | 20/20 (**100%**) | 20/20 (**100%**) | 20/20 (**100%**) |
+| −16 dB | 24 dB | 0/20 (0%) | 20/20 (**100%**, was 45%) | 20/20 (**100%**, was 45%) | 20/20 (**100%**, was 45%) |
+| −18 dB | 26 dB | 0/20 (0%) | 20/20 (**100%**, was 0%) | 20/20 (**100%**, was 0%) | 20/20 (**100%**, was 0%) |
+| −20 dB | 28 dB | 0/20 (0%) | 2/20 (**10%**, was 0%) | 7/20 (**35%**, was 0%) | 13/20 (**65%**, was 0%) |
+
+("was …" in this table = the `28a1f03f` run earlier the same day, i.e. the SIC-LPF-kernel-bug fix's effect — see the header note. Rows/columns with no "was" annotation matched `28a1f03f` exactly.)
 
 ¹ See root-cause note below — this is not an mfsk-core regression, see caveat.
 
-**Change since 2026-04-12:**
-- `subtract` and `sniper-SIC` both jumped to **100% through −14 dB** (were 5–85%), and both now succeed at −16 dB (45%, was 0%) — roughly a **4–6 dB sensitivity gain** against this in-band-crowd scenario.
-- `single-pass` (plain `decode_sniper`, no crowd handling) shows **0% across the entire sweep** here, vs. up to 100% in the 2026-04-12 numbers. **Root-caused, not a regression:** this is *not* something that changed between mfsk-core versions — a direct A/B rebuild against crates.io mfsk-core 0.6.8 and the current GitHub `main` (`28a1f03f`) produced byte-identical `decode_sniper` output (same 4 crowd decodes, same freq/dt/snr/hard_errors, target absent both times, checked across 8 seeds and both single- and multi-threaded rayon). The 2026-04-12 "100%" figure came from the old, now-removed in-repo `ft8-core` crate — a different implementation entirely, not an earlier mfsk-core release — so there is no mfsk-core regression to chase here. The 0% result is also functionally expected: the code comment for this scenario states outright that the 50 Hz-spaced in-band crowd is *designed* to mask the target from plain single-pass decode via spectral leakage, which is precisely why `subtract`/`sniper-SIC` exist and are the modes actually recommended whenever in-band crowd is present.
+**Change since `28a1f03f` (this update, same-day — SIC LPF kernel fix, mfsk-core#180):** the 100% floor extended from −14 dB to **−18 dB** (a 4 dB extension), and −20 dB — previously a total 0% wipeout for every SIC-based mode — now recovers **10–65%** of frames depending on mode. This is the direct, isolated effect of fixing `subtract_tones_lpf`'s LPF window (see header note): every one of these rows exercises signal subtraction against in-band interference, exactly the code path the bug lived in.
+
+**Change since 2026-04-12 (decode-engine swap, `ft8-core`→`mfsk-core`):**
+- `subtract` and `sniper-SIC` both jumped to **100% through −18 dB** (were 5–85% through only −14 dB in the old engine), and now partially succeed at −20 dB (10–65%, was 0%) — a substantial sensitivity gain against this in-band-crowd scenario, further extended by the same-day SIC LPF fix above.
+- `single-pass` (plain `decode_sniper`, no crowd handling) shows **0% across the entire sweep** here, vs. up to 100% in the 2026-04-12 numbers. **Root-caused, not a regression:** this is *not* something that changed between mfsk-core versions — a direct A/B rebuild against crates.io mfsk-core 0.6.8 and the current GitHub `main` produced byte-identical `decode_sniper` output (same 4 crowd decodes, same freq/dt/snr/hard_errors, target absent both times, checked across 8 seeds and both single- and multi-threaded rayon). The 2026-04-12 "100%" figure came from the old, now-removed in-repo `ft8-core` crate — a different implementation entirely, not an earlier mfsk-core release — so there is no mfsk-core regression to chase here. The 0% result is also functionally expected: the code comment for this scenario states outright that the 50 Hz-spaced in-band crowd is *designed* to mask the target from plain single-pass decode via spectral leakage, which is precisely why `subtract`/`sniper-SIC` exist and are the modes actually recommended whenever in-band crowd is present.
 
 ---
 
@@ -249,13 +275,15 @@ Release build (`cargo run -p ft8-bench --release`), Linux x86-64 (24-core).
 
 | Mode | Decoded | Mean | Min | Max | Budget |
 |------|---------|------|-----|-----|--------|
-| decode_frame (single-pass) | 100 (was 58) | **18.4 ms** (was 159.7 ms, **8.7x faster**) | 17.7 ms | 18.9 ms | 2400 ms |
-| decode_frame_subtract (multi-pass) | 100 (was 65) | 651.1 ms (was 285.4 ms — **slower**, but now finds every station, was 65/100) | 629.9 ms | 665.7 ms | 2400 ms |
-| sniper+EQ (±250 Hz) | 17 (was 11) | **7.2 ms** (was 25.2 ms, **3.5x faster**) | 6.7 ms | 8.1 ms | 2400 ms |
+| decode_frame (single-pass) | 100 (was 58) | **19.3 ms** (was 159.7 ms pre-mfsk-core, **8.2x faster**) | 18.2 ms | 20.9 ms | 2400 ms |
+| decode_frame_subtract (multi-pass) | 100 (was 65) | 615.6 ms (was 285.4 ms pre-mfsk-core — **slower**, but now finds every station, was 65/100) | 593.0 ms | 634.8 ms | 2400 ms |
+| sniper+EQ (±250 Hz) | 17 (was 11) | **7.4 ms** (was 25.2 ms pre-mfsk-core, **3.4x faster**) | 6.9 ms | 7.8 ms | 2400 ms |
 
 All three modes comfortably fit within the FT8 15-second period (2400 ms decode window).
 
-**Note on decode_frame_subtract:** its per-call time roughly doubled, but that's because it now finds **all 100** simulated stations instead of 65 — the extra time is genuine additional decode work (more real signals subtracted and re-decoded per pass), not a regression. `decode_frame` and `sniper+EQ` — which don't have this recall confound — both got dramatically faster (8.7x and 3.5x respectively), consistent with the ~7x speed-up measured directly against a fixed real-world recording (see [`ft8-bench/results/mfsk-core-speed.md`](../ft8-bench/results/mfsk-core-speed.md)).
+**Note on decode_frame_subtract:** its per-call time roughly doubled vs. the pre-mfsk-core baseline, but that's because it now finds **all 100** simulated stations instead of 65 — the extra time is genuine additional decode work (more real signals subtracted and re-decoded per pass), not a regression. `decode_frame` and `sniper+EQ` — which don't have this recall confound — both got dramatically faster (8.2x and 3.4x respectively), consistent with the ~7x speed-up measured directly against a fixed real-world recording (see [`ft8-bench/results/mfsk-core-speed.md`](../ft8-bench/results/mfsk-core-speed.md)).
+
+**Re-verified `7bc1684a` (this update's SIC LPF kernel fix):** all three numbers above reproduce within ~5% run-to-run noise of the `28a1f03f` figures on this 100-station synthetic scenario (already at 100/100 decode ceiling for `decode_frame`/`decode_frame_subtract` pre-fix, so there's no headroom left for the fix to show up here) — no speed regression from the fix on this workload. The fix's cost is concentrated in `decode_frame_subtract_staged`'s dt-refinement search (not exercised by any of the three modes above); see mfsk-core issue #180 for that path's own ~1.3–1.9x-of-flat-pass cost measurement.
 
 ---
 
@@ -286,32 +314,49 @@ assets), 200–3000 Hz, full band. `jt9 -d` sets WSJT-X's own decode depth
 
 | Decoder / mode | Messages | Time | vs. jt9 -d3 (Deep) |
 |----------------|----------|------|---------------------|
-| jt9 -d1 (Fast) | 14 | 0.22 s | — |
+| jt9 -d1 (Fast) | 14 | 0.23 s | — |
 | jt9 -d2 (Normal) | 19 | 0.56 s | — |
-| **jt9 -d3 (Deep)** | **22** | 1.10 s | baseline |
-| mfsk-core `decode_frame` (single-pass) | 13 | **0.02 s** | 59% recall, **11x faster** than jt9 -d1 |
-| mfsk-core `decode_frame_subtract` (multi-pass) | 18 | **0.32 s** | **86% recall**² (18/21 in-band), **3.4x faster** than jt9 -d3 |
+| **jt9 -d3 (Deep)** | **22** | 1.11 s | baseline |
+| mfsk-core `decode_frame` (single-pass) | 14¹ | **0.02 s** | 64% recall, **11x faster** than jt9 -d1 |
+| mfsk-core `decode_frame_subtract` (multi-pass) | 19 (was 18) | **0.32 s** | **90% recall**² (19/21 in-band, was 86%), **3.5x faster** than jt9 -d3 |
+
+¹ Corrects a stale "13" in the prior `28a1f03f` write-up of this table —
+re-verified directly against both `28a1f03f` and `7bc1684a` (via a local
+`[patch]` override), byte-identical 14-message output both times.
+`decode_frame` never calls the SIC subtract path this update's fix
+touched, so — unlike the `decode_frame_subtract` row — this number was
+never expected to move; it just hadn't been checked as carefully before.
 
 ² Excludes one jt9 -d3 decode at 3390 Hz, outside the 200–3000 Hz FT8 band
 both sides were configured for — not a fair miss to count either way.
 
 Message-level diff (normalizing jt9's zero-padded SNR format, e.g. `-09` vs
 `-9`) confirms **every message `decode_frame_subtract` reported was also
-independently found by jt9 — zero false positives**. The only misses were
-3 real decodes exclusive to jt9's exhaustive Deep mode (`CQ DX DL8YHR
-JO41`, `K1BZM DK8NE -10`, `WA2FZW DL5AXX RR73`). Notably, `mfsk-core` now
-recovers all three historical "CRC-luck phantom" candidates its own
+independently found by jt9 — zero false positives**. The only misses now
+are 2 real decodes exclusive to jt9's exhaustive Deep mode (`CQ DX DL8YHR
+JO41`, `K1BZM DK8NE -10`) — down from 3 as of the `28a1f03f` run, which
+also missed `WA2FZW DL5AXX RR73` (2546 Hz): that signal is now decoded,
+the direct, isolated effect of this update's SIC-LPF-kernel fix (see
+header note) — the exact same 13th early-subtracted interferer that
+motivated mfsk-core issue #180 in the first place. `DL8YHR` itself (the
+issue's own titular signal, ~-17 dB) is decoded by mfsk-core's newer
+*staged-checkpoint* SIC (`decode_frame_subtract_staged`, mfsk-core
+0.8.0+) — not yet wired into `decode_frame_subtract` or any WebFT8
+production caller, so it doesn't show up in this particular table; see
+mfsk-core issue #180 for that path's own results. Notably, `mfsk-core`
+still recovers all three historical "CRC-luck phantom" candidates its own
 `OSD_HARDERRORS_MAX` gate used to filter (`N1API F2VX 73`, `N1API HA6FQ
 -23`, `CQ EA2BFM IN83`) — and jt9 independently confirms all three as real
 messages, which is strong external evidence they were never phantoms.
 
-**Takeaway:** on this one real recording, `decode_frame_subtract` lands
-almost exactly between jt9's Normal and Deep decode depths — 18 decodes vs.
-19 (Normal) and 22 (Deep) — while running 1.75x faster than Normal and
-3.4x faster than Deep. This is a single-WAV data point, not a statistical
-claim, but it's the first time this project has run an actual WSJT-X
-binary against `mfsk-core` output rather than comparing against a manual
-estimate or a synthetic simulator ground truth.
+**Takeaway:** on this one real recording, `decode_frame_subtract` now lands
+right at the edge of jt9's Deep decode depth — 19 decodes vs. 19 (Normal)
+and 22 (Deep), i.e. it now *matches* jt9 Normal's count while running
+1.75x faster than Normal and 3.5x faster than Deep, and is only 3 messages
+behind Deep mode (was 4). This is a single-WAV data point, not a
+statistical claim, but it's the clearest concrete evidence yet that the
+mfsk-core#180 SIC fix (see header note) is a real accuracy gain on genuine
+recorded traffic, not just synthetic-scenario tuning.
 
 ---
 
