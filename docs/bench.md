@@ -261,6 +261,8 @@ All three modes comfortably fit within the FT8 15-second period (2400 ms decode 
 
 ## WSJT-X Comparison
 
+### Synthetic scenarios (WSJT-X values not re-measured this run)
+
 | Scenario | WSJT-X (est.) | WebFT8 |
 |----------|---------------|--------|
 | 15 crowd +5 dB, target −12 dB | 7 decoded¹ | **16 decoded** |
@@ -270,6 +272,46 @@ All three modes comfortably fit within the FT8 15-second period (2400 ms decode 
 | BPF edge −18 dB, EQ+AP | N/A | **100%** |
 
 ¹ WSJT-X value from prior manual comparison run; not re-measured in this run.
+
+### Real recording, real jt9 CLI — 2026-07-25
+
+The synthetic scenarios above never had a live WSJT-X binary run against
+them. To close that gap, WSJT-X's `jt9` command-line decoder (from
+`github.com/saitohirga/WSJT-X`, built locally — `cmake --build . --target
+jt9`) was run head-to-head against `mfsk-core` on a real recorded busy-band
+FT8 WAV (`qso3_busy.wav`, 12 kHz mono, from `mfsk-core`'s embedded-poc test
+assets), 200–3000 Hz, full band. `jt9 -d` sets WSJT-X's own decode depth
+(1=Fast, 2=Normal, 3=Deep); `mfsk-core`'s `decode_frame` (single-pass) and
+`decode_frame_subtract` (multi-pass) are the closest equivalents.
+
+| Decoder / mode | Messages | Time | vs. jt9 -d3 (Deep) |
+|----------------|----------|------|---------------------|
+| jt9 -d1 (Fast) | 14 | 0.22 s | — |
+| jt9 -d2 (Normal) | 19 | 0.56 s | — |
+| **jt9 -d3 (Deep)** | **22** | 1.10 s | baseline |
+| mfsk-core `decode_frame` (single-pass) | 13 | **0.02 s** | 59% recall, **11x faster** than jt9 -d1 |
+| mfsk-core `decode_frame_subtract` (multi-pass) | 18 | **0.32 s** | **86% recall**² (18/21 in-band), **3.4x faster** than jt9 -d3 |
+
+² Excludes one jt9 -d3 decode at 3390 Hz, outside the 200–3000 Hz FT8 band
+both sides were configured for — not a fair miss to count either way.
+
+Message-level diff (normalizing jt9's zero-padded SNR format, e.g. `-09` vs
+`-9`) confirms **every message `decode_frame_subtract` reported was also
+independently found by jt9 — zero false positives**. The only misses were
+3 real decodes exclusive to jt9's exhaustive Deep mode (`CQ DX DL8YHR
+JO41`, `K1BZM DK8NE -10`, `WA2FZW DL5AXX RR73`). Notably, `mfsk-core` now
+recovers all three historical "CRC-luck phantom" candidates its own
+`OSD_HARDERRORS_MAX` gate used to filter (`N1API F2VX 73`, `N1API HA6FQ
+-23`, `CQ EA2BFM IN83`) — and jt9 independently confirms all three as real
+messages, which is strong external evidence they were never phantoms.
+
+**Takeaway:** on this one real recording, `decode_frame_subtract` lands
+almost exactly between jt9's Normal and Deep decode depths — 18 decodes vs.
+19 (Normal) and 22 (Deep) — while running 1.75x faster than Normal and
+3.4x faster than Deep. This is a single-WAV data point, not a statistical
+claim, but it's the first time this project has run an actual WSJT-X
+binary against `mfsk-core` output rather than comparing against a manual
+estimate or a synthetic simulator ground truth.
 
 ---
 
