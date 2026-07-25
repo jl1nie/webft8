@@ -12,10 +12,19 @@ All results are reproducible: `cargo run -p ft8-bench --release`.
 > [`ft8-bench/results/mfsk-core-speed.md`](../ft8-bench/results/mfsk-core-speed.md))
 > and — as this re-run shows — a substantial accuracy/sensitivity
 > improvement. Deltas vs. the 2026-04-12 numbers are called out inline
-> below. The ft8-bench scenario seed-loops are now parallelized with
-> `rayon`, so re-running the full suite takes ~35 s instead of ~2m15s on a
-> 24-core box (identical results either way — verified by diffing serial vs.
-> parallel output).
+> below. **Caveat:** the 2026-04-12 baseline was produced by that old,
+> now-removed in-repo `ft8-core` crate, not an earlier mfsk-core version —
+> the "since 2026-04-12" deltas below reflect a full decode-engine swap,
+> not incremental tuning of the same engine. Root-caused two specific
+> mfsk-core commits between the crates.io 0.6.7/0.6.8 releases and the
+> current GitHub `main` (`28a1f03f`) that explain the accuracy gains
+> within mfsk-core's own history: `OSD_HARDERRORS_MAX` widened 22→36
+> (WSJT-X-faithful, mfsk-core#152/issue #72) and rayon-parallelised
+> `coarse_sync` (mfsk-core#139) — see the Scenario 5 note below for how
+> this was verified. The ft8-bench scenario seed-loops are now
+> parallelized with `rayon`, so re-running the full suite takes ~35 s
+> instead of ~2m15s on a 24-core box (identical results either way —
+> verified by diffing serial vs. parallel output).
 
 ---
 
@@ -151,16 +160,18 @@ AP = call2 `3Y0Z` known (実運用でターゲットをロック済みの状態)
 
 | Target SNR | Gap | single-pass | subtract | sniper-SIC | **sniper-SIC+AP** |
 |------------|-----|-------------|----------|------------|-------------------|
-| −10 dB | 18 dB | 0/20 (0%) ⬇ (was 100%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**) |
-| −12 dB | 20 dB | 0/20 (0%) ⬇ (was 70%) | 20/20 (**100%**, was 85%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**) |
-| −14 dB | 22 dB | 0/20 (0%) ⬇ (was 5%) | 20/20 (**100%**, was 5%) | 20/20 (**100%**, was 65%) | 20/20 (**100%**, was 65%) |
+| −10 dB | 18 dB | 0/20 (0%)¹ (was 100%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**) |
+| −12 dB | 20 dB | 0/20 (0%)¹ (was 70%) | 20/20 (**100%**, was 85%) | 20/20 (**100%**, was 100%) | 20/20 (**100%**) |
+| −14 dB | 22 dB | 0/20 (0%)¹ (was 5%) | 20/20 (**100%**, was 5%) | 20/20 (**100%**, was 65%) | 20/20 (**100%**, was 65%) |
 | −16 dB | 24 dB | 0/20 (0%) | 9/20 (**45%**, was 0%) | 9/20 (**45%**, was 0%) | 9/20 (**45%**, was 0%) |
 | −18 dB | 26 dB | 0/20 (0%) | 0/20 (0%) | 0/20 (0%) | 0/20 (0%) |
 | −20 dB | 28 dB | 0/20 (0%) | 0/20 (0%) | 0/20 (0%) | 0/20 (0%) |
 
+¹ See root-cause note below — this is not an mfsk-core regression, see caveat.
+
 **Change since 2026-04-12:**
 - `subtract` and `sniper-SIC` both jumped to **100% through −14 dB** (were 5–85%), and both now succeed at −16 dB (45%, was 0%) — roughly a **4–6 dB sensitivity gain** against this in-band-crowd scenario.
-- **Anomaly to watch:** `single-pass` (plain `decode_sniper`, no crowd handling) dropped from 100%/70%/5% (−10/−12/−14 dB) to a flat **0%** across the entire sweep. Since `subtract` and `sniper-SIC` improved so much, this doesn't block real-world use (SIC/subtract are the modes actually recommended when in-band crowd is present), but it's a real behavioural change in plain `decode_sniper`'s candidate ranking under heavy in-band crowd, not a benchmark artifact — worth a closer look upstream in mfsk-core if plain sniper mode matters for a use case.
+- `single-pass` (plain `decode_sniper`, no crowd handling) shows **0% across the entire sweep** here, vs. up to 100% in the 2026-04-12 numbers. **Root-caused, not a regression:** this is *not* something that changed between mfsk-core versions — a direct A/B rebuild against crates.io mfsk-core 0.6.8 and the current GitHub `main` (`28a1f03f`) produced byte-identical `decode_sniper` output (same 4 crowd decodes, same freq/dt/snr/hard_errors, target absent both times, checked across 8 seeds and both single- and multi-threaded rayon). The 2026-04-12 "100%" figure came from the old, now-removed in-repo `ft8-core` crate — a different implementation entirely, not an earlier mfsk-core release — so there is no mfsk-core regression to chase here. The 0% result is also functionally expected: the code comment for this scenario states outright that the 50 Hz-spaced in-band crowd is *designed* to mask the target from plain single-pass decode via spectral leakage, which is precisely why `subtract`/`sniper-SIC` exist and are the modes actually recommended whenever in-band crowd is present.
 
 ---
 
