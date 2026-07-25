@@ -12,7 +12,7 @@ bash deploy.sh
 # fail the whole batch and leave the rest of the docs/ tree unstaged —
 # which is what happened with 7ce9192 / 71ad9e5 and burned a deploy
 # cycle each time. `2>/dev/null || true` keeps the non-match silent.
-for pat in docs/*.js docs/*.html docs/*.json docs/*.md \
+for pat in docs/*.js docs/*.html docs/*.json docs/*.md docs/*.wasm \
            docs/uvpacket/*.js docs/uvpacket/*.html \
            docs/uvpacket/*.json docs/uvpacket/*.wasm; do
   git add -f $pat 2>/dev/null || true
