@@ -1,5 +1,7 @@
 # ft8-bench filter experiment results
 
+See also: [mfsk-core-speed.md](mfsk-core-speed.md) — mfsk-core 0.6系 → GitHub main の decode 速度比較(約6.9倍高速化)。
+
 ## Setup
 
 - Target: CQ 3Y0Z JD34 @ 1000 Hz
