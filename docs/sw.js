@@ -1,5 +1,5 @@
 // Service Worker for WebFT8 PWA — offline cache
-const CACHE_NAME = 'webft8-v0.5.5-c3c8effe-uv0.2.8-63140af7';
+const CACHE_NAME = 'webft8-v0.5.5-27f31481-uv0.2.8-b6d52474';
 const ASSETS = [
   './',
   './index.html',

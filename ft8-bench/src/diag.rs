@@ -61,7 +61,7 @@ pub fn trace_near(wav_path: &Path, target_hz: f32, label: &str) -> Result<(), St
         let refined = refine_candidate::<Ft8>(&cd0, cand, 10);
 
         // Fill Costas symbols first for sync_quality, then data symbols for LLR.
-        let mut cs = symbol_spectra_direct::<i16>(&samples, cand.freq_hz, refined.dt_sec, SymMask::SyncOnly);
+        let mut cs = symbol_spectra_direct::<i16>(&samples, cand.freq_hz, refined.dt_sec, SymMask::SyncOnly, fft_cache.as_deref());
         let nsync = sync_quality(&*cs);
         fill_symbol_spectra(&mut *cs, &samples, cand.freq_hz, refined.dt_sec, SymMask::DataOnly, fft_cache.as_deref());
         let llr_set = compute_llr::<f32>(&*cs);
