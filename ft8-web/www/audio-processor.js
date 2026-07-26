@@ -63,7 +63,14 @@ class FT8AudioProcessor extends AudioWorkletProcessor {
           length: this.writePos,
           sampleRate: this.outputRate,
         });
-        this._resetState();
+        // Only rewind the period/decode buffer pointer here. The waterfall
+        // path is a continuous stream with no period concept of its own —
+        // resetting its boxcar/decimator state (as `_resetState()` used to
+        // do unconditionally) silently dropped whatever partial chunk
+        // (0-511 samples, up to ~85 ms) had accumulated at this instant,
+        // every period, at exactly the point where the period-boundary
+        // line gets drawn.
+        this.writePos = 0;
       }
     };
 
