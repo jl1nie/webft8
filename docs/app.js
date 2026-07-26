@@ -1959,17 +1959,21 @@ init().then(async () => {
   await new Promise(r => setTimeout(r, 0)); // yield to render splash
 
   // ── 1. Decode benchmark ──────────────────────────────────────────
-  // Synthetic 10-station busy-band signal, NOT silence. Silence produces
-  // ~zero coarse_sync candidates, so a silence benchmark only measures
-  // fixed spectrogram/FFT overhead and never exercises per-candidate
-  // BP/OSD cost — the part that actually dominates real decode time
-  // (confirmed 2026-07-26: desktop native measured ~13-18ms on silence
-  // vs ~50-530ms on real/dense signals in the same DecodeDepth). A device
-  // could pass a silence benchmark fine and still blow the 15s budget on
-  // an actual busy band. 10 CQ callers spread across 200-2800 Hz at
-  // varying levels gives coarse_sync real candidates (some marginal, so
-  // BP/OSD actually run) while staying representative of an ordinary
-  // (not adversarial) band.
+  // Synthetic 10-station busy-band signal, NOT silence — silence produces
+  // ~zero coarse_sync candidates, so it only measures fixed spectrogram/FFT
+  // overhead and never exercises the per-candidate BP/OSD cost that
+  // actually dominates real decode time (confirmed 2026-07-26: desktop
+  // native measured ~13-18ms on silence vs ~50-530ms on real/dense
+  // signals at the same DecodeDepth) — a device could pass a silence
+  // benchmark fine and still blow the 15s budget on an actual busy band.
+  // 10 CQ callers spread across 200-2800 Hz at varying levels gives
+  // coarse_sync real candidates (some marginal, so BP/OSD actually run).
+  //
+  // Measures staged SIC directly (decode_wav_subtract_f32 — the same
+  // engine decode_phase2 uses since the mfsk-core fe286cc fix), not a
+  // cheaper single-pass proxy: that's the actual path device-class
+  // shedding (subDisabledAuto) decides whether to run, so benchmark what
+  // you gate on rather than an indirect stand-in for it.
   await decodeWorkerReadyPromise;
   const N_BENCH_STATIONS = 10;
   const benchF32 = new Float32Array(180000); // 15s at 12kHz
@@ -1998,25 +2002,27 @@ init().then(async () => {
   }
 
   const bt0 = performance.now();
-  await workerDecode('decode_wav_f32', [benchF32, 1, 12000]);
+  await workerDecode('decode_wav_subtract_f32', [benchF32, 1, 12000]);
   const benchMs = performance.now() - bt0;
-  console.log(`Bench: decode ${N_BENCH_STATIONS}-station synth (f32, via worker) = ${benchMs.toFixed(0)} ms`);
+  console.log(`Bench: staged SIC, ${N_BENCH_STATIONS}-station synth (f32, via worker) = ${benchMs.toFixed(0)} ms`);
 
-  // Static shedding thresholds — provisional, carried over from the old
-  // silence-based benchmark's numeric range. This benchmark now measures
-  // something structurally different (real candidate/BP/OSD load, not
-  // just FFT overhead) and will report larger numbers even on fast
-  // devices, so these thresholds need re-validation against real device
-  // data (phone + desktop browsers) before they can be trusted — see
+  // Shedding thresholds — provisional, reasoned from BUDGET_MS rather than
+  // carried over from the old silence-benchmark's numeric range (that
+  // range doesn't transfer: this now measures the real gated path, not a
+  // cheap proxy for it, so the absolute numbers mean something different).
+  // "sub off" once this alone would eat more than half the 15s budget —
+  // phase1 and AP still need their own share on top of it. "sub + AP off"
+  // once it's close to the whole budget. Needs re-validation against real
+  // device data (phone + desktop browsers) before being trusted — see
   // docs/bench.md's DecodeDepth-matrix section.
-  const benchCls = benchMs > 800 ? 'bad' : benchMs > 300 ? 'warn' : 'ok';
-  diagLine('Decode bench', `${benchMs.toFixed(0)} ms`, benchCls);
+  const benchCls = benchMs > BUDGET_MS * 0.75 ? 'bad' : benchMs > BUDGET_MS * 0.5 ? 'warn' : 'ok';
+  diagLine('Decode bench (staged SIC)', `${benchMs.toFixed(0)} ms`, benchCls);
 
-  if (benchMs > 800) {
+  if (benchMs > BUDGET_MS * 0.75) {
     subDisabledAuto = true;
     apDisabledAuto = true;
     diagLine('Shedding', 'sub + AP off', 'warn');
-  } else if (benchMs > 300) {
+  } else if (benchMs > BUDGET_MS * 0.5) {
     subDisabledAuto = true;
     diagLine('Shedding', 'sub off', 'warn');
   } else {
