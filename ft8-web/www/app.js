@@ -1103,13 +1103,32 @@ async function syncNtpOffset() {
   // Strategy: take 3 measurements per API, keep the one with minimum RTT.
   // Minimum RTT ≈ most symmetric path → best midpoint estimate (standard NTP practice).
   const APIS = [
-    { url: 'https://time.cloudflare.com/',
-      parse: d => new Date(d.time).getTime() },
-    { url: 'https://worldtimeapi.org/api/timezone/UTC',
+    // `time.cloudflare.com` (the previous entry here) is Cloudflare's
+    // NTP-over-UDP service, not an HTTPS/JSON endpoint — fetching it as
+    // JSON always failed (confirmed: the plain hostname doesn't serve
+    // HTTP(S) at all). This is Cloudflare's real, documented HTTPS trace
+    // endpoint instead: plaintext key=value lines, `ts=<unix epoch
+    // seconds>.<fractional>`.
+    { url: 'https://cloudflare.com/cdn-cgi/trace', format: 'text',
+      parse: text => {
+        const m = text.match(/^ts=([\d.]+)/m);
+        return m ? parseFloat(m[1]) * 1000 : NaN;
+      } },
+    { url: 'https://worldtimeapi.org/api/timezone/UTC', format: 'json',
       parse: d => new Date(d.utc_datetime).getTime() },
-    { url: 'https://timeapi.io/api/time/current/zone?timeZone=UTC',
+    { url: 'https://timeapi.io/api/time/current/zone?timeZone=UTC', format: 'json',
       parse: d => new Date(d.dateTime + 'Z').getTime() },
   ];
+
+  // Reject implausible offsets outright instead of accepting them — a
+  // bad/misparsed API response (wrong units, wrong field, unexpected
+  // format) used to sail through this function's own checks (only
+  // rejected NaN) and get silently clamped to a misleading exact ±10 s
+  // by periodMgr.setClockOffset's own safety clamp, which looked like a
+  // plausible (if surprising) real reading rather than a sync failure.
+  // No real device clock — NTP-synced OS or even a manually-set one —
+  // should be off by more than this.
+  const MAX_PLAUSIBLE_OFFSET_SEC = 30;
 
   for (const api of APIS) {
     try {
@@ -1119,11 +1138,12 @@ async function syncNtpOffset() {
         const resp = await fetch(api.url, { cache: 'no-store', signal: AbortSignal.timeout(4000) });
         const t1 = Date.now();
         if (!resp.ok) break;
-        const data = await resp.json();
+        const data = api.format === 'text' ? await resp.text() : await resp.json();
         const serverMs = api.parse(data);
         if (isNaN(serverMs)) break;
         const rttMs = t1 - t0;
         const offsetSec = (t0 + rttMs / 2 - serverMs) / 1000;
+        if (Math.abs(offsetSec) > MAX_PLAUSIBLE_OFFSET_SEC) break; // bad response — don't trust this API
         if (!best || rttMs < best.rttMs) best = { offsetSec, rttMs };
       }
       if (!best) continue;
