@@ -2006,23 +2006,37 @@ init().then(async () => {
   const benchMs = performance.now() - bt0;
   console.log(`Bench: staged SIC, ${N_BENCH_STATIONS}-station synth (f32, via worker) = ${benchMs.toFixed(0)} ms`);
 
-  // Shedding thresholds — provisional, reasoned from BUDGET_MS rather than
-  // carried over from the old silence-benchmark's numeric range (that
-  // range doesn't transfer: this now measures the real gated path, not a
-  // cheap proxy for it, so the absolute numbers mean something different).
-  // "sub off" once this alone would eat more than half the 15s budget —
-  // phase1 and AP still need their own share on top of it. "sub + AP off"
-  // once it's close to the whole budget. Needs re-validation against real
-  // device data (phone + desktop browsers) before being trusted — see
-  // docs/bench.md's DecodeDepth-matrix section.
-  const benchCls = benchMs > BUDGET_MS * 0.75 ? 'bad' : benchMs > BUDGET_MS * 0.5 ? 'warn' : 'ok';
+  // Shedding thresholds — provisional (one real device data point so far:
+  // iPad mini gen6 measured 1422 ms here), reasoned as margins reserved
+  // out of BUDGET_MS rather than carried over from the old silence-
+  // benchmark's numeric range (that range doesn't transfer: this now
+  // measures the real gated path, not a cheap proxy for it).
+  //
+  // NONE_MARGIN_MS (1000 ms): once sub is running, the cycle still needs
+  // phase1 + AP + real-world slack (GC pauses, worker postMessage jitter,
+  // thermal throttling over a sustained session — a one-shot startup
+  // bench can't see these) on top of this benchmark's own cost. 1422 ms
+  // (iPad mini) sits just past the resulting 1400 ms line, landing in
+  // "sub off" rather than "none" — a deliberately conservative read
+  // given the single data point.
+  // SUB_OFF_MARGIN_MS (400 ms): once sub itself is already shed, only
+  // phase1 + AP + slack remain, which is consistently the cheap part in
+  // every dataset this session (desktop native: 1/6 to 1/28 of the SIC
+  // cost) — a smaller reserve is enough to decide whether even AP should
+  // go too.
+  const NONE_MARGIN_MS = 1000;
+  const SUB_OFF_MARGIN_MS = 400;
+  const noneThreshold = BUDGET_MS - NONE_MARGIN_MS;   // 1400 ms
+  const subOffThreshold = BUDGET_MS - SUB_OFF_MARGIN_MS; // 2000 ms
+
+  const benchCls = benchMs > subOffThreshold ? 'bad' : benchMs > noneThreshold ? 'warn' : 'ok';
   diagLine('Decode bench (staged SIC)', `${benchMs.toFixed(0)} ms`, benchCls);
 
-  if (benchMs > BUDGET_MS * 0.75) {
+  if (benchMs > subOffThreshold) {
     subDisabledAuto = true;
     apDisabledAuto = true;
     diagLine('Shedding', 'sub + AP off', 'warn');
-  } else if (benchMs > BUDGET_MS * 0.5) {
+  } else if (benchMs > noneThreshold) {
     subDisabledAuto = true;
     diagLine('Shedding', 'sub off', 'warn');
   } else {
