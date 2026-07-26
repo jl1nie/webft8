@@ -1,11 +1,21 @@
-use mfsk_core::ft8::decode::{
-    decode_frame, decode_frame_subtract, decode_sniper_ap,
-    ApHint, DecodeDepth, DecodeStrictness,
-};
+use mfsk_core::ft8::Ft8;
+use mfsk_core::ft8::decode::{ApHint, DecodeDepth, DecodeStrictness, EqMode};
+use mfsk_core::msg::decode_request::DecodeRequest;
 use mfsk_core::msg::hash_table::CallsignHashTable;
 use mfsk_core::msg::wsjt77::{is_plausible_message, unpack77_with_hash};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+
+/// FT8 decode depth this build ships — see `ft8-web/src/lib.rs`'s
+/// `SHIPPED_DEPTH` doc comment for the full rationale (2026-07-26
+/// depth-matrix investigation: `LlrEffort::Minimal` looked equal-or-better
+/// on a real recording and narrow-band sniper scenarios, but was actively
+/// worse than `Full` — both slower and lower recall — on a dense
+/// 100-station scenario with real mutual interference between adjacent
+/// stations. `Full` never lost anywhere tested, so it stays the default;
+/// `osd: true` stays on unconditionally since it's the axis that actually
+/// buys recall).
+const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
 
 /// Decoded message returned to frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,7 +139,10 @@ pub fn decode_wideband(
 ) -> Vec<DecodedMessage> {
     let _ = strictness;
     let audio = normalize_to_i16(&samples);
-    let results = decode_frame(&audio, 100.0, 3000.0, 1.5, None, DecodeDepth::BpAllOsd, 200);
+    let results = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+        .depth(SHIPPED_DEPTH)
+        .decode()
+        .results;
     state.decode_and_register(results)
 }
 
@@ -141,17 +154,17 @@ pub fn decode_subtract(
     strictness: u8,
 ) -> Vec<DecodedMessage> {
     let audio = normalize_to_i16(&samples);
-    let phase1 = decode_frame(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200);
-    let phase2 = decode_frame_subtract(
-        &audio,
-        100.0,
-        3000.0,
-        1.0,
-        DecodeDepth::BpAllOsd,
-        to_strictness(strictness),
-        200,
-        &phase1,
-    );
+    let phase1 = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
+        .depth(SHIPPED_DEPTH)
+        .decode()
+        .results;
+    let phase2 = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
+        .depth(SHIPPED_DEPTH)
+        .strictness(to_strictness(strictness))
+        .known(&phase1)
+        .staged()
+        .decode()
+        .results;
     let all: Vec<_> = phase1.into_iter().chain(phase2).collect();
     state.decode_and_register(all)
 }
@@ -166,7 +179,6 @@ pub fn decode_sniper(
     mycall: String,
     eq_on: bool,
 ) -> Vec<DecodedMessage> {
-    let _ = eq_on;
     let audio = normalize_to_i16(&samples);
 
     let ap = if callsign.is_empty() {
@@ -177,8 +189,19 @@ pub fn decode_sniper(
         Some(ApHint::new().with_call1(&mycall).with_call2(&callsign))
     };
 
-    let results =
-        decode_sniper_ap(&audio, target_freq, DecodeDepth::BpAllOsd, DecodeStrictness::Normal, 20, ap.as_ref());
+    // Narrow-band staged-checkpoint SIC + equalizer, matching ft8-web's
+    // `sniper_decode` (see mfsk-core commit fe286cc — `.staged()` now
+    // honours `eq_mode`, unlike the deleted `decode_sniper_sic`).
+    let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
+    let freq_min = (target_freq - 250.0).max(100.0);
+    let freq_max = (target_freq + 250.0).min(5900.0);
+    let mut req = DecodeRequest::<Ft8>::new(&audio, freq_min, freq_max, 0.8, 20)
+        .depth(SHIPPED_DEPTH)
+        .eq_mode(eq_mode);
+    if let Some(ap) = ap.as_ref() {
+        req = req.ap_hint(ap);
+    }
+    let results = req.staged().decode().results;
     state.decode_and_register(results)
 }
 

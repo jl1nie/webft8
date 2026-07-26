@@ -20,3 +20,8 @@ ft8-bench/testdata/*.wav
 # OS
 .DS_Store
 Thumbs.db
+
+# jt9 CLI artifacts (from manual jt9 -8 -d3 comparison runs at repo root)
+/decoded.txt
+/jt9_wisdom.dat
+/timer.out

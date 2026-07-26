@@ -280,9 +280,15 @@ export function decode_phase1_f32(samples, sample_rate) {
 }
 
 /**
- * Phase 2 decode (i16): 3-pass subtract using cached Phase 1 state.
+ * Phase 2 decode (i16): staged-checkpoint SIC using cached Phase 1 state.
  *
- * Panics if `decode_phase1` was not called first.
+ * Panics if `decode_phase1` was not called first. Prior to mfsk-core
+ * commit fe286cc / issue #191, this call went through a separate,
+ * unfixed flat-3-pass engine (`decode_frame_subtract_with_known`) that
+ * never received the staged-checkpoint SIC recall improvements
+ * `decode_wav_subtract` got — `known`/`fft_cache` are now honoured
+ * directly by `.staged()`, so this is the same engine as every other
+ * subtract path.
  * @param {number} strictness
  * @returns {DecodedMessage[]}
  */
@@ -294,9 +300,11 @@ export function decode_phase2(strictness) {
 }
 
 /**
- * Phase 2 decode (f32): 3-pass subtract using cached Phase 1 state.
+ * Phase 2 decode (f32): staged-checkpoint SIC using cached Phase 1 state.
  *
- * Panics if `decode_phase1_f32` was not called first.
+ * Panics if `decode_phase1_f32` was not called first. See `decode_phase2`
+ * for why this now shares the same staged-checkpoint SIC engine as
+ * `decode_wav_subtract_f32`.
  * @param {number} strictness
  * @returns {DecodedMessage[]}
  */

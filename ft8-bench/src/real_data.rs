@@ -5,8 +5,15 @@
 ///   data/191111_110200.wav
 use std::path::Path;
 
-use mfsk_core::ft8::decode::{decode_frame, decode_frame_subtract, DecodeDepth, DecodeResult, DecodeStrictness};
+use mfsk_core::ft8::Ft8;
+use mfsk_core::ft8::decode::{DecodeDepth, DecodeResult, DecodeStrictness};
 use mfsk_core::ft8::message::unpack77;
+use mfsk_core::msg::decode_request::DecodeRequest;
+
+/// See `ft8-web/src/lib.rs`'s `SHIPPED_DEPTH` doc comment: the
+/// 2026-07-26 depth-matrix investigation concluded `Full` should stay
+/// the default (`Minimal` was actively worse on a dense scenario).
+const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
 
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -108,26 +115,17 @@ pub fn evaluate_real_data(wav_path: &Path) -> Result<RealDataReport, String> {
 
     let num_samples = samples.len();
 
-    let messages = decode_frame(
-        &samples,
-        200.0,
-        2800.0,
-        1.5,
-        None,
-        DecodeDepth::BpAllOsd,
-        200,
-    );
+    let messages = DecodeRequest::<Ft8>::new(&samples, 200.0, 2800.0, 1.5, 200)
+        .depth(SHIPPED_DEPTH)
+        .decode()
+        .results;
 
-    let messages_subtract = decode_frame_subtract(
-        &samples,
-        200.0,
-        2800.0,
-        1.5,
-        None,
-        DecodeDepth::BpAllOsd,
-        200,
-        DecodeStrictness::Normal,
-    );
+    let messages_subtract = DecodeRequest::<Ft8>::new(&samples, 200.0, 2800.0, 1.5, 200)
+        .depth(SHIPPED_DEPTH)
+        .strictness(DecodeStrictness::Normal)
+        .staged()
+        .decode()
+        .results;
 
     Ok(RealDataReport {
         wav_path: wav_path.display().to_string(),

@@ -1,6 +1,6 @@
 [package]
 name = "ft8-desktop"
-version = "0.5.6"
+version = "0.6.0"
 edition = "2021"
 description = "WebFT8 Desktop — Browser FT8 Station (native wrapper)"
 
@@ -13,7 +13,7 @@ tauri = { version = "2.0", features = [] }
 tauri-plugin-shell = "2.0"
 
 # FT8 decode engine (native)
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", branch = "main", default-features = false, features = ["ft8", "fft-rustfft"] }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "fe286cc899ef052c00ea876afa52ff4db03f4e77", default-features = false, features = ["ft8", "fft-rustfft"] }
 
 # FFT for waterfall
 rustfft = "6"

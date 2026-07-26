@@ -1,8 +1,7 @@
 use wasm_bindgen::prelude::*;
-use mfsk_core::ft8::decode::{
-    decode_frame, decode_frame_subtract, decode_frame_subtract_with_known,
-    decode_frame_with_cache, DecodeDepth, DecodeStrictness, FftCache,
-};
+use mfsk_core::ft8::Ft8;
+use mfsk_core::ft8::decode::{DecodeDepth, DecodeStrictness, FftCache};
+use mfsk_core::msg::decode_request::DecodeRequest;
 use mfsk_core::ft8::hash_table::CallsignHashTable;
 use mfsk_core::ft8::message::{unpack77_with_hash, is_plausible_message};
 use mfsk_core::ft8::resample::{resample_to_12k, resample_f32_to_12k};
@@ -10,6 +9,27 @@ use mfsk_core::ft8::decode_block::{coarse_sync, compute_spectrogram};
 use mfsk_core::core::sync::bootstrap_dt_median;
 
 use std::cell::RefCell;
+
+/// FT8 decode depth this build ships — `DecodeDepth::FULL`.
+///
+/// The 2026-07-26 depth-matrix investigation (`ft8-bench`'s
+/// `run_depth_matrix_scenario` / `examples/depth_matrix.rs`) tried
+/// replacing this with `{llr_effort: Minimal, osd: true}`: it matched
+/// `Full`'s recall on a real recording and on narrow-band sniper crowd
+/// scenarios (with a small speed win), but on a *dense* synthetic
+/// scenario (100 stations across 200-2800 Hz, ~26 Hz spacing — narrower
+/// than FT8's own ~50 Hz signal bandwidth, i.e. real mutual interference
+/// between adjacent stations) `Minimal+osd` was actively worse than
+/// `Full+osd` on **both** axes: 96/100 vs 100/100 recall, and 106.9 ms vs
+/// 50.4 ms. `Full` never lost to `Minimal` in any scenario tested, so
+/// there's no evidence-backed case for `Minimal` — kept as `FULL` here.
+/// `osd: true` is not in question either way: disabling it cost real
+/// recall everywhere tested (e.g. -40% messages on the real recording)
+/// for a cost that scales with candidate count, not audio length, so
+/// it's cheap even where it matters. Device-class shedding (see
+/// `ft8-web/www/app.js`'s `subDisabledAuto`) should keep targeting SIC
+/// (`.staged()`), not this constant.
+const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
 
 thread_local! {
     static HASH_TABLE: RefCell<CallsignHashTable> = RefCell::new(CallsignHashTable::new());
@@ -109,7 +129,10 @@ pub fn decode_wav(samples: &[i16], strictness: u8, sample_rate: u32) -> Vec<Deco
     let _ = strictness;
     let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
     decode_and_register(
-        decode_frame(&audio, 100.0, 3000.0, 1.5, None, DecodeDepth::BpAllOsd, 200)
+        DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+            .depth(SHIPPED_DEPTH)
+            .decode()
+            .results
     )
 }
 
@@ -153,19 +176,36 @@ fn build_ap_hint(callsign: &str, grid: &str, mycall: &str) -> Option<mfsk_core::
 /// Pass `mycall = <own_call>` for Call phase (QSO hint, grid ignored).
 #[wasm_bindgen]
 pub fn decode_sniper(samples: &[i16], target_freq: f32, callsign: &str, grid: &str, mycall: &str, eq_on: bool, sample_rate: u32) -> Vec<DecodedMessage> {
-    use mfsk_core::ft8::decode::{decode_sniper_sic, EqMode};
+    use mfsk_core::ft8::decode::EqMode;
 
     let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
-
     let ap = build_ap_hint(callsign, grid, mycall);
-
     let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
-    decode_and_register(
-        decode_sniper_sic(
-            &audio, target_freq, DecodeDepth::BpAllOsd, 20,
-            eq_mode, ap.as_ref(),
-        )
-    )
+    decode_and_register(sniper_decode(&audio, target_freq, eq_mode, ap.as_ref()))
+}
+
+/// Narrow-band (±250 Hz around `target_freq`) sniper decode: the modern
+/// staged-checkpoint SIC engine (issue #180/#191) applied to the BPF
+/// passband, with the adaptive equalizer wired through it (see mfsk-core
+/// commit fe286cc — `.staged()`/`.flat()` used to silently drop
+/// `eq_mode`). Replaces the old `decode_sniper_sic` (deleted upstream,
+/// benchmarked as strictly worse than this combination — see
+/// `docs/bench.md`).
+fn sniper_decode(
+    audio: &[i16],
+    target_freq: f32,
+    eq_mode: mfsk_core::ft8::decode::EqMode,
+    ap: Option<&mfsk_core::ft8::decode::ApHint>,
+) -> Vec<mfsk_core::ft8::decode::DecodeResult> {
+    let freq_min = (target_freq - 250.0).max(100.0);
+    let freq_max = (target_freq + 250.0).min(5900.0);
+    let mut req = DecodeRequest::<Ft8>::new(audio, freq_min, freq_max, 0.8, 20)
+        .depth(SHIPPED_DEPTH)
+        .eq_mode(eq_mode);
+    if let Some(ap) = ap {
+        req = req.ap_hint(ap);
+    }
+    req.staged().decode().results
 }
 
 #[wasm_bindgen]
@@ -201,7 +241,12 @@ pub fn encode_free_text(text: &str, freq_hz: f32) -> Result<Vec<f32>, JsValue> {
 pub fn decode_wav_subtract(samples: &[i16], strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
     decode_and_register(
-        decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200, to_strictness(strictness))
+        DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
+            .depth(SHIPPED_DEPTH)
+            .strictness(to_strictness(strictness))
+            .staged()
+            .decode()
+            .results
     )
 }
 
@@ -218,7 +263,10 @@ pub fn decode_wav_f32(samples: &[f32], strictness: u8, sample_rate: u32) -> Vec<
     let _ = strictness;
     let audio = resample_f32_to_12k(samples, sample_rate);
     decode_and_register(
-        decode_frame(&audio, 100.0, 3000.0, 1.5, None, DecodeDepth::BpAllOsd, 200)
+        DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+            .depth(SHIPPED_DEPTH)
+            .decode()
+            .results
     )
 }
 
@@ -227,7 +275,12 @@ pub fn decode_wav_f32(samples: &[f32], strictness: u8, sample_rate: u32) -> Vec<
 pub fn decode_wav_subtract_f32(samples: &[f32], strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = resample_f32_to_12k(samples, sample_rate);
     decode_and_register(
-        decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, DecodeDepth::BpAllOsd, 200, to_strictness(strictness))
+        DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
+            .depth(SHIPPED_DEPTH)
+            .strictness(to_strictness(strictness))
+            .staged()
+            .decode()
+            .results
     )
 }
 
@@ -260,19 +313,12 @@ pub fn bootstrap_dt(samples: &[i16], sample_rate: u32) -> Option<f32> {
 /// f32 variant of `decode_sniper`. See `decode_sniper` for parameters.
 #[wasm_bindgen]
 pub fn decode_sniper_f32(samples: &[f32], target_freq: f32, callsign: &str, grid: &str, mycall: &str, eq_on: bool, sample_rate: u32) -> Vec<DecodedMessage> {
-    use mfsk_core::ft8::decode::{decode_sniper_sic, EqMode};
+    use mfsk_core::ft8::decode::EqMode;
 
     let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
-
     let ap = build_ap_hint(callsign, grid, mycall);
-
     let audio = resample_f32_to_12k(samples, sample_rate);
-    decode_and_register(
-        decode_sniper_sic(
-            &audio, target_freq, DecodeDepth::BpAllOsd, 20,
-            eq_mode, ap.as_ref(),
-        )
-    )
+    decode_and_register(sniper_decode(&audio, target_freq, eq_mode, ap.as_ref()))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -289,31 +335,38 @@ pub fn decode_sniper_f32(samples: &[f32], target_freq: f32, callsign: &str, grid
 #[wasm_bindgen]
 pub fn decode_phase1(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
-    let (results, fft_cache) = decode_frame_with_cache(
-        &audio, 100.0, 3000.0, 1.5, None, DecodeDepth::BpAllOsd, 200,
-    );
+    let outcome = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+        .depth(SHIPPED_DEPTH)
+        .decode();
     CACHED_AUDIO.with(|a| *a.borrow_mut() = Some(audio));
-    CACHED_FFT.with(|f| *f.borrow_mut() = Some(fft_cache));
-    CACHED_PHASE1.with(|p| *p.borrow_mut() = results.clone());
-    decode_and_register(results)
+    CACHED_FFT.with(|f| *f.borrow_mut() = Some(outcome.fft_cache));
+    CACHED_PHASE1.with(|p| *p.borrow_mut() = outcome.results.clone());
+    decode_and_register(outcome.results)
 }
 
-/// Phase 2 decode (i16): 3-pass subtract using cached Phase 1 state.
+/// Phase 2 decode (i16): staged-checkpoint SIC using cached Phase 1 state.
 ///
-/// Panics if `decode_phase1` was not called first.
+/// Panics if `decode_phase1` was not called first. Prior to mfsk-core
+/// commit fe286cc / issue #191, this call went through a separate,
+/// unfixed flat-3-pass engine (`decode_frame_subtract_with_known`) that
+/// never received the staged-checkpoint SIC recall improvements
+/// `decode_wav_subtract` got — `known`/`fft_cache` are now honoured
+/// directly by `.staged()`, so this is the same engine as every other
+/// subtract path.
 #[wasm_bindgen]
 pub fn decode_phase2(strictness: u8) -> Vec<DecodedMessage> {
     let audio = CACHED_AUDIO.with(|a| a.borrow_mut().take())
         .expect("decode_phase1 must run first");
     let fft = CACHED_FFT.with(|f| f.borrow_mut().take());
     let known = CACHED_PHASE1.with(|p| std::mem::take(&mut *p.borrow_mut()));
-    decode_and_register(
-        decode_frame_subtract_with_known(
-            &audio, 100.0, 3000.0, 1.0, None,
-            DecodeDepth::BpAllOsd, 200, to_strictness(strictness),
-            &known, fft,
-        )
-    )
+    let mut req = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
+        .depth(SHIPPED_DEPTH)
+        .strictness(to_strictness(strictness))
+        .known(&known);
+    if let Some(fft) = fft {
+        req = req.fft_cache(fft);
+    }
+    decode_and_register(req.staged().decode().results)
 }
 
 /// Phase 1 decode (f32): fast single-pass decode for live AudioWorklet path.
@@ -322,31 +375,34 @@ pub fn decode_phase2(strictness: u8) -> Vec<DecodedMessage> {
 #[wasm_bindgen]
 pub fn decode_phase1_f32(samples: &[f32], sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = resample_f32_to_12k(samples, sample_rate);
-    let (results, fft_cache) = decode_frame_with_cache(
-        &audio, 100.0, 3000.0, 1.5, None, DecodeDepth::BpAllOsd, 200,
-    );
+    let outcome = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+        .depth(SHIPPED_DEPTH)
+        .decode();
     CACHED_AUDIO.with(|a| *a.borrow_mut() = Some(audio));
-    CACHED_FFT.with(|f| *f.borrow_mut() = Some(fft_cache));
-    CACHED_PHASE1.with(|p| *p.borrow_mut() = results.clone());
-    decode_and_register(results)
+    CACHED_FFT.with(|f| *f.borrow_mut() = Some(outcome.fft_cache));
+    CACHED_PHASE1.with(|p| *p.borrow_mut() = outcome.results.clone());
+    decode_and_register(outcome.results)
 }
 
-/// Phase 2 decode (f32): 3-pass subtract using cached Phase 1 state.
+/// Phase 2 decode (f32): staged-checkpoint SIC using cached Phase 1 state.
 ///
-/// Panics if `decode_phase1_f32` was not called first.
+/// Panics if `decode_phase1_f32` was not called first. See `decode_phase2`
+/// for why this now shares the same staged-checkpoint SIC engine as
+/// `decode_wav_subtract_f32`.
 #[wasm_bindgen]
 pub fn decode_phase2_f32(strictness: u8) -> Vec<DecodedMessage> {
     let audio = CACHED_AUDIO.with(|a| a.borrow_mut().take())
         .expect("decode_phase1_f32 must run first");
     let fft = CACHED_FFT.with(|f| f.borrow_mut().take());
     let known = CACHED_PHASE1.with(|p| std::mem::take(&mut *p.borrow_mut()));
-    decode_and_register(
-        decode_frame_subtract_with_known(
-            &audio, 100.0, 3000.0, 1.0, None,
-            DecodeDepth::BpAllOsd, 200, to_strictness(strictness),
-            &known, fft,
-        )
-    )
+    let mut req = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
+        .depth(SHIPPED_DEPTH)
+        .strictness(to_strictness(strictness))
+        .known(&known);
+    if let Some(fft) = fft {
+        req = req.fft_cache(fft);
+    }
+    decode_and_register(req.staged().decode().results)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -398,7 +454,9 @@ pub fn decode_ft4_wav(samples: &[i16], _strictness: u8, sample_rate: u32) -> Vec
         samples.to_vec()
     };
     ft4_decode_and_register(
-        mfsk_core::ft4::decode::decode_frame(&audio, 300.0, 2700.0, 1.2, 50),
+        DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
+            .decode()
+            .results,
     )
 }
 
@@ -407,7 +465,9 @@ pub fn decode_ft4_wav(samples: &[i16], _strictness: u8, sample_rate: u32) -> Vec
 pub fn decode_ft4_wav_f32(samples: &[f32], _strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = resample_f32_to_12k(samples, sample_rate);
     ft4_decode_and_register(
-        mfsk_core::ft4::decode::decode_frame(&audio, 300.0, 2700.0, 1.2, 50),
+        DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
+            .decode()
+            .results,
     )
 }
 
@@ -420,7 +480,10 @@ pub fn decode_ft4_wav_subtract(samples: &[i16], _strictness: u8, sample_rate: u3
         samples.to_vec()
     };
     ft4_decode_and_register(
-        mfsk_core::ft4::decode::decode_frame_subtract(&audio, 300.0, 2700.0, 1.2, 50),
+        DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
+            .flat()
+            .decode()
+            .results,
     )
 }
 
@@ -429,7 +492,10 @@ pub fn decode_ft4_wav_subtract(samples: &[i16], _strictness: u8, sample_rate: u3
 pub fn decode_ft4_wav_subtract_f32(samples: &[f32], _strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = resample_f32_to_12k(samples, sample_rate);
     ft4_decode_and_register(
-        mfsk_core::ft4::decode::decode_frame_subtract(&audio, 300.0, 2700.0, 1.2, 50),
+        DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
+            .flat()
+            .decode()
+            .results,
     )
 }
 
@@ -445,6 +511,7 @@ pub fn decode_ft4_sniper(
 ) -> Vec<DecodedMessage> {
     use mfsk_core::ft4::decode::ApHint;
     use mfsk_core::core::equalize::EqMode;
+    use mfsk_core::msg::decode_request::SniperRequest;
 
     let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
     let ap = if callsign.is_empty() {
@@ -460,9 +527,12 @@ pub fn decode_ft4_sniper(
     } else {
         samples.to_vec()
     };
-    ft4_decode_and_register(
-        mfsk_core::ft4::decode::decode_sniper_ap(&audio, target_freq, 15, eq_mode, ap.as_ref()),
-    )
+    let mut req = SniperRequest::<mfsk_core::ft4::Ft4>::new(&audio, target_freq, 15)
+        .eq_mode(eq_mode);
+    if let Some(ap) = ap.as_ref() {
+        req = req.ap_hint(ap);
+    }
+    ft4_decode_and_register(req.decode().results)
 }
 
 /// f32 variant of [`decode_ft4_sniper`].
@@ -477,6 +547,7 @@ pub fn decode_ft4_sniper_f32(
 ) -> Vec<DecodedMessage> {
     use mfsk_core::ft4::decode::ApHint;
     use mfsk_core::core::equalize::EqMode;
+    use mfsk_core::msg::decode_request::SniperRequest;
 
     let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
     let ap = if callsign.is_empty() {
@@ -488,9 +559,12 @@ pub fn decode_ft4_sniper_f32(
     };
 
     let audio = resample_f32_to_12k(samples, sample_rate);
-    ft4_decode_and_register(
-        mfsk_core::ft4::decode::decode_sniper_ap(&audio, target_freq, 15, eq_mode, ap.as_ref()),
-    )
+    let mut req = SniperRequest::<mfsk_core::ft4::Ft4>::new(&audio, target_freq, 15)
+        .eq_mode(eq_mode);
+    if let Some(ap) = ap.as_ref() {
+        req = req.ap_hint(ap);
+    }
+    ft4_decode_and_register(req.decode().results)
 }
 
 /// Encode an FT4 standard message (CALL1 CALL2 GRID/REPORT) as 12 kHz PCM.

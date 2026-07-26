@@ -2,7 +2,14 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use mfsk_core::ft8::decode::{decode_frame, DecodeDepth};
+use mfsk_core::ft8::Ft8;
+use mfsk_core::ft8::decode::DecodeDepth;
+use mfsk_core::msg::decode_request::DecodeRequest;
+
+/// See ft8-web/src/lib.rs's SHIPPED_DEPTH doc comment: the 2026-07-26
+/// depth-matrix investigation concluded FULL stays the default (Minimal
+/// was worse on a dense scenario).
+const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
 
 fn main() {
     let wav_path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
@@ -30,14 +37,21 @@ fn main() {
         .collect::<Result<Vec<_>, _>>()
         .expect("read samples");
 
+    let decode = || {
+        DecodeRequest::<Ft8>::new(&samples, 200.0, 2800.0, 1.5, 200)
+            .depth(SHIPPED_DEPTH)
+            .decode()
+            .results
+    };
+
     // Warm-up (page-in, allocator warm, branch predictor etc.)
-    let n = decode_frame(&samples, 200.0, 2800.0, 1.5, None, DecodeDepth::BpAllOsd, 200).len();
+    let n = decode().len();
     println!("warm-up decoded {n} message(s)");
 
     let mut durations = Vec::with_capacity(iters);
     for _ in 0..iters {
         let t0 = Instant::now();
-        let msgs = decode_frame(&samples, 200.0, 2800.0, 1.5, None, DecodeDepth::BpAllOsd, 200);
+        let msgs = decode();
         durations.push(t0.elapsed());
         std::hint::black_box(&msgs);
     }

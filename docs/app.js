@@ -1947,7 +1947,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '0.5.6';
+const APP_VERSION = '0.6.0';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);
@@ -1959,21 +1959,56 @@ init().then(async () => {
   await new Promise(r => setTimeout(r, 0)); // yield to render splash
 
   // ── 1. Decode benchmark ──────────────────────────────────────────
-  // Single-shot: 15 seconds of silence through the f32 production path
-  // (Float32Array → worker → decode_wav_f32). Includes the postMessage
-  // round-trip cost so the number reflects what the live decode actually
-  // pays per period, and is therefore the right input for the static
-  // shedding decision below.
+  // Synthetic 10-station busy-band signal, NOT silence. Silence produces
+  // ~zero coarse_sync candidates, so a silence benchmark only measures
+  // fixed spectrogram/FFT overhead and never exercises per-candidate
+  // BP/OSD cost — the part that actually dominates real decode time
+  // (confirmed 2026-07-26: desktop native measured ~13-18ms on silence
+  // vs ~50-530ms on real/dense signals in the same DecodeDepth). A device
+  // could pass a silence benchmark fine and still blow the 15s budget on
+  // an actual busy band. 10 CQ callers spread across 200-2800 Hz at
+  // varying levels gives coarse_sync real candidates (some marginal, so
+  // BP/OSD actually run) while staying representative of an ordinary
+  // (not adversarial) band.
   await decodeWorkerReadyPromise;
-  const benchF32 = new Float32Array(180000); // 15s silence at 12kHz
+  const N_BENCH_STATIONS = 10;
+  const benchF32 = new Float32Array(180000); // 15s at 12kHz
+  const BENCH_START = 6000; // 0.5s in, matches the FT8 slot convention
+  for (let i = 0; i < N_BENCH_STATIONS; i++) {
+    const freq = 200 + (i / N_BENCH_STATIONS) * 2600;
+    const call = `JQ1A${String.fromCharCode(65 + i)}${String.fromCharCode(65 + (i * 7) % 26)}`;
+    const tones = encode_ft8('CQ', call, 'PM95', freq);
+    // Vary amplitude station-to-station (0.3x .. 1.0x) so some are
+    // strong and some are marginal, like a real band — not uniformly
+    // easy or uniformly hard.
+    const amp = 0.3 + 0.7 * ((i % 4) / 3);
+    for (let j = 0; j < tones.length && BENCH_START + j < benchF32.length; j++) {
+      benchF32[BENCH_START + j] += tones[j] * amp;
+    }
+  }
+  // Normalise the combined peak to a realistic capture level (~0.5) —
+  // summing full-scale tones directly would clip/saturate unrealistically.
+  let benchPeak = 0;
+  for (let i = 0; i < benchF32.length; i++) {
+    benchPeak = Math.max(benchPeak, Math.abs(benchF32[i]));
+  }
+  if (benchPeak > 1e-6) {
+    const benchScale = 0.5 / benchPeak;
+    for (let i = 0; i < benchF32.length; i++) benchF32[i] *= benchScale;
+  }
+
   const bt0 = performance.now();
   await workerDecode('decode_wav_f32', [benchF32, 1, 12000]);
   const benchMs = performance.now() - bt0;
-  console.log(`Bench: decode silence (f32, via worker) = ${benchMs.toFixed(0)} ms`);
+  console.log(`Bench: decode ${N_BENCH_STATIONS}-station synth (f32, via worker) = ${benchMs.toFixed(0)} ms`);
 
-  // Static shedding thresholds — tuned so Atom-class tablets (~400 ms) get
-  // `sub off` preemptively instead of relying on runtime adaptive shedding,
-  // which would otherwise miss the first 1-2 decodes after startup.
+  // Static shedding thresholds — provisional, carried over from the old
+  // silence-based benchmark's numeric range. This benchmark now measures
+  // something structurally different (real candidate/BP/OSD load, not
+  // just FFT overhead) and will report larger numbers even on fast
+  // devices, so these thresholds need re-validation against real device
+  // data (phone + desktop browsers) before they can be trusted — see
+  // docs/bench.md's DecodeDepth-matrix section.
   const benchCls = benchMs > 800 ? 'bad' : benchMs > 300 ? 'warn' : 'ok';
   diagLine('Decode bench', `${benchMs.toFixed(0)} ms`, benchCls);
 

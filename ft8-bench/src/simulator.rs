@@ -354,7 +354,13 @@ mod tests {
     /// Each SNR level uses 10 seeds; prints success rate per level.
     #[test]
     fn snr_sweep() {
-        use mfsk_core::ft8::decode::{decode_sniper, DecodeDepth};
+        use mfsk_core::ft8::Ft8;
+        use mfsk_core::ft8::decode::DecodeDepth;
+        use mfsk_core::msg::decode_request::SniperRequest;
+        // See ft8-web/src/lib.rs's SHIPPED_DEPTH doc comment: the
+        // 2026-07-26 depth-matrix investigation concluded FULL stays
+        // the default (Minimal was worse on a dense scenario).
+        const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
         let msg = [1u8; MSG_BITS]; // non-trivial message
         let n_seeds = 10u64;
         for snr_db in [-5, -8, -10, -12, -14, -16, -18, -20, -22] {
@@ -370,7 +376,10 @@ mod tests {
                     noise_seed: Some(seed),
                 };
                 let audio = generate_frame(&config);
-                let r = decode_sniper(&audio, 1000.0, DecodeDepth::BpAllOsd, 20);
+                let r = SniperRequest::<Ft8>::new(&audio, 1000.0, 20)
+                    .depth(SHIPPED_DEPTH)
+                    .decode()
+                    .results;
                 if r.iter().any(|x| x.message77 == msg) { ok += 1; }
             }
             println!("SNR {:+3} dB: {ok}/{n_seeds} ({:.0}%)", snr_db, 100.0 * ok as f32 / n_seeds as f32);
@@ -379,10 +388,12 @@ mod tests {
 
     #[test]
     fn weak_signal_roundtrip() {
-        use mfsk_core::ft8::decode::{decode_frame, DecodeDepth};
+        use mfsk_core::ft8::Ft8;
+        use mfsk_core::ft8::decode::DecodeDepth;
+        use mfsk_core::msg::decode_request::DecodeRequest;
 
         // Generate a signal at SNR = +10 dB; should decode easily.
-        let msg = [0u8; MSG_BITS];
+        let msg = pack77_type1("CQ", "K1ABC", "FN42").expect("pack77_type1");
         let config = SimConfig {
             signals: vec![SimSignal {
                 message77: msg,
@@ -393,7 +404,10 @@ mod tests {
             noise_seed: Some(1),
         };
         let audio = generate_frame(&config);
-        let results = decode_frame(&audio, 800.0, 1200.0, 1.0, None, DecodeDepth::BpAll, 20);
+        let results = DecodeRequest::<Ft8>::new(&audio, 800.0, 1200.0, 1.0, 20)
+            .depth(DecodeDepth::BP_ONLY)
+            .decode()
+            .results;
         assert!(
             !results.is_empty(),
             "should decode SNR +10 dB signal; got 0 results"
