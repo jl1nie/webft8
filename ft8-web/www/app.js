@@ -1959,39 +1959,52 @@ init().then(async () => {
   await new Promise(r => setTimeout(r, 0)); // yield to render splash
 
   // ── 1. Decode benchmark ──────────────────────────────────────────
-  // Synthetic 10-station busy-band signal, NOT silence — silence produces
-  // ~zero coarse_sync candidates, so it only measures fixed spectrogram/FFT
-  // overhead and never exercises the per-candidate BP/OSD cost that
-  // actually dominates real decode time (confirmed 2026-07-26: desktop
-  // native measured ~13-18ms on silence vs ~50-530ms on real/dense
-  // signals at the same DecodeDepth) — a device could pass a silence
-  // benchmark fine and still blow the 15s budget on an actual busy band.
-  // 10 CQ callers spread across 200-2800 Hz at varying levels gives
-  // coarse_sync real candidates (some marginal, so BP/OSD actually run).
-  //
-  // Measures staged SIC directly (decode_wav_subtract_f32 — the same
-  // engine decode_phase2 uses since the mfsk-core fe286cc fix), not a
-  // cheaper single-pass proxy: that's the actual path device-class
-  // shedding (subDisabledAuto) decides whether to run, so benchmark what
-  // you gate on rather than an indirect stand-in for it.
+  // Synthetic 10-station busy-band signal with real AWGN, NOT silence and
+  // NOT a noiseless amplitude-only mix (both tried and rejected this
+  // session). Silence produces ~zero coarse_sync candidates, so it only
+  // measures fixed spectrogram/FFT overhead. A noiseless mix (just
+  // varying tone amplitude) doesn't either: with zero noise floor, *any*
+  // nonzero amplitude has effectively infinite SNR, so BP trivially
+  // succeeds on every candidate regardless of amplitude — measured 637 ms
+  // (Node/WASM) vs a real recording's 1500 ms (Chrome/WASM, qso3_busy.wav)
+  // for what should be a similar station count, because the real
+  // recording's actual receiver noise causes genuine BP failures that
+  // fall through to OSD, and the noiseless synthetic signal never did.
+  // Real AWGN (WSJT-X SNR convention — same formula as
+  // ft8-bench::simulator::generate_frame and the mfsk-core eq_mode
+  // regression test: amplitude = sqrt(4·10^(snr/10)·ref_bw/fs) at unit
+  // noise sigma) fixes this: SNRs spread -6..-21 dB, matching the range
+  // of messages actually found in qso3_busy.wav this session, so some
+  // candidates are genuinely marginal and BP/OSD do real work.
   await decodeWorkerReadyPromise;
   const N_BENCH_STATIONS = 10;
+  const FS = 12000;
+  const REF_BW = 2500;
+  const snrAmplitude = (snrDb) => Math.sqrt(4 * Math.pow(10, snrDb / 10) * REF_BW / FS);
+  const gaussianNoise = () => {
+    const u1 = Math.max(Math.random(), 1e-9);
+    const u2 = Math.random();
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  };
+
   const benchF32 = new Float32Array(180000); // 15s at 12kHz
   const BENCH_START = 6000; // 0.5s in, matches the FT8 slot convention
   for (let i = 0; i < N_BENCH_STATIONS; i++) {
     const freq = 200 + (i / N_BENCH_STATIONS) * 2600;
     const call = `JQ1A${String.fromCharCode(65 + i)}${String.fromCharCode(65 + (i * 7) % 26)}`;
-    const tones = encode_ft8('CQ', call, 'PM95', freq);
-    // Vary amplitude station-to-station (0.3x .. 1.0x) so some are
-    // strong and some are marginal, like a real band — not uniformly
-    // easy or uniformly hard.
-    const amp = 0.3 + 0.7 * ((i % 4) / 3);
+    const tones = encode_ft8('CQ', call, 'PM95', freq); // unit amplitude
+    const snrDb = -6 - (i / (N_BENCH_STATIONS - 1)) * 15; // -6 .. -21 dB
+    const amp = snrAmplitude(snrDb);
     for (let j = 0; j < tones.length && BENCH_START + j < benchF32.length; j++) {
       benchF32[BENCH_START + j] += tones[j] * amp;
     }
   }
+  // AWGN at unit sigma — matches the amplitude formula's own normalisation.
+  for (let i = 0; i < benchF32.length; i++) {
+    benchF32[i] += gaussianNoise();
+  }
   // Normalise the combined peak to a realistic capture level (~0.5) —
-  // summing full-scale tones directly would clip/saturate unrealistically.
+  // matches ft8-bench::simulator's own i16-headroom convention.
   let benchPeak = 0;
   for (let i = 0; i < benchF32.length; i++) {
     benchPeak = Math.max(benchPeak, Math.abs(benchF32[i]));
