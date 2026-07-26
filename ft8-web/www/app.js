@@ -1400,9 +1400,16 @@ const periodMgr = new FT8PeriodManager({
     // Feed DT values to clock-offset estimator.
     // Only use BP/OSD results with clean sync (dt_sec is reliable);
     // skip AP-assisted passes which may be anchored to a known signal.
+    // mfsk-core's pass-ID scheme (issue #188/#63): 0-3 = blind BP
+    // (llra/b/c/d), 5-12 = AP-assisted, 14-17/19-22 = OSD ndeep=2/3.
+    // A stale `pass <= 5` cutoff here (pre-#188 numbering) excluded
+    // every real OSD decode (now 14-22, not 4/5/13), starving this
+    // estimator whenever OSD did most of the work and forcing repeated
+    // fallback to the noisier single-slot bootstrap below — the actual
+    // cause of the reported wildly-varying auto-DT start times.
     {
       const dtVals = results
-        .filter(r => (r.pass ?? 0) <= 5 && r.dt_sec != null)
+        .filter(r => { const p = r.pass ?? 0; return !(p >= 5 && p <= 12) && r.dt_sec != null; })
         .map(r => r.dt_sec);
       if (dtVals.length >= 1) {
         periodMgr.addDtSamples(dtVals);
@@ -1424,23 +1431,32 @@ const periodMgr = new FT8PeriodManager({
     const shedTag = shed.length ? ` [-${shed.join(',')}]` : '';
     setStatus(`${n}d ${lastDecodeMs}ms${shedTag}`);
     {
-      // Decoder depth breakdown for snipe-decode-info
-      let bp = 0, osd2 = 0, osd3 = 0, osd4 = 0;
+      // Decoder depth breakdown for snipe-decode-info.
+      // Pass-ID ranges match mfsk-core's current scheme (issue #188/#63):
+      //   0-3    blind BP (llra/b/c/d)
+      //   5-12   AP-assisted (wideband ap_hint passes; sniper mode's own
+      //          AP loop reuses a subset, 6-11)
+      //   14-17  OSD ndeep=2 (zsave1) a/b/c/d
+      //   19-22  OSD ndeep=3 (zsave2) a/b/c/d
+      // (4, 13, 18 are historical gaps from the pre-#188 numbering and
+      // are not emitted anymore — the old bp/osd2/osd3/osd4 split here
+      // keyed off exactly those retired values, so OSD decodes always
+      // showed up as "BP" and the OSD2/OSD3/OSD4 counters were dead.)
+      let bp = 0, ap = 0, osd2 = 0, osd3 = 0;
       for (const r of results) {
         const p = r.pass ?? 0;
-        if (p <= 3) bp++;
-        else if (p === 4) osd2++;
-        else if (p === 5) osd3++;
-        else if (p === 13) osd4++;
-        else bp++; // AP passes count as BP-level for display
+        if (p >= 14 && p <= 17) osd2++;
+        else if (p >= 19 && p <= 22) osd3++;
+        else if (p >= 5 && p <= 12) ap++;
+        else bp++;
       }
       const parts = [`${n}d ${lastDecodeMs}ms`];
       if (n > 0) {
         const depth = [
           bp   && `BP:${bp}`,
+          ap   && `AP:${ap}`,
           osd2 && `OSD2:${osd2}`,
           osd3 && `OSD3:${osd3}`,
-          osd4 && `OSD4:${osd4}`,
         ].filter(Boolean).join(' ');
         if (depth) parts.push(depth);
       }
