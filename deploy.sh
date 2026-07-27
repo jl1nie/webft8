@@ -48,11 +48,11 @@ cp "$FT8_PKG"/ft8_web.js "$DST"/
 cp "$FT8_PKG"/ft8_web_bg.wasm "$DST"/
 
 # Rewrite WASM import path: ../pkg/ft8_web.js → ./ft8_web.js (all JS files)
-sed -i "s|from '../pkg/ft8_web.js'|from './ft8_web.js'|g" "$DST/app.js"
-sed -i "s|from '../pkg/ft8_web.js'|from './ft8_web.js'|g" "$DST/decode-worker.js"
+sed -i.bak "s|from '../pkg/ft8_web.js'|from './ft8_web.js'|g" "$DST/app.js"
+sed -i.bak "s|from '../pkg/ft8_web.js'|from './ft8_web.js'|g" "$DST/decode-worker.js"
 
 # Inject version from Cargo.toml into docs/app.js
-sed -i "s|APP_VERSION = '__VERSION__'|APP_VERSION = '$VERSION'|" "$DST/app.js"
+sed -i.bak "s|APP_VERSION = '__VERSION__'|APP_VERSION = '$VERSION'|" "$DST/app.js"
 
 FT8_WASM_HASH=$(md5sum "$DST/ft8_web_bg.wasm" | cut -d' ' -f1)
 
@@ -60,8 +60,10 @@ FT8_WASM_HASH=$(md5sum "$DST/ft8_web_bg.wasm" | cut -d' ' -f1)
 # Include the wasm hash so a wasm-only change (no version bump) still
 # busts the cache.
 if [ -f "$DST/sw.js" ]; then
-  sed -i "s|CACHE_NAME = 'webft8-[^']*'|CACHE_NAME = 'webft8-v$VERSION-${FT8_WASM_HASH:0:8}'|" "$DST/sw.js"
+  sed -i.bak "s|CACHE_NAME = 'webft8-[^']*'|CACHE_NAME = 'webft8-v$VERSION-${FT8_WASM_HASH:0:8}'|" "$DST/sw.js"
 fi
+
+rm -f "$DST"/*.bak
 
 echo "Deployed WebFT8 to docs/ (v$VERSION, wasm md5=${FT8_WASM_HASH:0:12}…)"
 
@@ -109,7 +111,7 @@ cp "$UV_PKG"/uvpacket_web.js "$UV_DST"/
 cp "$UV_PKG"/uvpacket_web_bg.wasm "$UV_DST"/
 
 # Inject version into app.js.
-sed -i "s|APP_VERSION = '__VERSION__'|APP_VERSION = '$UV_VERSION'|" "$UV_DST/app.js"
+sed -i.bak "s|APP_VERSION = '__VERSION__'|APP_VERSION = '$UV_VERSION'|" "$UV_DST/app.js"
 
 # Sanity: hash the produced wasm and surface it in the deploy log so
 # stale-bundle issues are noticed at deploy time rather than in the
@@ -123,7 +125,9 @@ WASM_HASH=$(md5sum "$UV_DST/uvpacket_web_bg.wasm" | cut -d' ' -f1)
 # version bump) forces SW reinstall, defeating the cache-served-stale-
 # wasm scenario (sw.js's scope covers both / and /uvpacket/).
 if [ -f "$DST/sw.js" ]; then
-  sed -i "s|CACHE_NAME = 'webft8-[^']*'|CACHE_NAME = 'webft8-v$VERSION-${FT8_WASM_HASH:0:8}-uv$UV_VERSION-${WASM_HASH:0:8}'|" "$DST/sw.js"
+  sed -i.bak "s|CACHE_NAME = 'webft8-[^']*'|CACHE_NAME = 'webft8-v$VERSION-${FT8_WASM_HASH:0:8}-uv$UV_VERSION-${WASM_HASH:0:8}'|" "$DST/sw.js"
 fi
+
+rm -f "$UV_DST"/*.bak "$DST"/*.bak
 
 echo "Deployed uvpacket-web to docs/uvpacket/ (v$UV_VERSION, wasm md5=${WASM_HASH:0:12}…)"
