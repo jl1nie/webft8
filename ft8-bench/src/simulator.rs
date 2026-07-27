@@ -380,7 +380,7 @@ mod tests {
                     .depth(SHIPPED_DEPTH)
                     .decode()
                     .results;
-                if r.iter().any(|x| x.message77 == msg) { ok += 1; }
+                if r.iter().any(|x| x.message77() == msg) { ok += 1; }
             }
             println!("SNR {:+3} dB: {ok}/{n_seeds} ({:.0}%)", snr_db, 100.0 * ok as f32 / n_seeds as f32);
         }
@@ -412,6 +412,6 @@ mod tests {
             !results.is_empty(),
             "should decode SNR +10 dB signal; got 0 results"
         );
-        assert_eq!(results[0].message77, msg, "decoded message mismatch");
+        assert_eq!(results[0].message77(), msg, "decoded message mismatch");
     }
 }

@@ -42,7 +42,7 @@ const JT9_CONFIRMED: &[&str] = &[
 fn matched_count(results: &[DecodeResult]) -> usize {
     results
         .iter()
-        .filter_map(|r| unpack77(&r.message77))
+        .filter_map(|r| unpack77(r.message77()))
         .filter(|text| JT9_CONFIRMED.iter().any(|m| text.starts_with(m)))
         .count()
 }

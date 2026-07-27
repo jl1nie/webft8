@@ -63,7 +63,7 @@ fn main() {
     let mut sorted = results;
     sorted.sort_by(|a, b| a.freq_hz.partial_cmp(&b.freq_hz).unwrap());
     for r in &sorted {
-        let text = unpack77(&r.message77).unwrap_or_default();
+        let text = unpack77(r.message77()).unwrap_or_default();
         println!(
             "{:+4.0} {:+4.1} {:4.0} ~  {}",
             r.snr_db, r.dt_sec, r.freq_hz, text

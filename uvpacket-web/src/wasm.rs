@@ -561,12 +561,12 @@ pub fn decode_uvpacket_multichannel(
         },
         ..MultiChannelOpts::default()
     };
-    let fec_opts = mfsk_core::core::FecOpts {
+    let fec_opts = mfsk_core::engine::FecOpts {
         bp_max_iter: 50,
         osd_depth: 2,
         ap_mask: None,
         verify_info: None,
-        ..mfsk_core::core::FecOpts::default()
+        ..mfsk_core::engine::FecOpts::default()
     };
     rx::decode_multichannel(samples, &mc_opts, &fec_opts)
         .into_iter()

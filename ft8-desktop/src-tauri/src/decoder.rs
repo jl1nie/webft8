@@ -47,7 +47,7 @@ impl DecoderState {
         let mut ht = self.hash_table.lock().unwrap();
         let mut out = Vec::new();
         for r in results {
-            if let Some(text) = unpack77_with_hash(&r.message77, &ht) {
+            if let Some(text) = unpack77_with_hash(r.message77(), &ht) {
                 if text.is_empty() || !is_plausible_message(&text) {
                     continue;
                 }

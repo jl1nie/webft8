@@ -6,7 +6,7 @@ use mfsk_core::ft8::hash_table::CallsignHashTable;
 use mfsk_core::ft8::message::{unpack77_with_hash, is_plausible_message};
 use mfsk_core::ft8::resample::{resample_to_12k, resample_f32_to_12k};
 use mfsk_core::ft8::decode_block::{coarse_sync, compute_spectrogram};
-use mfsk_core::core::sync::bootstrap_dt_median;
+use mfsk_core::engine::sync::bootstrap_dt_median;
 
 use std::cell::RefCell;
 
@@ -63,7 +63,7 @@ impl DecodedMessage {
 fn to_decoded(r: mfsk_core::ft8::decode::DecodeResult) -> Option<DecodedMessage> {
     HASH_TABLE.with(|ht| {
         let ht = ht.borrow();
-        let text = unpack77_with_hash(&r.message77, &ht)?;
+        let text = unpack77_with_hash(r.message77(), &ht)?;
         if text.is_empty() { return None; }
         if !is_plausible_message(&text) { return None; }
         Some(DecodedMessage {
@@ -510,7 +510,7 @@ pub fn decode_ft4_sniper(
     sample_rate: u32,
 ) -> Vec<DecodedMessage> {
     use mfsk_core::ft4::decode::ApHint;
-    use mfsk_core::core::equalize::EqMode;
+    use mfsk_core::engine::equalize::EqMode;
     use mfsk_core::msg::decode_request::SniperRequest;
 
     let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
@@ -546,7 +546,7 @@ pub fn decode_ft4_sniper_f32(
     sample_rate: u32,
 ) -> Vec<DecodedMessage> {
     use mfsk_core::ft4::decode::ApHint;
-    use mfsk_core::core::equalize::EqMode;
+    use mfsk_core::engine::equalize::EqMode;
     use mfsk_core::msg::decode_request::SniperRequest;
 
     let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
@@ -610,7 +610,7 @@ fn wspr_decode_to_messages(decodes: Vec<mfsk_core::wspr::WsprDecode>) -> Vec<Dec
 /// the sync-score threshold.
 #[wasm_bindgen]
 pub fn decode_wspr_wav(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage> {
-    use mfsk_core::core::dsp::resample::resample_i16_to_12k_f32;
+    use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
     let decodes = mfsk_core::wspr::decode::decode_scan_default(&audio, 12_000);
     wspr_decode_to_messages(decodes)
@@ -619,7 +619,7 @@ pub fn decode_wspr_wav(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage>
 /// f32 variant of [`decode_wspr_wav`].
 #[wasm_bindgen]
 pub fn decode_wspr_wav_f32(samples: &[f32], sample_rate: u32) -> Vec<DecodedMessage> {
-    use mfsk_core::core::dsp::resample::resample_f32_to_12k_f32;
+    use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
     let decodes = mfsk_core::wspr::decode::decode_scan_default(&audio, 12_000);
     wspr_decode_to_messages(decodes)
@@ -716,13 +716,13 @@ fn q65_slot_midpoint_samples(submode: u8) -> usize {
 /// Plain Q65 BP decode (basic AWGN strategy). f32 audio.
 #[wasm_bindgen]
 pub fn decode_q65_wav_f32(samples: &[f32], submode: u8, sample_rate: u32) -> Vec<DecodedMessage> {
-    use mfsk_core::core::dsp::resample::resample_f32_to_12k_f32;
+    use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
     let params = q65_wav_search_params();
     let nominal_mid = q65_slot_midpoint_samples(submode);
     macro_rules! scan_body {
         ($p:ty) => {
-            mfsk_core::q65::decode_scan_for::<$p>(&audio, 12_000, nominal_mid, &params)
+            mfsk_core::q65::DecodeRequest::<$p>::new(&audio, 12_000, nominal_mid, params).decode()
         };
     }
     let decodes = dispatch_q65_submode!(submode, scan_body);
@@ -732,13 +732,13 @@ pub fn decode_q65_wav_f32(samples: &[f32], submode: u8, sample_rate: u32) -> Vec
 /// Plain Q65 BP decode. i16 audio variant.
 #[wasm_bindgen]
 pub fn decode_q65_wav(samples: &[i16], submode: u8, sample_rate: u32) -> Vec<DecodedMessage> {
-    use mfsk_core::core::dsp::resample::resample_i16_to_12k_f32;
+    use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
     let params = q65_wav_search_params();
     let nominal_mid = q65_slot_midpoint_samples(submode);
     macro_rules! scan_body {
         ($p:ty) => {
-            mfsk_core::q65::decode_scan_for::<$p>(&audio, 12_000, nominal_mid, &params)
+            mfsk_core::q65::DecodeRequest::<$p>::new(&audio, 12_000, nominal_mid, params).decode()
         };
     }
     let decodes = dispatch_q65_submode!(submode, scan_body);
@@ -758,7 +758,7 @@ pub fn decode_q65_wav_fading_f32(
     model: u8,
     sample_rate: u32,
 ) -> Vec<DecodedMessage> {
-    use mfsk_core::core::dsp::resample::resample_f32_to_12k_f32;
+    use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
     use mfsk_core::fec::qra::FadingModel;
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
     let params = q65_wav_search_params();
@@ -769,15 +769,9 @@ pub fn decode_q65_wav_fading_f32(
     };
     macro_rules! scan_body {
         ($p:ty) => {
-            mfsk_core::q65::decode_scan_fading_for::<$p>(
-                &audio,
-                12_000,
-                nominal_mid,
-                &params,
-                b90_ts,
-                fading,
-                None,
-            )
+            mfsk_core::q65::DecodeRequest::<$p>::new(&audio, 12_000, nominal_mid, params)
+                .fading(fading, b90_ts)
+                .decode()
         };
     }
     let decodes = dispatch_q65_submode!(submode, scan_body);
@@ -794,7 +788,7 @@ pub fn decode_q65_wav_fading(
     model: u8,
     sample_rate: u32,
 ) -> Vec<DecodedMessage> {
-    use mfsk_core::core::dsp::resample::resample_i16_to_12k_f32;
+    use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
     use mfsk_core::fec::qra::FadingModel;
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
     let params = q65_wav_search_params();
@@ -805,15 +799,9 @@ pub fn decode_q65_wav_fading(
     };
     macro_rules! scan_body {
         ($p:ty) => {
-            mfsk_core::q65::decode_scan_fading_for::<$p>(
-                &audio,
-                12_000,
-                nominal_mid,
-                &params,
-                b90_ts,
-                fading,
-                None,
-            )
+            mfsk_core::q65::DecodeRequest::<$p>::new(&audio, 12_000, nominal_mid, params)
+                .fading(fading, b90_ts)
+                .decode()
         };
     }
     let decodes = dispatch_q65_submode!(submode, scan_body);

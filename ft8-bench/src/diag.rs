@@ -1,7 +1,7 @@
 /// Diagnostic tracing for the decode pipeline.
 use std::path::Path;
 
-use mfsk_core::core::sync::refine_candidate;
+use mfsk_core::engine::sync::refine_candidate;
 use mfsk_core::ft8::{
     decode_block::{coarse_sync, compute_spectrogram, fill_symbol_spectra, symbol_spectra_direct, SymMask},
     downsample::downsample,
