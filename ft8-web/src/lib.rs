@@ -589,7 +589,7 @@ pub fn encode_ft4_free_text(text: &str, freq_hz: f32) -> Result<Vec<f32>, JsValu
 // WSPR
 // ───────────────────────────────────────────────────────────────────────
 
-fn wspr_decode_to_messages(decodes: Vec<mfsk_core::wspr::WsprDecode>) -> Vec<DecodedMessage> {
+fn wspr_decode_to_messages(decodes: Vec<mfsk_core::wspr::WsprResult>) -> Vec<DecodedMessage> {
     decodes
         .into_iter()
         .map(|d| DecodedMessage {
@@ -654,7 +654,7 @@ pub fn encode_wspr(
 // at 0.0 (Q65 doesn't report a comparable SNR through this surface).
 // ───────────────────────────────────────────────────────────────────────
 
-fn q65_decodes_to_messages(decodes: Vec<mfsk_core::q65::Q65Decode>) -> Vec<DecodedMessage> {
+fn q65_decodes_to_messages(decodes: Vec<mfsk_core::q65::Q65Result>) -> Vec<DecodedMessage> {
     decodes
         .into_iter()
         .map(|d| DecodedMessage {
