@@ -129,11 +129,10 @@ fn decode_and_register(results: Vec<mfsk_core::ft8::decode::DecodeResult>) -> Ve
 /// Non-12 000 Hz input is automatically resampled before decoding.
 #[wasm_bindgen]
 pub fn decode_wav(samples: &[i16], strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
-    // strictness is currently unused for non-subtract decode (BP-only path has no OSD gate)
-    let _ = strictness;
     let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
     decode_and_register(
         DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+            .strictness(to_strictness(strictness))
             .decode()
             .results
     )
@@ -261,10 +260,10 @@ pub fn decode_wav_subtract(samples: &[i16], strictness: u8, sample_rate: u32) ->
 /// f32 variant of `decode_wav`. See `decode_wav` for parameters.
 #[wasm_bindgen]
 pub fn decode_wav_f32(samples: &[f32], strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
-    let _ = strictness;
     let audio = resample_f32_to_12k(samples, sample_rate);
     decode_and_register(
         DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+            .strictness(to_strictness(strictness))
             .decode()
             .results
     )
