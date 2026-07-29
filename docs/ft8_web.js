@@ -287,8 +287,8 @@ export function decode_phase1_f32(samples, sample_rate) {
  * unfixed flat-3-pass engine (`decode_frame_subtract_with_known`) that
  * never received the staged-checkpoint SIC recall improvements
  * `decode_wav_subtract` got — `known`/`fft_cache` are now honoured
- * directly by `.staged()`, so this is the same engine as every other
- * subtract path.
+ * directly by `.sic_early()` (renamed from `.staged()` in mfsk-core
+ * #218), so this is the same engine as every other subtract path.
  * @param {number} strictness
  * @returns {DecodedMessage[]}
  */
