@@ -3,13 +3,13 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use mfsk_core::ft8::Ft8;
-use mfsk_core::ft8::decode::DecodeDepth;
 use mfsk_core::msg::decode_request::DecodeRequest;
 
-/// See ft8-web/src/lib.rs's SHIPPED_DEPTH doc comment: the 2026-07-26
-/// depth-matrix investigation concluded FULL stays the default (Minimal
-/// was worse on a dense scenario).
-const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
+/// See ft8-web/src/lib.rs's doc comment above `thread_local!`: the
+/// 2026-07-26 depth-matrix investigation concluded FULL stays the default
+/// (Minimal was worse on a dense scenario) — osd: true (DecodeDepth::FULL
+/// pre mfsk-core #219).
+const SHIPPED_OSD: bool = true;
 
 fn main() {
     let wav_path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
@@ -39,7 +39,7 @@ fn main() {
 
     let decode = || {
         DecodeRequest::<Ft8>::new(&samples, 200.0, 2800.0, 1.5, 200)
-            .depth(SHIPPED_DEPTH)
+            .osd(SHIPPED_OSD)
             .decode()
             .results
     };

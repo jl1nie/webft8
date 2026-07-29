@@ -7,22 +7,22 @@ mod simulator;
 use std::path::PathBuf;
 use real_data::evaluate_real_data;
 use mfsk_core::ft8::Ft8;
-use mfsk_core::ft8::decode::{ApHint, DecodeDepth, DecodeResult, DecodeStrictness, EqMode, LlrEffort};
+use mfsk_core::ft8::decode::{ApHint, DecodeResult, DecodeStrictness, EqMode};
 use mfsk_core::msg::decode_request::{DecodeRequest, SniperRequest};
 use simulator::{make_busy_band_scenario, build_cq_messages};
 
-/// The depth WebFT8 actually ships — `DecodeDepth::FULL`. See
-/// `ft8-web/src/lib.rs`'s `SHIPPED_DEPTH` doc comment: the 2026-07-26
-/// depth-matrix investigation tried `{Minimal, osd:true}` and found it
-/// matched `Full` on a real recording and narrow-band sniper scenarios,
-/// but was actively worse (both slower and lower recall) on a dense
-/// 100-station scenario with real mutual interference — see
-/// `run_depth_matrix_scenario`'s dense-station check in `run_speed_bench`.
-/// `Full` never lost anywhere tested. Every scenario below except
-/// `run_depth_matrix_scenario` itself (which deliberately sweeps all four
-/// `{LlrEffort, osd}` combinations) uses this so the benchmark suite
-/// reflects what actually ships.
-const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
+/// The OSD setting WebFT8 actually ships — `osd: true` (`DecodeDepth::FULL`
+/// pre mfsk-core #219). See `ft8-web/src/lib.rs`'s doc comment above
+/// `thread_local!`: the 2026-07-26 depth-matrix investigation tried
+/// `{LlrEffort::Minimal, osd:true}` (back when `LlrEffort` was still
+/// caller-settable — mfsk-core's builders now hardcode `Full` on host, see
+/// #219) and found it matched `Full` on a real recording and narrow-band
+/// sniper scenarios, but was actively worse (both slower and lower recall)
+/// on a dense 100-station scenario with real mutual interference. `Full`
+/// never lost anywhere tested, which is exactly the evidence mfsk-core's
+/// own builder redesign cites for hardcoding it. `osd: true` is used
+/// everywhere below so the benchmark suite reflects what actually ships.
+const SHIPPED_OSD: bool = true;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Compatibility shims over the deleted `decode_frame*`/`decode_sniper*`
@@ -33,10 +33,10 @@ const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
 
 fn decode_frame(
     audio: &[i16], freq_min: f32, freq_max: f32, sync_min: f32,
-    _freq_hint: Option<f32>, depth: DecodeDepth, max_cand: usize,
+    _freq_hint: Option<f32>, osd: bool, max_cand: usize,
 ) -> Vec<DecodeResult> {
     DecodeRequest::<Ft8>::new(audio, freq_min, freq_max, sync_min, max_cand)
-        .depth(depth)
+        .osd(osd)
         .decode()
         .results
 }
@@ -44,12 +44,12 @@ fn decode_frame(
 #[allow(clippy::too_many_arguments)]
 fn decode_frame_subtract(
     audio: &[i16], freq_min: f32, freq_max: f32, sync_min: f32,
-    _freq_hint: Option<f32>, depth: DecodeDepth, max_cand: usize, strictness: DecodeStrictness,
+    _freq_hint: Option<f32>, osd: bool, max_cand: usize, strictness: DecodeStrictness,
 ) -> Vec<DecodeResult> {
     DecodeRequest::<Ft8>::new(audio, freq_min, freq_max, sync_min, max_cand)
-        .depth(depth)
+        .osd(osd)
         .strictness(strictness)
-        .staged()
+        .sic_early()
         .decode()
         .results
 }
@@ -57,41 +57,41 @@ fn decode_frame_subtract(
 #[allow(clippy::too_many_arguments)]
 fn decode_frame_subtract_with_ap(
     audio: &[i16], freq_min: f32, freq_max: f32, sync_min: f32,
-    _freq_hint: Option<f32>, depth: DecodeDepth, max_cand: usize, strictness: DecodeStrictness,
+    _freq_hint: Option<f32>, osd: bool, max_cand: usize, strictness: DecodeStrictness,
     ap_hint: Option<&ApHint>,
 ) -> Vec<DecodeResult> {
     let mut req = DecodeRequest::<Ft8>::new(audio, freq_min, freq_max, sync_min, max_cand)
-        .depth(depth)
+        .osd(osd)
         .strictness(strictness);
     if let Some(ap) = ap_hint {
         req = req.ap_hint(ap);
     }
-    req.staged().decode().results
+    req.sic_early().decode().results
 }
 
-fn decode_sniper(audio: &[i16], target_freq: f32, depth: DecodeDepth, max_cand: usize) -> Vec<DecodeResult> {
+fn decode_sniper(audio: &[i16], target_freq: f32, osd: bool, max_cand: usize) -> Vec<DecodeResult> {
     SniperRequest::<Ft8>::new(audio, target_freq, max_cand)
-        .depth(depth)
+        .osd(osd)
         .decode()
         .results
 }
 
 fn decode_sniper_eq(
-    audio: &[i16], target_freq: f32, depth: DecodeDepth, max_cand: usize, eq_mode: EqMode,
+    audio: &[i16], target_freq: f32, osd: bool, max_cand: usize, eq_mode: EqMode,
 ) -> Vec<DecodeResult> {
     SniperRequest::<Ft8>::new(audio, target_freq, max_cand)
-        .depth(depth)
+        .osd(osd)
         .eq_mode(eq_mode)
         .decode()
         .results
 }
 
 fn decode_sniper_ap(
-    audio: &[i16], target_freq: f32, depth: DecodeDepth, max_cand: usize, eq_mode: EqMode,
+    audio: &[i16], target_freq: f32, osd: bool, max_cand: usize, eq_mode: EqMode,
     ap_hint: Option<&ApHint>,
 ) -> Vec<DecodeResult> {
     let mut req = SniperRequest::<Ft8>::new(audio, target_freq, max_cand)
-        .depth(depth)
+        .osd(osd)
         .eq_mode(eq_mode);
     if let Some(ap) = ap_hint {
         req = req.ap_hint(ap);
@@ -105,18 +105,18 @@ fn decode_sniper_ap(
 /// fe286cc) beats the old mechanism everywhere it was tried. This is exactly
 /// what `ft8-web`'s `sniper_decode` ships.
 fn decode_sniper_staged(
-    audio: &[i16], target_freq: f32, depth: DecodeDepth, max_cand: usize, eq_mode: EqMode,
+    audio: &[i16], target_freq: f32, osd: bool, max_cand: usize, eq_mode: EqMode,
     ap_hint: Option<&ApHint>,
 ) -> Vec<DecodeResult> {
     let freq_min = (target_freq - 250.0).max(100.0);
     let freq_max = (target_freq + 250.0).min(5900.0);
     let mut req = DecodeRequest::<Ft8>::new(audio, freq_min, freq_max, 0.8, max_cand)
-        .depth(depth)
+        .osd(osd)
         .eq_mode(eq_mode);
     if let Some(ap) = ap_hint {
         req = req.ap_hint(ap);
     }
-    req.staged().decode().results
+    req.sic_early().decode().results
 }
 
 fn main() {
@@ -176,9 +176,6 @@ fn main() {
 
     // ── BPF filter scenarios (center / shoulder / edge) ─────────────────────────
     run_bpf_scenarios();
-
-    // ── DecodeDepth {LlrEffort x osd} matrix on the sniper (staged+EQ+AP) path ──
-    run_depth_matrix_scenario();
 
     // ── WSJT-X stress test WAV ───────────────────────────────────────────────
     run_wsjt_stress_test();
@@ -331,7 +328,7 @@ fn run_busy_band_scenario() {
 
     // Full-band decode (simulates WSJT-X)
     let results_full = decode_frame(
-        &audio, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200,
+        &audio, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200,
     );
     let target_full = results_full.iter().any(|r| r.message77() == target_msg);
     println!(
@@ -346,7 +343,7 @@ fn run_busy_band_scenario() {
     }
 
     // Sniper-mode decode (simulates hardware 500 Hz BPF removing the crowd)
-    let results_sniper = decode_sniper(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20);
+    let results_sniper = decode_sniper(&audio, TARGET_FREQ, SHIPPED_OSD, 20);
     let target_sniper = results_sniper.iter().any(|r| r.message77() == target_msg);
     println!(
         "  [sniper-mode] total decoded: {:2}  target @ {TARGET_FREQ:.0} Hz: {}",
@@ -416,7 +413,7 @@ fn run_busy_band_hard_scenario() {
     let audio_mixed = simulator::quantise_crowd_agc(&mix_f32, INTERFERER_SNR, num_crowd);
 
     let results_full = decode_frame(
-        &audio_mixed, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200,
+        &audio_mixed, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200,
     );
     let target_full = results_full.iter().any(|r| r.message77() == target_msg);
     println!(
@@ -426,7 +423,7 @@ fn run_busy_band_hard_scenario() {
     );
 
     // Narrow-band search on mixed ADC audio (crowd distortion still present)
-    let results_sniper_mixed = decode_sniper(&audio_mixed, TARGET_FREQ, SHIPPED_DEPTH, 20);
+    let results_sniper_mixed = decode_sniper(&audio_mixed, TARGET_FREQ, SHIPPED_OSD, 20);
     let target_mixed = results_sniper_mixed.iter().any(|r| r.message77() == target_msg);
     println!(
         "  [no-BPF: sniper sw ] total decoded: {:2}  target @ {TARGET_FREQ:.0} Hz: {}",
@@ -440,11 +437,11 @@ fn run_busy_band_hard_scenario() {
     // weak target still has only a few LSBs of dynamic range to work with.
     let audio_clean_quant = simulator::generate_frame(&config);
     let results_clean_full = decode_frame(
-        &audio_clean_quant, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200,
+        &audio_clean_quant, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200,
     );
     let target_clean_full = results_clean_full.iter().any(|r| r.message77() == target_msg);
     let results_clean_sniper = decode_sniper(
-        &audio_clean_quant, TARGET_FREQ, SHIPPED_DEPTH, 20,
+        &audio_clean_quant, TARGET_FREQ, SHIPPED_OSD, 20,
     );
     let target_clean_sniper = results_clean_sniper.iter().any(|r| r.message77() == target_msg);
     println!(
@@ -478,13 +475,13 @@ fn run_busy_band_hard_scenario() {
             let audio_agc   = simulator::quantise_crowd_agc(&f32_mix, INTERFERER_SNR, num_crowd);
             let audio_clean = simulator::generate_frame(&cfg);
 
-            let hit1 = decode_frame(&audio_agc,   200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200)
+            let hit1 = decode_frame(&audio_agc,   200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200)
                 .iter().any(|r| r.message77() == target_msg);
-            let hit2 = decode_sniper(&audio_agc,   TARGET_FREQ, SHIPPED_DEPTH, 20)
+            let hit2 = decode_sniper(&audio_agc,   TARGET_FREQ, SHIPPED_OSD, 20)
                 .iter().any(|r| r.message77() == target_msg);
-            let hit3 = decode_frame(&audio_clean, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200)
+            let hit3 = decode_frame(&audio_clean, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200)
                 .iter().any(|r| r.message77() == target_msg);
-            let hit4 = decode_sniper(&audio_clean, TARGET_FREQ, SHIPPED_DEPTH, 20)
+            let hit4 = decode_sniper(&audio_clean, TARGET_FREQ, SHIPPED_OSD, 20)
                 .iter().any(|r| r.message77() == target_msg);
 
             (hit1 as usize, hit2 as usize, hit3 as usize, hit4 as usize)
@@ -601,7 +598,7 @@ fn run_sniper_story_scenario() {
                 );
                 let mix_full = simulator::generate_frame_f32(&cfg_full);
                 let audio_noisy = simulator::quantise_crowd_agc(&mix_full, CROWD_SNR, num_crowd);
-                let hit_noisy = decode_sniper(&audio_noisy, TARGET_FREQ, SHIPPED_DEPTH, 20)
+                let hit_noisy = decode_sniper(&audio_noisy, TARGET_FREQ, SHIPPED_OSD, 20)
                     .iter().any(|r| r.message77() == target_msg);
 
                 // Target-only mix (hardware BPF removes crowd before ADC)
@@ -624,7 +621,7 @@ fn run_sniper_story_scenario() {
                         let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
                         let audio: Vec<i16> = filt.iter()
                             .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16).collect();
-                        decode_sniper_staged(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20,
+                        decode_sniper_staged(&audio, TARGET_FREQ, SHIPPED_OSD, 20,
                                 EqMode::Local, Some(&ap))
                             .iter().any(|r| r.message77() == target_msg)
                     }};
@@ -761,10 +758,10 @@ fn run_bpf_scenarios() {
                     .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
                     .collect();
 
-                let r_off = decode_sniper_eq(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Off);
+                let r_off = decode_sniper_eq(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Off);
                 let hit_off = r_off.iter().any(|r| r.message77() == target_msg);
 
-                let r_on = decode_sniper_eq(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local);
+                let r_on = decode_sniper_eq(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local);
                 let hit_on = r_on.iter().any(|r| r.message77() == target_msg);
 
                 (hit_off as usize, hit_on as usize)
@@ -821,7 +818,7 @@ fn run_bpf_scenarios() {
                     noise_seed: Some(seed),
                 };
                 let audio = simulator::generate_frame(&config);
-                let results = decode_sniper(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20);
+                let results = decode_sniper(&audio, TARGET_FREQ, SHIPPED_OSD, 20);
                 results.iter().any(|r| r.message77() == target_msg)
             })
             .count();
@@ -908,7 +905,7 @@ fn run_bpf_subtract_scenario() {
         .collect();
 
     // Single-pass sniper
-    let results_single = decode_sniper(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20);
+    let results_single = decode_sniper(&audio, TARGET_FREQ, SHIPPED_OSD, 20);
     let target_single = results_single.iter().any(|r| r.message77() == target_msg);
     println!(
         "  [single-pass] decoded: {:2}  target: {}",
@@ -924,7 +921,7 @@ fn run_bpf_subtract_scenario() {
     // Subtract-pass (multi-pass decode with signal subtraction)
     use mfsk_core::ft8::decode::DecodeStrictness;
     let results_sub = decode_frame_subtract(
-        &audio, BPF_LO as f32, BPF_HI as f32, 0.8, None, SHIPPED_DEPTH, 20, DecodeStrictness::Normal,
+        &audio, BPF_LO as f32, BPF_HI as f32, 0.8, None, SHIPPED_OSD, 20, DecodeStrictness::Normal,
     );
     let target_sub = results_sub.iter().any(|r| r.message77() == target_msg);
     println!(
@@ -941,7 +938,7 @@ fn run_bpf_subtract_scenario() {
 
     // Sniper-SIC (in-band successive interference cancellation)
     let results_sic = decode_sniper_staged(
-        &audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, None,
+        &audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, None,
     );
     let target_sic = results_sic.iter().any(|r| r.message77() == target_msg);
     println!(
@@ -1004,19 +1001,19 @@ fn run_bpf_subtract_scenario() {
                     .collect();
 
                 // A: plain SniperRequest, no SIC, no EQ (old shipped default)
-                let hit_single = decode_sniper(&au, TARGET_FREQ, SHIPPED_DEPTH, 20)
+                let hit_single = decode_sniper(&au, TARGET_FREQ, SHIPPED_OSD, 20)
                     .iter().any(|r| r.message77() == target_msg);
                 // A': plain SniperRequest + EQ, no SIC at all
-                let hit_eq = decode_sniper_eq(&au, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local)
+                let hit_eq = decode_sniper_eq(&au, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local)
                     .iter().any(|r| r.message77() == target_msg);
                 // B: staged-checkpoint SIC on the narrow BPF band, no EQ, no AP
                 //    (decode_frame_subtract delegates to staged by default as of 756d81f7)
                 let hit_sub = decode_frame_subtract(&au, BPF_LO as f32, BPF_HI as f32, 0.8, None,
-                        SHIPPED_DEPTH, 20, DecodeStrictness::Normal)
+                        SHIPPED_OSD, 20, DecodeStrictness::Normal)
                     .iter().any(|r| r.message77() == target_msg);
                 // B': same staged-checkpoint SIC, narrow band, + AP hint, no EQ
                 let hit_staged_ap = decode_frame_subtract_with_ap(&au, BPF_LO as f32, BPF_HI as f32, 0.8, None,
-                        SHIPPED_DEPTH, 20, DecodeStrictness::Normal, Some(&ap))
+                        SHIPPED_OSD, 20, DecodeStrictness::Normal, Some(&ap))
                     .iter().any(|r| r.message77() == target_msg);
                 // C: what ft8-web's sniper_decode actually ships — narrow-band
                 //    staged-checkpoint SIC *with* EQ (mfsk-core commit fe286cc
@@ -1024,10 +1021,10 @@ fn run_bpf_subtract_scenario() {
                 //    the old ad-hoc decode_sniper_sic (deleted upstream, and
                 //    benchmarked worse in both this scenario and the BPF-edge
                 //    one — see docs/bench.md).
-                let hit_sic = decode_sniper_staged(&au, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, None)
+                let hit_sic = decode_sniper_staged(&au, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, None)
                     .iter().any(|r| r.message77() == target_msg);
                 // C': same, + AP hint
-                let hit_sic_ap = decode_sniper_staged(&au, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, Some(&ap))
+                let hit_sic_ap = decode_sniper_staged(&au, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, Some(&ap))
                     .iter().any(|r| r.message77() == target_msg);
 
                 (hit_single as usize, hit_eq as usize, hit_sub as usize, hit_staged_ap as usize, hit_sic as usize, hit_sic_ap as usize)
@@ -1044,121 +1041,6 @@ fn run_bpf_subtract_scenario() {
         );
     }
     println!();
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-
-/// Depth matrix: sweep LlrEffort x osd (now independent DecodeDepth fields,
-/// mfsk-core issue #188) against the sniper (staged+EQ+AP) narrow-band path,
-/// on the same two crowd configurations that drove the `fe286cc` eq_mode
-/// fix (see docs/bench.md Scenario 5) — crowd at the BPF center (4
-/// interferers) and crowd at the BPF edge (fewer interferers, target itself
-/// distorted). No named DecodeDepth const covers {Minimal, osd:true}; this
-/// checks whether it's a free win here the way it was on the real recording
-/// (see `examples/depth_matrix.rs`).
-fn run_depth_matrix_scenario() {
-    use bpf::ButterworthBpf;
-    use mfsk_core::ft8::message::pack77_type1;
-    use rayon::prelude::*;
-    use std::time::Instant;
-
-    const FS: f64 = 12_000.0;
-    const N_POLES: usize = 4;
-    const TARGET_FREQ: f32 = 1000.0;
-    const N_SEEDS: u64 = 20;
-
-    let target_msg = pack77_type1("CQ", "3Y0Z", "JD34").unwrap();
-    let ap = ApHint::new().with_call2("3Y0Z");
-
-    let depths = [
-        ("Minimal,noOSD", DecodeDepth { llr_effort: LlrEffort::Minimal, osd: false }),
-        ("Minimal,OSD  ", DecodeDepth { llr_effort: LlrEffort::Minimal, osd: true }),
-        ("Full,noOSD   ", DecodeDepth { llr_effort: LlrEffort::Full, osd: false }),
-        ("Full,OSD     ", DecodeDepth { llr_effort: LlrEffort::Full, osd: true }),
-    ];
-
-    println!("\n=== DEPTH MATRIX: sniper (staged+EQ+AP), narrow-band ===");
-
-    struct Case {
-        label: &'static str,
-        bpf_lo: f64,
-        bpf_hi: f64,
-        crowd: Vec<(f32, [u8; 77])>,
-        crowd_snr: f32,
-        snrs: [i32; 2],
-    }
-    let cases = vec![
-        Case {
-            label: "center-crowd (BPF 750-1250 Hz, 4 in-band interferers @ +8dB)",
-            bpf_lo: 750.0,
-            bpf_hi: 1250.0,
-            crowd: vec![
-                (850.0, pack77_type1("CQ", "JQ1QSO", "PM95").unwrap()),
-                (950.0, pack77_type1("CQ", "JQ1QRM", "PM95").unwrap()),
-                (1050.0, pack77_type1("CQ", "JQ1QRN", "PM96").unwrap()),
-                (1150.0, pack77_type1("CQ", "JQ1QRP", "PM85").unwrap()),
-            ],
-            crowd_snr: 8.0,
-            snrs: [-20, -22],
-        },
-        Case {
-            label: "BPF-edge (BPF 1000-1500 Hz, target at -3dB edge, 2 in-band interferers @ +8dB)",
-            bpf_lo: 1000.0,
-            bpf_hi: 1500.0,
-            crowd: vec![
-                (1050.0, pack77_type1("CQ", "JQ1QRN", "PM96").unwrap()),
-                (1150.0, pack77_type1("CQ", "JQ1QRP", "PM85").unwrap()),
-            ],
-            crowd_snr: 8.0,
-            snrs: [-20, -22],
-        },
-    ];
-
-    for case in &cases {
-        println!("\n-- {} --", case.label);
-        for snr in case.snrs {
-            print!("  SNR {snr:+3} dB:");
-            for (name, depth) in &depths {
-                let (ok, ms_sum) = (0..N_SEEDS)
-                    .into_par_iter()
-                    .map(|seed| {
-                        let mut sigs = vec![simulator::SimSignal {
-                            message77: target_msg,
-                            freq_hz: TARGET_FREQ,
-                            snr_db: snr as f32,
-                            dt_sec: 0.0,
-                        }];
-                        for &(freq, msg) in &case.crowd {
-                            sigs.push(simulator::SimSignal {
-                                message77: msg,
-                                freq_hz: freq,
-                                snr_db: case.crowd_snr,
-                                dt_sec: 0.0,
-                            });
-                        }
-                        let cfg = simulator::SimConfig { signals: sigs, noise_seed: Some(seed) };
-                        let mix = simulator::generate_frame_f32(&cfg);
-                        let mut bpf = ButterworthBpf::design(N_POLES, case.bpf_lo, case.bpf_hi, FS);
-                        let filt = bpf.filter(&mix);
-                        let peak = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-                        let scale = if peak > 1e-6 { 29_000.0 / peak } else { 1.0 };
-                        let au: Vec<i16> = filt
-                            .iter()
-                            .map(|&s| (s * scale).clamp(-32_768.0, 32_767.0) as i16)
-                            .collect();
-                        let t0 = Instant::now();
-                        let hit = decode_sniper_staged(&au, TARGET_FREQ, *depth, 20, EqMode::Local, Some(&ap))
-                            .iter()
-                            .any(|r| r.message77() == target_msg);
-                        let ms = t0.elapsed().as_secs_f64() * 1000.0;
-                        (hit as usize, ms)
-                    })
-                    .reduce(|| (0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
-                print!("  {name}:{ok:>3}/{N_SEEDS}({:.0}ms)", ms_sum / N_SEEDS as f64);
-            }
-            println!();
-        }
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1211,7 +1093,7 @@ fn run_wsjt_stress_test() {
     let audio_full = simulator::quantise_crowd_agc(&mix_f32, CROWD_SNR, crowd_msgs.len());
 
     let results_full = decode_frame(
-        &audio_full, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200,
+        &audio_full, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200,
     );
     let target_full = results_full.iter().any(|r| r.message77() == target_msg);
     println!(
@@ -1242,11 +1124,11 @@ fn run_wsjt_stress_test() {
     };
 
     // Sniper decode: EQ OFF
-    let r_off = decode_sniper_eq(&audio_bpf, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Off);
+    let r_off = decode_sniper_eq(&audio_bpf, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Off);
     let t_off = r_off.iter().any(|r| r.message77() == target_msg);
 
     // Sniper decode: EQ Adaptive
-    let r_on = decode_sniper_eq(&audio_bpf, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local);
+    let r_on = decode_sniper_eq(&audio_bpf, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local);
     let t_on = r_on.iter().any(|r| r.message77() == target_msg);
 
     println!(
@@ -1287,7 +1169,7 @@ fn run_wsjt_stress_test() {
             let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
             let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
             let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
-            decode_sniper_eq(&au, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local)
+            decode_sniper_eq(&au, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local)
                 .iter().any(|r| r.message77() == target_msg)
         });
 
@@ -1347,11 +1229,11 @@ fn run_wsjt_stress_test() {
                 let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
                 let au: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
 
-                let hit_off = decode_sniper_eq(&au, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Off)
+                let hit_off = decode_sniper_eq(&au, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Off)
                     .iter().any(|r| r.message77() == target_msg);
-                let hit_eq = decode_sniper_eq(&au, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local)
+                let hit_eq = decode_sniper_eq(&au, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local)
                     .iter().any(|r| r.message77() == target_msg);
-                let hit_ap = decode_sniper_ap(&au, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, Some(&ap))
+                let hit_ap = decode_sniper_ap(&au, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, Some(&ap))
                     .iter().any(|r| r.message77() == target_msg);
 
                 (hit_off as usize, hit_eq as usize, hit_ap as usize)
@@ -1404,40 +1286,26 @@ fn run_speed_bench() {
 
     println!("=== Speed benchmark: {N_STATIONS} stations, {N_MEASURE} runs (release build recommended) ===");
 
-    // ── Depth matrix on this exact dense (~26 Hz spacing, single-pass) config ──
-    //
-    // The counter-example that overturned the 2026-07-26 depth-matrix
+    // Historical note: this dense (~26 Hz spacing, single-pass) config was
+    // the counter-example that overturned the 2026-07-26 depth-matrix
     // investigation's initial "Minimal always matches Full" conclusion
     // (which was based only on a real recording and narrow-band sniper
-    // scenarios, both relatively sparse): here, {Minimal, osd:true} is
-    // actively worse than {Full, osd:true} on *both* axes at once —
-    // fewer stations decoded AND slower. `SHIPPED_DEPTH` (= `FULL`)
-    // reflects this; see its doc comment above for the full story.
-    {
-        use mfsk_core::ft8::decode::{DecodeDepth, LlrEffort};
-        let depths = [
-            ("Minimal,noOSD", DecodeDepth { llr_effort: LlrEffort::Minimal, osd: false }),
-            ("Minimal,OSD  ", DecodeDepth { llr_effort: LlrEffort::Minimal, osd: true }),
-            ("Full,noOSD   ", DecodeDepth { llr_effort: LlrEffort::Full, osd: false }),
-            ("Full,OSD     ", DecodeDepth { llr_effort: LlrEffort::Full, osd: true }),
-        ];
-        println!("  Dense-100-station depth matrix (single-pass):");
-        for (name, depth) in depths {
-            let t0 = Instant::now();
-            let r = decode_frame(&audio, 200.0, 2800.0, 1.0, None, depth, 200);
-            let ms = t0.elapsed().as_secs_f64() * 1000.0;
-            println!("    {name}: decoded={:3}  {ms:7.1} ms", r.len());
-        }
-    }
+    // scenarios, both relatively sparse) — {Minimal, osd:true} was actively
+    // worse than {Full, osd:true} on *both* axes at once here (fewer
+    // stations decoded AND slower). That's part of why mfsk-core's builders
+    // now hardcode `LlrEffort::Full` on host (#219) rather than exposing it
+    // — no re-sweep possible here since the builder no longer accepts an
+    // `LlrEffort` choice. `SHIPPED_OSD` reflects the surviving `osd` axis;
+    // see its doc comment above for the full story.
 
     // ── decode_frame (single-pass) ────────────────────────────────────────────
     for _ in 0..N_WARM {
-        let _ = decode_frame(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200);
+        let _ = decode_frame(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200);
     }
     let mut times_single = Vec::with_capacity(N_MEASURE);
     for _ in 0..N_MEASURE {
         let t0 = Instant::now();
-        let r = decode_frame(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200);
+        let r = decode_frame(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200);
         let elapsed = t0.elapsed();
         times_single.push((elapsed, r.len()));
     }
@@ -1450,12 +1318,12 @@ fn run_speed_bench() {
 
     // ── decode_frame_subtract (3-pass) ────────────────────────────────────────
     for _ in 0..N_WARM {
-        let _ = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200, DecodeStrictness::Normal);
+        let _ = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200, DecodeStrictness::Normal);
     }
     let mut times_sub = Vec::with_capacity(N_MEASURE);
     for _ in 0..N_MEASURE {
         let t0 = Instant::now();
-        let r = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200, DecodeStrictness::Normal);
+        let r = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200, DecodeStrictness::Normal);
         let elapsed = t0.elapsed();
         times_sub.push((elapsed, r.len()));
     }
@@ -1470,12 +1338,12 @@ fn run_speed_bench() {
     // decode_phase2's default, since Phase2 runs every 15s cycle regardless
     // of sniper target ─────────────────────────────────────────────────────
     for _ in 0..N_WARM {
-        let _ = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, DecodeDepth::BP_ONLY, 200, DecodeStrictness::Normal);
+        let _ = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, false, 200, DecodeStrictness::Normal);
     }
     let mut times_sub_bp = Vec::with_capacity(N_MEASURE);
     for _ in 0..N_MEASURE {
         let t0 = Instant::now();
-        let r = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, DecodeDepth::BP_ONLY, 200, DecodeStrictness::Normal);
+        let r = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, false, 200, DecodeStrictness::Normal);
         let elapsed = t0.elapsed();
         times_sub_bp.push((elapsed, r.len()));
     }
@@ -1488,12 +1356,12 @@ fn run_speed_bench() {
 
     // ── sniper mode (±250 Hz around 1000 Hz) ──────────────────────────────────
     for _ in 0..N_WARM {
-        let _ = decode_sniper_eq(&audio, 1000.0, SHIPPED_DEPTH, 20, EqMode::Local);
+        let _ = decode_sniper_eq(&audio, 1000.0, SHIPPED_OSD, 20, EqMode::Local);
     }
     let mut times_sniper = Vec::with_capacity(N_MEASURE);
     for _ in 0..N_MEASURE {
         let t0 = Instant::now();
-        let r = decode_sniper_eq(&audio, 1000.0, SHIPPED_DEPTH, 20, EqMode::Local);
+        let r = decode_sniper_eq(&audio, 1000.0, SHIPPED_OSD, 20, EqMode::Local);
         let elapsed = t0.elapsed();
         times_sniper.push((elapsed, r.len()));
     }
@@ -1534,7 +1402,7 @@ fn run_quality_snr_sweep() {
                 noise_seed: Some(seed),
             };
             let audio = simulator::generate_frame(&config);
-            let r = decode_sniper(&audio, 1000.0, SHIPPED_DEPTH, 20);
+            let r = decode_sniper(&audio, 1000.0, SHIPPED_OSD, 20);
             if r.iter().any(|x| x.message77() == msg) { ok += 1; }
         }
         println!("  {:+4} dB  {:>5}/{N_SEEDS} ({:.0}%)", snr_db, ok, 100.0 * ok as f32 / N_SEEDS as f32);
@@ -1576,12 +1444,12 @@ fn run_busy_speed_bench() {
     println!("=== Busy-band HARD speed: {num_crowd} crowd @ {INTERFERER_SNR:+.0} dB, target @ {TARGET_SNR:+.0} dB, {N_MEASURE} runs ===");
 
     for _ in 0..N_WARM {
-        let _ = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200, DecodeStrictness::Normal);
+        let _ = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200, DecodeStrictness::Normal);
     }
     let mut times = Vec::with_capacity(N_MEASURE);
     for _ in 0..N_MEASURE {
         let t0 = Instant::now();
-        let r = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_DEPTH, 200, DecodeStrictness::Normal);
+        let r = decode_frame_subtract(&audio, 200.0, 2800.0, 1.0, None, SHIPPED_OSD, 200, DecodeStrictness::Normal);
         times.push((t0.elapsed(), r.len(), r.iter().any(|x| x.message77() == target_msg)));
     }
     let decoded = times[0].1;
@@ -1624,7 +1492,7 @@ fn run_interference_scenario() {
     );
 
     let audio = simulator::generate_frame(&config);
-    let results = decode_frame(&audio, 800.0, 1400.0, 1.0, None, SHIPPED_DEPTH, 50);
+    let results = decode_frame(&audio, 800.0, 1400.0, 1.0, None, SHIPPED_OSD, 50);
 
     let target_found = results.iter().any(|r| r.message77() == target_msg);
     let interferer_found = results.iter().any(|r| r.message77() == interferer_msg);
@@ -1669,7 +1537,7 @@ fn run_interference_scenario() {
     };
     let audio_sniper = simulator::generate_frame(&config_sniper);
     let results_sniper = decode_frame(
-        &audio_sniper, 800.0, 1200.0, 0.8, None, SHIPPED_DEPTH, 20,
+        &audio_sniper, 800.0, 1200.0, 0.8, None, SHIPPED_OSD, 20,
     );
     let target_sniper = results_sniper.iter().any(|r| r.message77() == target_msg);
     println!(
@@ -1727,10 +1595,10 @@ fn run_extreme_sweep() {
                     signals,
                     noise_seed: Some(seed),
                 });
-                let r_sub = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, SHIPPED_DEPTH, 200, DecodeStrictness::Normal);
+                let r_sub = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, SHIPPED_OSD, 200, DecodeStrictness::Normal);
                 let hit_sub = r_sub.iter().any(|r| r.message77() == target_msg);
 
-                let r_sniper = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, Some(&ap));
+                let r_sniper = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, Some(&ap));
                 let hit_sniper = r_sniper.iter().any(|r| r.message77() == target_msg);
 
                 (hit_sub as usize, hit_sniper as usize)
@@ -1771,13 +1639,13 @@ fn run_extreme_sweep() {
                 let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
                 let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
 
-                let hit_off = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Off, None)
+                let hit_off = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Off, None)
                     .iter().any(|r| r.message77() == target_msg);
-                let hit_eq = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, None)
+                let hit_eq = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, None)
                     .iter().any(|r| r.message77() == target_msg);
-                let hit_ap = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, Some(&ap_cq))
+                let hit_ap = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, Some(&ap_cq))
                     .iter().any(|r| r.message77() == target_msg);
-                let hit_full = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, Some(&ap_full))
+                let hit_full = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, Some(&ap_full))
                     .iter().any(|r| r.message77() == target_msg);
 
                 (hit_off as usize, hit_eq as usize, hit_ap as usize, hit_full as usize)
@@ -1830,7 +1698,7 @@ fn run_extreme_sweep() {
                         let pk = filt.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
                         let sc = if pk > 1e-6 { 29_000.0 / pk } else { 1.0 };
                         let audio: Vec<i16> = filt.iter().map(|&s| (s * sc).clamp(-32_768.0, 32_767.0) as i16).collect();
-                        let r = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, Some(ap_hint));
+                        let r = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, Some(ap_hint));
                         let found = r.iter().any(|r| r.message77() == *target_msg_qso);
                         // Count false positives: any decode that isn't the target
                         let fp = r.iter().filter(|r| r.message77() != *target_msg_qso).count();
@@ -1866,7 +1734,7 @@ fn run_extreme_sweep() {
         let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("testdata").join("sim_extreme_hard.wav");
         let _ = simulator::write_wav(&out, &audio);
-        let r = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, SHIPPED_DEPTH, 200, DecodeStrictness::Normal);
+        let r = decode_frame_subtract(&audio, 100.0, 3000.0, 1.0, None, SHIPPED_OSD, 200, DecodeStrictness::Normal);
         let found = r.iter().any(|r| r.message77() == target_msg);
         println!("\n  WAV: sim_extreme_hard.wav (crowd +40, target -20)  rs-ft8n: {}  decoded: {}", if found {"3Y0Z FOUND"} else {"3Y0Z missed"}, r.len());
     }
@@ -1891,7 +1759,7 @@ fn run_extreme_sweep() {
         let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("testdata").join("sim_extreme_edge.wav");
         let _ = simulator::write_wav(&out, &audio);
-        let r = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, Some(&ap));
+        let r = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, Some(&ap));
         let found = r.iter().any(|r| r.message77() == target_msg);
         println!("  WAV: sim_extreme_edge.wav (BPF edge, target -22)  rs-ft8n: {}  decoded: {}", if found {"3Y0Z FOUND"} else {"3Y0Z missed"}, r.len());
     }
@@ -1916,7 +1784,7 @@ fn run_extreme_sweep() {
         let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("testdata").join("sim_extreme_edge_24.wav");
         let _ = simulator::write_wav(&out, &audio);
-        let r = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_DEPTH, 20, EqMode::Local, Some(&ap));
+        let r = decode_sniper_ap(&audio, TARGET_FREQ, SHIPPED_OSD, 20, EqMode::Local, Some(&ap));
         let found = r.iter().any(|r| r.message77() == target_msg);
         println!("  WAV: sim_extreme_edge_24.wav (BPF edge, target -24)  rs-ft8n: {}  decoded: {}", if found {"3Y0Z FOUND"} else {"3Y0Z missed"}, r.len());
     }

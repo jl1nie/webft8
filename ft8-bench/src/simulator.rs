@@ -355,12 +355,12 @@ mod tests {
     #[test]
     fn snr_sweep() {
         use mfsk_core::ft8::Ft8;
-        use mfsk_core::ft8::decode::DecodeDepth;
         use mfsk_core::msg::decode_request::SniperRequest;
-        // See ft8-web/src/lib.rs's SHIPPED_DEPTH doc comment: the
+        // See ft8-web/src/lib.rs's doc comment above `thread_local!`: the
         // 2026-07-26 depth-matrix investigation concluded FULL stays
-        // the default (Minimal was worse on a dense scenario).
-        const SHIPPED_DEPTH: DecodeDepth = DecodeDepth::FULL;
+        // the default (Minimal was worse on a dense scenario) —
+        // osd: true (DecodeDepth::FULL pre mfsk-core #219).
+        const SHIPPED_OSD: bool = true;
         let msg = [1u8; MSG_BITS]; // non-trivial message
         let n_seeds = 10u64;
         for snr_db in [-5, -8, -10, -12, -14, -16, -18, -20, -22] {
@@ -377,7 +377,7 @@ mod tests {
                 };
                 let audio = generate_frame(&config);
                 let r = SniperRequest::<Ft8>::new(&audio, 1000.0, 20)
-                    .depth(SHIPPED_DEPTH)
+                    .osd(SHIPPED_OSD)
                     .decode()
                     .results;
                 if r.iter().any(|x| x.message77() == msg) { ok += 1; }
@@ -389,7 +389,6 @@ mod tests {
     #[test]
     fn weak_signal_roundtrip() {
         use mfsk_core::ft8::Ft8;
-        use mfsk_core::ft8::decode::DecodeDepth;
         use mfsk_core::msg::decode_request::DecodeRequest;
 
         // Generate a signal at SNR = +10 dB; should decode easily.
@@ -405,7 +404,7 @@ mod tests {
         };
         let audio = generate_frame(&config);
         let results = DecodeRequest::<Ft8>::new(&audio, 800.0, 1200.0, 1.0, 20)
-            .depth(DecodeDepth::BP_ONLY)
+            .osd(false)
             .decode()
             .results;
         assert!(
