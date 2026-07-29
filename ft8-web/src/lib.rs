@@ -112,6 +112,18 @@ fn to_strictness(level: u8) -> DecodeStrictness {
     }
 }
 
+/// GUI decode-profile levels (0=Fast/1=Normal/2=Deep) pick both
+/// `to_strictness` above and SIC strength: Fast uses a light
+/// `.sic_rounds(2)` pass (mfsk-core issues #220/#221 — full `.sic_early()`
+/// buys real recall over `.sic_rounds(2)` only against a target masked by
+/// a strong same-neighbourhood interferer, which light SIC can't rescue
+/// regardless of round count; on generic crowded-band audio rounds(2)
+/// already captures most of the gain at a fraction of the cost), Normal/Deep
+/// use the full SIC strategy.
+fn wants_light_sic(profile: u8) -> bool {
+    profile == 0
+}
+
 fn decode_and_register(results: Vec<mfsk_core::ft8::decode::DecodeResult>) -> Vec<DecodedMessage> {
     let mut out = Vec::new();
     for r in results {
@@ -341,7 +353,8 @@ pub fn decode_phase1(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage> {
     decode_and_register(outcome.results)
 }
 
-/// Phase 2 decode (i16): staged-checkpoint SIC using cached Phase 1 state.
+/// Phase 2 decode (i16): SIC using cached Phase 1 state, strength picked by
+/// the GUI decode-profile level (see `wants_light_sic`).
 ///
 /// Panics if `decode_phase1` was not called first. Prior to mfsk-core
 /// commit fe286cc / issue #191, this call went through a separate,
@@ -351,18 +364,19 @@ pub fn decode_phase1(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage> {
 /// directly by `.sic_early()` (renamed from `.staged()` in mfsk-core
 /// #218), so this is the same engine as every other subtract path.
 #[wasm_bindgen]
-pub fn decode_phase2(strictness: u8) -> Vec<DecodedMessage> {
+pub fn decode_phase2(profile: u8) -> Vec<DecodedMessage> {
     let audio = CACHED_AUDIO.with(|a| a.borrow_mut().take())
         .expect("decode_phase1 must run first");
     let fft = CACHED_FFT.with(|f| f.borrow_mut().take());
     let known = CACHED_PHASE1.with(|p| std::mem::take(&mut *p.borrow_mut()));
     let mut req = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
-        .strictness(to_strictness(strictness))
+        .strictness(to_strictness(profile))
         .known(&known);
     if let Some(fft) = fft {
         req = req.fft_cache(fft);
     }
-    decode_and_register(req.sic_early().decode().results)
+    req = if wants_light_sic(profile) { req.sic_rounds(2) } else { req.sic_early() };
+    decode_and_register(req.decode().results)
 }
 
 /// Phase 1 decode (f32): fast single-pass decode for live AudioWorklet path.
@@ -379,24 +393,26 @@ pub fn decode_phase1_f32(samples: &[f32], sample_rate: u32) -> Vec<DecodedMessag
     decode_and_register(outcome.results)
 }
 
-/// Phase 2 decode (f32): staged-checkpoint SIC using cached Phase 1 state.
+/// Phase 2 decode (f32): SIC using cached Phase 1 state, strength picked by
+/// the GUI decode-profile level (see `wants_light_sic`).
 ///
 /// Panics if `decode_phase1_f32` was not called first. See `decode_phase2`
 /// for why this now shares the same staged-checkpoint SIC engine as
 /// `decode_wav_subtract_f32`.
 #[wasm_bindgen]
-pub fn decode_phase2_f32(strictness: u8) -> Vec<DecodedMessage> {
+pub fn decode_phase2_f32(profile: u8) -> Vec<DecodedMessage> {
     let audio = CACHED_AUDIO.with(|a| a.borrow_mut().take())
         .expect("decode_phase1_f32 must run first");
     let fft = CACHED_FFT.with(|f| f.borrow_mut().take());
     let known = CACHED_PHASE1.with(|p| std::mem::take(&mut *p.borrow_mut()));
     let mut req = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
-        .strictness(to_strictness(strictness))
+        .strictness(to_strictness(profile))
         .known(&known);
     if let Some(fft) = fft {
         req = req.fft_cache(fft);
     }
-    decode_and_register(req.sic_early().decode().results)
+    req = if wants_light_sic(profile) { req.sic_rounds(2) } else { req.sic_early() };
+    decode_and_register(req.decode().results)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -441,7 +457,7 @@ fn ft4_decode_and_register(results: Vec<mfsk_core::ft4::decode::DecodeResult>) -
 /// Decode a 7.5-second FT4 slot (wide-band scan). Non-12 kHz input is
 /// resampled automatically.
 #[wasm_bindgen]
-pub fn decode_ft4_wav(samples: &[i16], _strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
+pub fn decode_ft4_wav(samples: &[i16], strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = if sample_rate != 12000 {
         resample_to_12k(samples, sample_rate)
     } else {
@@ -449,6 +465,7 @@ pub fn decode_ft4_wav(samples: &[i16], _strictness: u8, sample_rate: u32) -> Vec
     };
     ft4_decode_and_register(
         DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
+            .strictness(to_strictness(strictness))
             .decode()
             .results,
     )
@@ -456,18 +473,21 @@ pub fn decode_ft4_wav(samples: &[i16], _strictness: u8, sample_rate: u32) -> Vec
 
 /// f32 variant of [`decode_ft4_wav`].
 #[wasm_bindgen]
-pub fn decode_ft4_wav_f32(samples: &[f32], _strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
+pub fn decode_ft4_wav_f32(samples: &[f32], strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = resample_f32_to_12k(samples, sample_rate);
     ft4_decode_and_register(
         DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
+            .strictness(to_strictness(strictness))
             .decode()
             .results,
     )
 }
 
-/// FT4 multi-pass subtract decode (SIC) for crowded slots.
+/// FT4 multi-pass subtract decode (SIC) for crowded slots. `profile`
+/// (0=Fast/1=Normal/2=Deep) picks both strictness and SIC round count —
+/// 2 rounds for Fast, 3 (full) for Normal/Deep (see `wants_light_sic`).
 #[wasm_bindgen]
-pub fn decode_ft4_wav_subtract(samples: &[i16], _strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
+pub fn decode_ft4_wav_subtract(samples: &[i16], profile: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = if sample_rate != 12000 {
         resample_to_12k(samples, sample_rate)
     } else {
@@ -475,7 +495,8 @@ pub fn decode_ft4_wav_subtract(samples: &[i16], _strictness: u8, sample_rate: u3
     };
     ft4_decode_and_register(
         DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
-            .sic_rounds(3)
+            .strictness(to_strictness(profile))
+            .sic_rounds(if wants_light_sic(profile) { 2 } else { 3 })
             .decode()
             .results,
     )
@@ -483,11 +504,12 @@ pub fn decode_ft4_wav_subtract(samples: &[i16], _strictness: u8, sample_rate: u3
 
 /// f32 variant of [`decode_ft4_wav_subtract`].
 #[wasm_bindgen]
-pub fn decode_ft4_wav_subtract_f32(samples: &[f32], _strictness: u8, sample_rate: u32) -> Vec<DecodedMessage> {
+pub fn decode_ft4_wav_subtract_f32(samples: &[f32], profile: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     let audio = resample_f32_to_12k(samples, sample_rate);
     ft4_decode_and_register(
         DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
-            .sic_rounds(3)
+            .strictness(to_strictness(profile))
+            .sic_rounds(if wants_light_sic(profile) { 2 } else { 3 })
             .decode()
             .results,
     )

@@ -201,7 +201,6 @@ syncQ65Visibility();
 const deviceSelect = document.getElementById('audio-device');
 const outputDeviceSelect = document.getElementById('audio-output-device');
 const bandSelect = document.getElementById('band-header');
-const subtractCheck = document.getElementById('subtract-mode');
 const apCheck = document.getElementById('ap-mode');
 const dtAutoCorrectCheck = document.getElementById('dt-auto-correct');
 const wfLabelsCheck = document.getElementById('wf-labels-enable');
@@ -211,7 +210,7 @@ wfLabelsCheck.checked = localStorage.getItem('webft8-wf-labels') !== '0';
 wfLabelsCheck.addEventListener('change', () => {
   localStorage.setItem('webft8-wf-labels', wfLabelsCheck.checked ? '1' : '0');
 });
-const strictnessSelect = document.getElementById('decode-strictness');
+const profileSelect = document.getElementById('decode-profile');
 const btnCat = document.getElementById('btn-cat');
 const catStatusEl = document.getElementById('cat-status');
 const btnStart = document.getElementById('btn-start');
@@ -232,7 +231,7 @@ let rxSlotEven = null; // even/odd of the period where DX was last heard
 let lastDecodeMs = 0; // last decode duration for timer display
 let lastPeriodIndex = -1; // track period changes for separator
 let apDisabledAuto = false; // true if AP was auto-disabled due to timeout
-let subDisabledAuto = false; // true if subtract was auto-disabled due to timeout
+let subDisabledAuto = false; // true if forced down to Fast profile due to timeout
 const FREQ_MIN = 100, FREQ_MAX = 3000;
 // USB passband center = 1500 Hz (ITU standard, rig-independent).
 // The 500 Hz narrow filter is centered here in DATA-USB mode.
@@ -365,9 +364,9 @@ myGridInput.addEventListener('change', () => {
   myGridInput.value = myGridInput.value.toUpperCase();
   localStorage.setItem('webft8-mygrid', myGridInput.value);
 });
-const savedStrictness = localStorage.getItem('webft8-strictness');
-if (savedStrictness !== null) strictnessSelect.value = savedStrictness;
-strictnessSelect.addEventListener('change', () => localStorage.setItem('webft8-strictness', strictnessSelect.value));
+const savedProfile = localStorage.getItem('webft8-decode-profile');
+if (savedProfile !== null) profileSelect.value = savedProfile;
+profileSelect.addEventListener('change', () => localStorage.setItem('webft8-decode-profile', profileSelect.value));
 const cqBestSnrCheck = document.getElementById('cq-best-snr');
 const cqReplyLabel = document.getElementById('cq-reply-label');
 const updateCqLabel = () => { cqReplyLabel.textContent = cqBestSnrCheck.checked ? 'CQ reply: best SNR' : 'CQ reply: first decoded'; };
@@ -926,7 +925,7 @@ function updateTxActions() {
 autoCheck.addEventListener('change', updateTxActions);
 
 // ── Decode ──────────────────────────────────────────────────────────────────
-// Scout adaptive budget: shed subtract first, then AP.
+// Scout adaptive budget: shed to Fast profile first, then AP.
 // Snipe always runs both (narrow band = fast).
 const BUDGET_MS = 2400;
 
@@ -965,22 +964,29 @@ async function runDecode(samples, sampleRate, onPartial) {
     fnPhase1Name   = null;
     fnPhase2Name   = null;
   } else if (ft4) {
-    fnDecodeName   = isF32 ? 'decode_ft4_wav_f32'          : 'decode_ft4_wav';
+    // decode_ft4_wav/_f32 (no SIC) are unused here — every profile tier
+    // now runs some SIC strength via fnSubtractName (see decode_ft4_wav_subtract).
     fnSniperName   = isF32 ? 'decode_ft4_sniper_f32'       : 'decode_ft4_sniper';
     fnSubtractName = isF32 ? 'decode_ft4_wav_subtract_f32' : 'decode_ft4_wav_subtract';
     fnPhase1Name   = null;
     fnPhase2Name   = null;
   } else {
-    fnDecodeName   = isF32 ? 'decode_wav_f32'     : 'decode_wav';
+    // decode_wav/_f32 (no SIC) are unused here — every profile tier runs
+    // the Phase 1 + Phase 2 pipeline below (see decode_phase2).
     fnSniperName   = isF32 ? 'decode_sniper_f32'  : 'decode_sniper';
     fnSubtractName = null;
     fnPhase1Name   = isF32 ? 'decode_phase1_f32'  : 'decode_phase1';
     fnPhase2Name   = isF32 ? 'decode_phase2_f32'  : 'decode_phase2';
   }
 
-  // Subtract: use if enabled and not auto-disabled
-  const useSub = subtractCheck.checked && !subDisabledAuto;
-  const strict = parseInt(strictnessSelect.value, 10);
+  // Decode profile (0=Fast/1=Normal/2=Deep) selects both DecodeStrictness
+  // and SIC strength (mfsk-core issue #221 made Strictness a real,
+  // per-protocol knob — see ft8-web/src/lib.rs's `to_strictness`/SIC
+  // branches). subDisabledAuto (device too slow, see the capability
+  // bench below) forces Fast regardless of the user's selection instead
+  // of skipping SIC outright, since Fast's light SIC is itself cheap.
+  const userProfile = parseInt(profileSelect.value, 10);
+  const profile = subDisabledAuto ? 0 : userProfile;
   const sr = sampleRate || capture.getSampleRate();
 
   let results;
@@ -1002,29 +1008,26 @@ async function runDecode(samples, sampleRate, onPartial) {
     // sampleRate argument uses the same signature convention but the
     // decoder takes only (samples, sample_rate).
     results = await workerDecode(fnDecodeName, [samples, sr]);
-  } else if (useSub) {
-    if (ft4) {
-      // FT4 one-shot subtract (internal 3-pass SIC).
-      results = await workerDecode(fnSubtractName, [samples, strict, sr]);
-    } else {
-      // FT8 pipelined decode: Phase 1 (fast, ~200ms) + Phase 2 (subtract,
-      // budget permitting). Phase 1 caches audio + FFT in WASM thread_local;
-      // Phase 2 reuses them.
-      const p1 = await workerDecode(fnPhase1Name, [samples, sr]);
-      const p1Ms = performance.now() - t0;
-
-      // Show Phase 1 results immediately while Phase 2 runs
-      if (onPartial && p1.length > 0) onPartial(p1);
-
-      let p2 = [];
-      if (BUDGET_MS - p1Ms > 200) {
-        p2 = await workerDecode(fnPhase2Name, [strict]);
-      }
-      results = [...p1, ...p2];
-    }
+  } else if (ft4) {
+    // FT4 one-shot decode with profile-selected strictness + SIC rounds
+    // (2 for Fast, 3 for Normal/Deep — see decode_ft4_wav_subtract).
+    results = await workerDecode(fnSubtractName, [samples, profile, sr]);
   } else {
-    // Non-subtract path
-    results = await workerDecode(fnDecodeName, [samples, strict, sr]);
+    // FT8 pipelined decode: Phase 1 (fast, ~10-20ms) + Phase 2 (SIC,
+    // budget permitting — sic_rounds(2) for Fast, sic_early() for
+    // Normal/Deep, see decode_phase2). Phase 1 caches audio + FFT in
+    // WASM thread_local; Phase 2 reuses them.
+    const p1 = await workerDecode(fnPhase1Name, [samples, sr]);
+    const p1Ms = performance.now() - t0;
+
+    // Show Phase 1 results immediately while Phase 2 runs
+    if (onPartial && p1.length > 0) onPartial(p1);
+
+    let p2 = [];
+    if (BUDGET_MS - p1Ms > 200) {
+      p2 = await workerDecode(fnPhase2Name, [profile]);
+    }
+    results = [...p1, ...p2];
   }
 
   // AP supplement: enabled by checkbox, auto-disabled by budget.
@@ -1064,10 +1067,10 @@ async function runDecode(samples, sampleRate, onPartial) {
   const totalMs = performance.now() - t0;
   lastDecodeMs = Math.round(totalMs);
 
-  // Scout adaptive shedding: subtract first, then AP
+  // Scout adaptive shedding: drop to Fast profile first, then AP
   if (currentMode === 'scout' && totalMs > BUDGET_MS) {
-    if (useSub && !subDisabledAuto) {
-      subDisabledAuto = true; // shed subtract first
+    if (userProfile > 0 && !subDisabledAuto) {
+      subDisabledAuto = true; // shed to Fast profile
     } else if (apTarget && !apDisabledAuto) {
       apDisabledAuto = true;  // then shed AP
     }
@@ -1427,7 +1430,7 @@ const periodMgr = new FT8PeriodManager({
       }
     }
 
-    const shed = [subDisabledAuto && 'sub', apDisabledAuto && 'AP'].filter(Boolean);
+    const shed = [subDisabledAuto && 'fast', apDisabledAuto && 'AP'].filter(Boolean);
     const shedTag = shed.length ? ` [-${shed.join(',')}]` : '';
     setStatus(`${n}d ${lastDecodeMs}ms${shedTag}`);
     {
@@ -2084,10 +2087,10 @@ init().then(async () => {
   if (benchMs > subOffThreshold) {
     subDisabledAuto = true;
     apDisabledAuto = true;
-    diagLine('Shedding', 'sub + AP off', 'warn');
+    diagLine('Shedding', 'Fast profile + AP off', 'warn');
   } else if (benchMs > noneThreshold) {
     subDisabledAuto = true;
-    diagLine('Shedding', 'sub off', 'warn');
+    diagLine('Shedding', 'Fast profile', 'warn');
   } else {
     diagLine('Shedding', 'none', 'ok');
   }

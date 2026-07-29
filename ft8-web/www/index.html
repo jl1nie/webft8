@@ -565,11 +565,11 @@
       </select>
     </div>
     <div class="field">
-      <label>Strictness</label>
-      <select id="decode-strictness">
-        <option value="0">Strict (low FP)</option>
+      <label>Decode profile</label>
+      <select id="decode-profile">
+        <option value="0">Fast</option>
         <option value="1" selected>Normal</option>
-        <option value="2">Deep (max sensitivity)</option>
+        <option value="2">Deep</option>
       </select>
     </div>
     <div class="field">
@@ -583,7 +583,6 @@
       <label>Retry limit</label>
       <input type="number" id="retry-limit" min="1" max="30" value="15">
     </div>
-    <label><input type="checkbox" id="subtract-mode" checked> Multi-pass subtract</label>
     <label><input type="checkbox" id="ap-mode" checked> A Priori (AP)</label>
     <label><input type="checkbox" id="dt-auto-correct" checked> DT auto-correct (FT8 signals)</label>
     <label class="toggle"><input type="checkbox" id="cq-best-snr" checked><span class="toggle-track"></span><span id="cq-reply-label">CQ reply: best SNR</span></label>

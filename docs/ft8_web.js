@@ -184,14 +184,14 @@ export function decode_ft4_sniper_f32(samples, target_freq, callsign, mycall, eq
  * Decode a 7.5-second FT4 slot (wide-band scan). Non-12 kHz input is
  * resampled automatically.
  * @param {Int16Array} samples
- * @param {number} _strictness
+ * @param {number} strictness
  * @param {number} sample_rate
  * @returns {DecodedMessage[]}
  */
-export function decode_ft4_wav(samples, _strictness, sample_rate) {
+export function decode_ft4_wav(samples, strictness, sample_rate) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ft4_wav(ptr0, len0, _strictness, sample_rate);
+    const ret = wasm.decode_ft4_wav(ptr0, len0, strictness, sample_rate);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
@@ -200,30 +200,32 @@ export function decode_ft4_wav(samples, _strictness, sample_rate) {
 /**
  * f32 variant of [`decode_ft4_wav`].
  * @param {Float32Array} samples
- * @param {number} _strictness
+ * @param {number} strictness
  * @param {number} sample_rate
  * @returns {DecodedMessage[]}
  */
-export function decode_ft4_wav_f32(samples, _strictness, sample_rate) {
+export function decode_ft4_wav_f32(samples, strictness, sample_rate) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ft4_wav_f32(ptr0, len0, _strictness, sample_rate);
+    const ret = wasm.decode_ft4_wav_f32(ptr0, len0, strictness, sample_rate);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
 }
 
 /**
- * FT4 multi-pass subtract decode (SIC) for crowded slots.
+ * FT4 multi-pass subtract decode (SIC) for crowded slots. `profile`
+ * (0=Fast/1=Normal/2=Deep) picks both strictness and SIC round count —
+ * 2 rounds for Fast, 3 (full) for Normal/Deep (see `wants_light_sic`).
  * @param {Int16Array} samples
- * @param {number} _strictness
+ * @param {number} profile
  * @param {number} sample_rate
  * @returns {DecodedMessage[]}
  */
-export function decode_ft4_wav_subtract(samples, _strictness, sample_rate) {
+export function decode_ft4_wav_subtract(samples, profile, sample_rate) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ft4_wav_subtract(ptr0, len0, _strictness, sample_rate);
+    const ret = wasm.decode_ft4_wav_subtract(ptr0, len0, profile, sample_rate);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
@@ -232,14 +234,14 @@ export function decode_ft4_wav_subtract(samples, _strictness, sample_rate) {
 /**
  * f32 variant of [`decode_ft4_wav_subtract`].
  * @param {Float32Array} samples
- * @param {number} _strictness
+ * @param {number} profile
  * @param {number} sample_rate
  * @returns {DecodedMessage[]}
  */
-export function decode_ft4_wav_subtract_f32(samples, _strictness, sample_rate) {
+export function decode_ft4_wav_subtract_f32(samples, profile, sample_rate) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ft4_wav_subtract_f32(ptr0, len0, _strictness, sample_rate);
+    const ret = wasm.decode_ft4_wav_subtract_f32(ptr0, len0, profile, sample_rate);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
@@ -280,7 +282,8 @@ export function decode_phase1_f32(samples, sample_rate) {
 }
 
 /**
- * Phase 2 decode (i16): staged-checkpoint SIC using cached Phase 1 state.
+ * Phase 2 decode (i16): SIC using cached Phase 1 state, strength picked by
+ * the GUI decode-profile level (see `wants_light_sic`).
  *
  * Panics if `decode_phase1` was not called first. Prior to mfsk-core
  * commit fe286cc / issue #191, this call went through a separate,
@@ -289,27 +292,28 @@ export function decode_phase1_f32(samples, sample_rate) {
  * `decode_wav_subtract` got — `known`/`fft_cache` are now honoured
  * directly by `.sic_early()` (renamed from `.staged()` in mfsk-core
  * #218), so this is the same engine as every other subtract path.
- * @param {number} strictness
+ * @param {number} profile
  * @returns {DecodedMessage[]}
  */
-export function decode_phase2(strictness) {
-    const ret = wasm.decode_phase2(strictness);
+export function decode_phase2(profile) {
+    const ret = wasm.decode_phase2(profile);
     var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
 }
 
 /**
- * Phase 2 decode (f32): staged-checkpoint SIC using cached Phase 1 state.
+ * Phase 2 decode (f32): SIC using cached Phase 1 state, strength picked by
+ * the GUI decode-profile level (see `wants_light_sic`).
  *
  * Panics if `decode_phase1_f32` was not called first. See `decode_phase2`
  * for why this now shares the same staged-checkpoint SIC engine as
  * `decode_wav_subtract_f32`.
- * @param {number} strictness
+ * @param {number} profile
  * @returns {DecodedMessage[]}
  */
-export function decode_phase2_f32(strictness) {
-    const ret = wasm.decode_phase2_f32(strictness);
+export function decode_phase2_f32(profile) {
+    const ret = wasm.decode_phase2_f32(profile);
     var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
