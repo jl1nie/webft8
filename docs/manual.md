@@ -232,7 +232,7 @@ IDLE -> CALLING -> REPORT -> FINAL -> IDLE (完了)
 | **REPORT** | レポート交換中 | `DX MYCALL R+00` |
 | **FINAL** | 確認待ち | `DX MYCALL RR73` or `73` |
 
-- **Auto ON**: 状態遷移は全自動。応答がなければリトライ（最大 5 回 = 75 秒）。
+- **Auto ON**: 状態遷移は全自動。応答がなければリトライ（CALLING/REPORT は Retry limit 設定値、デフォルト 15 回。FINAL は常に 3 回固定）。
 - **Auto OFF**: TX メッセージ選択ボタンが表示され、手動で選択。
 - リトライ上限に達すると QSO は incomplete としてログに記録。
 - **ステートがずれた場合**: TX アクションのステートナビボタンで手動回復（[TX アクション](#tx-アクションボトムバー)参照）。
@@ -344,9 +344,14 @@ FT8 メッセージの一部（Type 4 非標準コール、DXpedition メッセ�
 
 | 項目 | 説明 |
 |------|------|
+| **Protocol** | デコードするモード: FT8 (15s) / FT4 (7.5s) / WSPR (120s) / Q65 (30s または 60s)。ピリオド長も選択したモードに自動追従。**TX/QSO（CQ・自動応答）は現状 FT8 形式のみ対応** — FT4/WSPR/Q65 を選ぶと受信専用のモニタになる |
+| **Q65 sub-mode** | Protocol = Q65 の時のみ表示。Q65-30A（地上波/電離層散乱）〜 Q65-60E（24 GHz+ EME）の 6 種から選択 |
+| **Fast-fading metric** | Q65 のみ。高ドップラー EME 向けのフェージング対応メトリックを有効化 |
+| **Spread (b90·Ts)** | Fast-fading metric ON 時のみ表示。フェージング広がり幅のスライダー（3--15） |
+| **Fading model** | Fast-fading metric ON 時のみ表示。Gaussian（秤動/AWGN）/ Lorentzian（裾の重いスプレッド） |
 | **Strictness** | デコード感度 vs 偽陽性のバランス（Strict / Normal / Deep） |
 | **Equalizer** | 適応型イコライザ（Off / Adaptive）。BPF エッジ補正 |
-| **Retry limit** | QSO リトライ回数上限（デフォルト 5） |
+| **Retry limit** | CALLING/REPORT のリトライ回数上限（1--30、デフォルト 15）。FINAL ステートは常に 3 回固定でこの設定の影響を受けない |
 | **Multi-pass subtract** | 逐次干渉除去（3 パス SIC）。デフォルト ON |
 | **A Priori (AP)** | AP デコード。デフォルト ON |
 | **CQ reply: best SNR** | ON: 最強 SNR の CQ に応答。OFF: 最初にデコードされた CQ に応答 |
