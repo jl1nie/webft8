@@ -537,8 +537,19 @@
       <select id="protocol-select">
         <option value="ft8" selected>FT8 (15 s)</option>
         <option value="ft4">FT4 (7.5 s)</option>
+        <option value="fst4">FST4 (15–300 s)</option>
         <option value="wspr">WSPR (120 s)</option>
         <option value="q65">Q65 (30/60 s)</option>
+      </select>
+    </div>
+    <div class="field fst4-only" id="fst4-submode-field" style="display:none">
+      <label>FST4 sub-mode</label>
+      <select id="fst4-submode">
+        <option value="0" selected>FST4-15 (15 s)</option>
+        <option value="1">FST4-30 (30 s)</option>
+        <option value="2">FST4-60 (60 s)</option>
+        <option value="3">FST4-120 (120 s)</option>
+        <option value="4">FST4-300 (300 s)</option>
       </select>
     </div>
     <div class="field q65-only" id="q65-submode-field" style="display:none">

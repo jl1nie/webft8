@@ -55,6 +55,20 @@ class FT8AudioProcessor extends AudioWorkletProcessor {
         this._resetState();
       } else if (e.data.type === 'stop') {
         this.recording = false;
+      } else if (e.data.type === 'setBufferSeconds') {
+        // Resize the snapshot/period buffer to hold a full slot. Longer
+        // protocols (WSPR 120 s, Q65-60, FST4-30..300) need more than the
+        // 15 s default or the live snapshot is truncated to the last 15 s.
+        // Reallocate only when the size actually changes; the in-flight
+        // partial capture is dropped (resize happens on mode change, not
+        // mid-slot), so reset the write pointer.
+        const secs = Math.max(1, e.data.seconds || 15);
+        const n = Math.round(this.outputRate * secs);
+        if (n !== this.bufferSize) {
+          this.bufferSize = n;
+          this.buffer = new Float32Array(n);
+          this.writePos = 0;
+        }
       } else if (e.data.type === 'snapshot') {
         const snapshot = this.buffer.slice(0, this.writePos);
         this.port.postMessage({
