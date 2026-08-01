@@ -232,7 +232,7 @@ IDLE -> CALLING -> REPORT -> FINAL -> IDLE (complete)
 | **REPORT** | Report exchange | `DX MYCALL R+00` |
 | **FINAL** | Awaiting confirmation | `DX MYCALL RR73` or `73` |
 
-- **Auto ON**: Fully automatic state transitions. Retries on no response (up to 5 times = 75 seconds).
+- **Auto ON**: Fully automatic state transitions. Retries on no response (CALLING/REPORT use the Retry limit setting, default 15; FINAL is always fixed at 3 retries).
 - **Auto OFF**: TX message selector buttons appear for manual selection.
 - When the retry limit is reached, the QSO is logged as incomplete.
 - **Desync recovery**: Use the state nav buttons in the TX actions area to manually force a state transition (see [TX Actions](#tx-actions-bottom-bar)).
@@ -344,9 +344,14 @@ Open/close with the gear icon. Organized as an accordion with 5 sections (ordere
 
 | Item | Description |
 |------|-------------|
+| **Protocol** | Mode to decode: FT8 (15s) / FT4 (7.5s) / WSPR (120s) / Q65 (30s or 60s). Period length auto-follows the selected mode. **TX/QSO (CQ, auto-reply) currently supports FT8 only** — selecting FT4/WSPR/Q65 puts the app in receive-only monitor mode |
+| **Q65 sub-mode** | Shown only when Protocol = Q65. Choose from 6 sub-modes: Q65-30A (terrestrial/ionoscatter) through Q65-60E (24 GHz+ EME) |
+| **Fast-fading metric** | Q65 only. Enables the fading-aware metric for high-Doppler EME |
+| **Spread (b90·Ts)** | Shown only when Fast-fading metric is ON. Fading-spread slider (3--15) |
+| **Fading model** | Shown only when Fast-fading metric is ON. Gaussian (libration/AWGN) / Lorentzian (heavy-tail spread) |
 | **Strictness** | Decode sensitivity vs false-positive (Strict / Normal / Deep) |
 | **Equalizer** | Adaptive equalizer (Off / Adaptive). BPF edge correction |
-| **Retry limit** | QSO retry count limit (default 5) |
+| **Retry limit** | CALLING/REPORT retry count limit (1--30, default 15). FINAL state is always fixed at 3 retries regardless of this setting |
 | **Multi-pass subtract** | Successive interference cancellation (3-pass SIC). Default ON |
 | **A Priori (AP)** | AP decoding. Default ON |
 | **CQ reply: best SNR** | ON: respond to strongest CQ. OFF: first decoded |

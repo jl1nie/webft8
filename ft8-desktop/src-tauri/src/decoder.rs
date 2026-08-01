@@ -140,7 +140,7 @@ pub fn decode_wideband(
     let _ = strictness;
     let audio = normalize_to_i16(&samples);
     let results = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
-        .depth(SHIPPED_DEPTH)
+        .osd(SHIPPED_DEPTH.osd)
         .decode()
         .results;
     state.decode_and_register(results)
@@ -155,14 +155,14 @@ pub fn decode_subtract(
 ) -> Vec<DecodedMessage> {
     let audio = normalize_to_i16(&samples);
     let phase1 = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
-        .depth(SHIPPED_DEPTH)
+        .osd(SHIPPED_DEPTH.osd)
         .decode()
         .results;
     let phase2 = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
-        .depth(SHIPPED_DEPTH)
+        .osd(SHIPPED_DEPTH.osd)
         .strictness(to_strictness(strictness))
         .known(&phase1)
-        .staged()
+        .sic_early()
         .decode()
         .results;
     let all: Vec<_> = phase1.into_iter().chain(phase2).collect();
@@ -190,18 +190,18 @@ pub fn decode_sniper(
     };
 
     // Narrow-band staged-checkpoint SIC + equalizer, matching ft8-web's
-    // `sniper_decode` (see mfsk-core commit fe286cc — `.staged()` now
+    // `sniper_decode` (see mfsk-core commit fe286cc — `.sic_early()` now
     // honours `eq_mode`, unlike the deleted `decode_sniper_sic`).
     let eq_mode = if eq_on { EqMode::Local } else { EqMode::Off };
     let freq_min = (target_freq - 250.0).max(100.0);
     let freq_max = (target_freq + 250.0).min(5900.0);
     let mut req = DecodeRequest::<Ft8>::new(&audio, freq_min, freq_max, 0.8, 20)
-        .depth(SHIPPED_DEPTH)
+        .osd(SHIPPED_DEPTH.osd)
         .eq_mode(eq_mode);
     if let Some(ap) = ap.as_ref() {
         req = req.ap_hint(ap);
     }
-    let results = req.staged().decode().results;
+    let results = req.sic_early().decode().results;
     state.decode_and_register(results)
 }
 
