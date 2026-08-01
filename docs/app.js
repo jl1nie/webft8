@@ -267,12 +267,13 @@ function updateWavFolderLabel() {
 
 if (wavSaveModeSelect) {
   if (!WavSaver.supported) {
-    // File System Access API is Chrome/Edge only. Disable the whole group.
+    // File System Access API is Chrome/Edge only — there's no folder-save
+    // equivalent on Safari/Firefox, so hide the whole control rather than
+    // show a mode that can't do anything.
     wavSaveMode = 'off';
-    wavSaveModeSelect.value = 'off';
-    wavSaveModeSelect.disabled = true;
-    if (btnWavFolder) btnWavFolder.disabled = true;
-    if (wavFolderName) wavFolderName.textContent = '(Chrome/Edge only)';
+    const wavSaveField = document.getElementById('wav-save-field');
+    if (wavSaveField) wavSaveField.style.display = 'none';
+    if (wavFolderField) wavFolderField.style.display = 'none';
   } else {
     wavSaveModeSelect.value = wavSaveMode;
     // Reload restores the previously chosen folder (permission re-granted
