@@ -52,6 +52,7 @@ import { QsoManager, QSO_STATE } from './qso.js';
 import { CatController, loadRigProfiles, getRigProfiles, isTauriMode, listSerialPorts } from './cat.js';
 import { GpsNmeaSync } from './gps-nmea.js';
 import { QsoLog } from './qso-log.js';
+import { WavSaver } from './wav-save.js';
 
 // ── Protocol selector (FT8 default; FT4/WSPR opt-in via settings cog) ──────
 // Stored in localStorage as 'webft8-protocol' = 'ft8' | 'ft4' | 'wspr'.
@@ -243,6 +244,65 @@ wfLabelsCheck.checked = localStorage.getItem('webft8-wf-labels') !== '0';
 wfLabelsCheck.addEventListener('change', () => {
   localStorage.setItem('webft8-wf-labels', wfLabelsCheck.checked ? '1' : '0');
 });
+
+// ── RX audio recording (save every live slot as a 12 kHz WAV) ────────────
+const wavSaver = new WavSaver();
+let wavSaveEnabled = localStorage.getItem('webft8-wav-save') === '1';
+const wavSaveCheck = document.getElementById('wav-save-enable');
+const btnWavFolder = document.getElementById('btn-wav-folder');
+const wavFolderName = document.getElementById('wav-folder-name');
+const wavFolderField = document.getElementById('wav-folder-field');
+
+function updateWavFolderLabel() {
+  if (wavFolderName) wavFolderName.textContent = wavSaver.folderName || '(none)';
+}
+
+if (wavSaveCheck) {
+  if (!WavSaver.supported) {
+    // File System Access API is Chrome/Edge only. Disable the whole group.
+    wavSaveEnabled = false;
+    wavSaveCheck.checked = false;
+    wavSaveCheck.disabled = true;
+    if (btnWavFolder) btnWavFolder.disabled = true;
+    if (wavFolderName) wavFolderName.textContent = '(Chrome/Edge only)';
+  } else {
+    wavSaveCheck.checked = wavSaveEnabled;
+    // Reload restores the previously chosen folder (permission re-granted
+    // lazily on the next user gesture — folder button or Start Audio).
+    wavSaver.restore().then(updateWavFolderLabel);
+
+    wavSaveCheck.addEventListener('change', async () => {
+      if (wavSaveCheck.checked) {
+        try {
+          if (!wavSaver.dirHandle) await wavSaver.pickFolder();
+          const ok = await wavSaver.ensureWritable();
+          if (!ok) throw new Error('permission denied');
+          wavSaveEnabled = true;
+          updateWavFolderLabel();
+        } catch (e) {
+          wavSaveEnabled = false;
+          wavSaveCheck.checked = false;
+          if (e && e.name !== 'AbortError') setStatus('WAV save: ' + (e.message || 'folder not set'));
+        }
+      } else {
+        wavSaveEnabled = false;
+      }
+      localStorage.setItem('webft8-wav-save', wavSaveEnabled ? '1' : '0');
+    });
+
+    if (btnWavFolder) {
+      btnWavFolder.addEventListener('click', async () => {
+        try {
+          await wavSaver.pickFolder();
+          await wavSaver.ensureWritable();
+          updateWavFolderLabel();
+        } catch (e) {
+          if (e && e.name !== 'AbortError') setStatus('WAV folder: ' + (e.message || 'not set'));
+        }
+      });
+    }
+  }
+}
 const profileSelect = document.getElementById('decode-profile');
 const btnCat = document.getElementById('btn-cat');
 const catStatusEl = document.getElementById('cat-status');
@@ -1318,6 +1378,25 @@ const periodMgr = new FT8PeriodManager({
     const float32 = await capture.snapshot();
     if (float32.length < 12000) return;
 
+    // Record the raw (pre-normalize) slot to WAV if enabled. Fire-and-forget
+    // so the file write never delays decode. Filename = UTC slot start.
+    if (wavSaveEnabled && wavSaver.dirHandle) {
+      const raw = float32.slice();
+      const sr = capture.getSampleRate();
+      const slot = getSlotMs();
+      const startMs = Math.round(Date.now() / slot) * slot - slot;
+      wavSaver.save(raw, sr, new Date(startMs)).catch((e) => {
+        if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+          wavSaveEnabled = false;
+          if (wavSaveCheck) wavSaveCheck.checked = false;
+          localStorage.setItem('webft8-wav-save', '0');
+          setStatus('WAV save stopped (folder permission lost)');
+        } else {
+          console.warn('WAV save failed', e);
+        }
+      });
+    }
+
     // JS-side peak-normalize before decode. This is cache-safe: works even
     // if the browser serves a stale WASM build without Rust-side normalization.
     // Signals from USB radio adapters are typically at < 0.01 full-scale;
@@ -1707,6 +1786,12 @@ async function toggleAudio() {
       // Size the snapshot buffer to the current slot (long FST4/Q65/WSPR
       // periods need more than the 15 s worklet default).
       applySlotBuffer();
+      // Re-grant folder write permission (this click is a user gesture) so
+      // a folder restored from a previous session can be written silently.
+      if (wavSaveEnabled && wavSaver.dirHandle) {
+        const ok = await wavSaver.ensureWritable();
+        if (!ok) { wavSaveEnabled = false; if (wavSaveCheck) wavSaveCheck.checked = false; setStatus('WAV save off (no folder permission)'); }
+      }
       localStorage.setItem('webft8-audio-in', deviceId);
       periodMgr.start();
       liveMode = true;

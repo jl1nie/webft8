@@ -14,6 +14,7 @@ const ASSETS = [
   './audio-output.js',
   './audio-processor.js',
   './decode-worker.js',
+  './wav-save.js',
   './ft8_web.js',
   './ft8_web_bg.wasm',
   './manifest.json',
