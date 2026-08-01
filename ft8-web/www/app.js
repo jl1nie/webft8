@@ -245,10 +245,17 @@ wfLabelsCheck.addEventListener('change', () => {
   localStorage.setItem('webft8-wf-labels', wfLabelsCheck.checked ? '1' : '0');
 });
 
-// ── RX audio recording (save every live slot as a 12 kHz WAV) ────────────
+// ── RX audio recording (save live slots as 12 kHz WAV) ───────────────────
+// Mode: 'off' | 'decoded' (only slots that produced ≥1 decode) | 'all'.
 const wavSaver = new WavSaver();
-let wavSaveEnabled = localStorage.getItem('webft8-wav-save') === '1';
-const wavSaveCheck = document.getElementById('wav-save-enable');
+function readWavMode() {
+  const v = localStorage.getItem('webft8-wav-save');
+  if (v === '1') return 'all';                 // migrate old boolean toggle
+  if (v === 'decoded' || v === 'all') return v;
+  return 'off';
+}
+let wavSaveMode = readWavMode();
+const wavSaveModeSelect = document.getElementById('wav-save-mode');
 const btnWavFolder = document.getElementById('btn-wav-folder');
 const wavFolderName = document.getElementById('wav-folder-name');
 const wavFolderField = document.getElementById('wav-folder-field');
@@ -257,37 +264,38 @@ function updateWavFolderLabel() {
   if (wavFolderName) wavFolderName.textContent = wavSaver.folderName || '(none)';
 }
 
-if (wavSaveCheck) {
+if (wavSaveModeSelect) {
   if (!WavSaver.supported) {
     // File System Access API is Chrome/Edge only. Disable the whole group.
-    wavSaveEnabled = false;
-    wavSaveCheck.checked = false;
-    wavSaveCheck.disabled = true;
+    wavSaveMode = 'off';
+    wavSaveModeSelect.value = 'off';
+    wavSaveModeSelect.disabled = true;
     if (btnWavFolder) btnWavFolder.disabled = true;
     if (wavFolderName) wavFolderName.textContent = '(Chrome/Edge only)';
   } else {
-    wavSaveCheck.checked = wavSaveEnabled;
+    wavSaveModeSelect.value = wavSaveMode;
     // Reload restores the previously chosen folder (permission re-granted
     // lazily on the next user gesture — folder button or Start Audio).
     wavSaver.restore().then(updateWavFolderLabel);
 
-    wavSaveCheck.addEventListener('change', async () => {
-      if (wavSaveCheck.checked) {
+    wavSaveModeSelect.addEventListener('change', async () => {
+      const mode = wavSaveModeSelect.value;
+      if (mode !== 'off') {
         try {
           if (!wavSaver.dirHandle) await wavSaver.pickFolder();
           const ok = await wavSaver.ensureWritable();
           if (!ok) throw new Error('permission denied');
-          wavSaveEnabled = true;
+          wavSaveMode = mode;
           updateWavFolderLabel();
         } catch (e) {
-          wavSaveEnabled = false;
-          wavSaveCheck.checked = false;
+          wavSaveMode = 'off';
+          wavSaveModeSelect.value = 'off';
           if (e && e.name !== 'AbortError') setStatus('WAV save: ' + (e.message || 'folder not set'));
         }
       } else {
-        wavSaveEnabled = false;
+        wavSaveMode = 'off';
       }
-      localStorage.setItem('webft8-wav-save', wavSaveEnabled ? '1' : '0');
+      localStorage.setItem('webft8-wav-save', wavSaveMode);
     });
 
     if (btnWavFolder) {
@@ -1378,23 +1386,27 @@ const periodMgr = new FT8PeriodManager({
     const float32 = await capture.snapshot();
     if (float32.length < 12000) return;
 
-    // Record the raw (pre-normalize) slot to WAV if enabled. Fire-and-forget
+    // Record the raw (pre-normalize) slot to WAV. Capture the copy now
+    // (before the in-place normalize below); save immediately in "all"
+    // mode, or after decode in "decoded" mode (see below). Fire-and-forget
     // so the file write never delays decode. Filename = UTC slot start.
-    if (wavSaveEnabled && wavSaver.dirHandle) {
+    let saveSlotWav = null;
+    if (wavSaveMode !== 'off' && wavSaver.dirHandle) {
       const raw = float32.slice();
       const sr = capture.getSampleRate();
       const slot = getSlotMs();
       const startMs = Math.round(Date.now() / slot) * slot - slot;
-      wavSaver.save(raw, sr, new Date(startMs)).catch((e) => {
+      saveSlotWav = () => wavSaver.save(raw, sr, new Date(startMs)).catch((e) => {
         if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
-          wavSaveEnabled = false;
-          if (wavSaveCheck) wavSaveCheck.checked = false;
-          localStorage.setItem('webft8-wav-save', '0');
+          wavSaveMode = 'off';
+          if (wavSaveModeSelect) wavSaveModeSelect.value = 'off';
+          localStorage.setItem('webft8-wav-save', 'off');
           setStatus('WAV save stopped (folder permission lost)');
         } else {
           console.warn('WAV save failed', e);
         }
       });
+      if (wavSaveMode === 'all') saveSlotWav();
     }
 
     // JS-side peak-normalize before decode. This is cache-safe: works even
@@ -1513,6 +1525,9 @@ const periodMgr = new FT8PeriodManager({
     // Phase 2 (subtract) is still running in the worker.
     const results = await runDecode(float32, null, pushResults);
     const n = results.length;
+
+    // "Save decoded" mode: write the slot only if something decoded.
+    if (saveSlotWav && wavSaveMode === 'decoded' && n > 0) saveSlotWav();
 
     // Push any remaining results not yet shown (non-subtract path, or
     // Phase 2 results that arrived after the onPartial callback).
@@ -1788,9 +1803,13 @@ async function toggleAudio() {
       applySlotBuffer();
       // Re-grant folder write permission (this click is a user gesture) so
       // a folder restored from a previous session can be written silently.
-      if (wavSaveEnabled && wavSaver.dirHandle) {
+      if (wavSaveMode !== 'off' && wavSaver.dirHandle) {
         const ok = await wavSaver.ensureWritable();
-        if (!ok) { wavSaveEnabled = false; if (wavSaveCheck) wavSaveCheck.checked = false; setStatus('WAV save off (no folder permission)'); }
+        if (!ok) {
+          wavSaveMode = 'off';
+          if (wavSaveModeSelect) wavSaveModeSelect.value = 'off';
+          setStatus('WAV save off (no folder permission)');
+        }
       }
       localStorage.setItem('webft8-audio-in', deviceId);
       periodMgr.start();

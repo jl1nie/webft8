@@ -599,7 +599,14 @@
     <label class="toggle"><input type="checkbox" id="cq-best-snr" checked><span class="toggle-track"></span><span id="cq-reply-label">CQ reply: best SNR</span></label>
     <label class="toggle"><input type="checkbox" id="waterfall-enable" checked><span class="toggle-track"></span><span>Waterfall FFT</span></label>
     <label class="toggle"><input type="checkbox" id="wf-labels-enable" checked><span class="toggle-track"></span><span>Decode labels on WF</span></label>
-    <label class="toggle"><input type="checkbox" id="wav-save-enable"><span class="toggle-track"></span><span>Record RX audio (save every slot)</span></label>
+    <div class="field" id="wav-save-field">
+      <label>Record RX audio</label>
+      <select id="wav-save-mode">
+        <option value="off" selected>Off</option>
+        <option value="decoded">Save decoded slots</option>
+        <option value="all">Save all slots</option>
+      </select>
+    </div>
     <div class="field" id="wav-folder-field">
       <label>Save folder</label>
       <div style="display:flex; gap:6px; align-items:center; min-width:0">
