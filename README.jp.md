@@ -7,13 +7,13 @@
 
 ## 機能
 
-- **フル FT8 QSO** — デコード・エンコード・自動シーケンス（IDLE → CALLING → REPORT → FINAL）
-- **スナイパーモード** — 500 Hz ハードウェア BPF + 適応型イコライザで超弱信号 DX に対応
+- **マルチモード対応** — FT8 / FT4 / FST4 / WSPR / Q65 をデコード。**FT8 / FT4 / Q65 は QSO（送受信）も対応**（自動シーケンス: IDLE → CALLING → REPORT → FINAL）— WSPR・FST4 は受信専用モニタ
+- **スナイパーモード** — 500 Hz ハードウェア BPF + 適応型イコライザで超弱信号 DX に対応（FT8）
 - **パイプラインデコード** — Phase 1 結果を即時表示、Phase 2 で減算デコードを追加
 - **CAT 制御** — Web Serial API または Bluetooth LE で八重洲・Icom の PTT 制御
 - **マルチデバイス対応** — PC・タブレット・スマートフォン。Chrome・Edge・Safari
 - **オフライン対応 PWA** — ホーム画面に追加、ネットワーク不要で動作
-- **WAV 解析** — FT8 WAV ファイルをドラッグ＆ドロップでオフラインデコード
+- **WAV 解析 / ライブ録音** — WAV ファイルのドラッグ＆ドロップでオフラインデコード、受信中の音声をスロットごとにライブ WAV 保存（Chrome/Edge）
 
 ## クイックスタート
 
@@ -71,7 +71,7 @@ WebFT8 のスナイパーモードは、トランシーバの **500 Hz ハード
 | BPF 内混信 +8 dB、ターゲット −12 dB（SIC+AP） | — | **100%** |
 | BPF 内混信 +8 dB、ターゲット −14 dB（SIC+AP） | — | **100%** |
 
-2026-07-25 時点の数値（mfsk-core 0.7.4）。旧デコードエンジンからの変化量は [docs/bench.md](docs/bench.md) を参照。
+2026-08-02 時点の数値（mfsk-core 0.8.1 で再検証、値は不変）。詳細・デコードエンジンの変遷は [docs/bench.md](docs/bench.md) を参照。
 
 全シナリオの詳細ベンチマーク（SNR スイープ・速度計測）: **[docs/bench.md](docs/bench.md)**
 
@@ -96,7 +96,7 @@ cargo run -p ft8-bench --release    # ベンチマーク＋シミュレーショ
 cd ft8-web && wasm-pack build --target web --release
 ```
 
-ユニットテスト 63 件。WASM バイナリ 413 KB。
+ユニットテスト 19 件（ft8-bench 9 + uvpacket-web 9 + 統合テスト 1。`cargo test --workspace` 集計、ft8-web/ft8-desktop 自体はテストを持たない薄い binding 層。デコードエンジン mfsk-core は上流リポジトリで別途テスト済み）。WASM バイナリ 1.23 MB（gzip 転送時 339 KB）。フル PWA 一式（WASM + JS + HTML + アイコン）1.51 MB（gzip 転送時 432 KB）。
 
 ## 参考文献
 

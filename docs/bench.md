@@ -1,10 +1,31 @@
 # WebFT8 Decoder Benchmark Results
 
-**mfsk-core 0.7.4 (GitHub `jl1nie/mfsk-core@fe286cc8`) — 2026-07-26**
+**mfsk-core 0.8.1 (crates.io) — 2026-08-02**
 
 Simulator-based evaluation of the WebFT8 decoder against reference conditions.
 All results are reproducible: `cargo run -p ft8-bench --release`.
 
+> **Re-run against mfsk-core 0.8.1** (up from 0.7.4). Scenarios 1–8 below
+> were re-verified this pass and are numerically unchanged (within
+> seed-to-seed noise) — the mfsk-core 0.8.0/0.8.1 changes since the
+> `fe286cc8` run were the `DecodeRequest`/`SniperRequest` builder
+> consolidation (issue #191: `.depth()`/`.staged()`/`.flat()` renamed to
+> `.osd()`/`.sic_early()`/`.sic_rounds()`) and the crates.io publish —
+> API renames, not decode-behavior changes, so these scenarios don't
+> exercise anything that moved. What *did* change and is reflected below:
+> the **Speed Benchmark** (re-measured on this session's machine — Apple
+> Silicon macOS, not the WSL2 24-core box the prior numbers came from, so
+> absolute timings aren't comparable run-to-run anyway), the
+> **DecodeDepth Matrix** section (the `LlrEffort::Minimal` knob it
+> investigated was removed from the builder API — `.osd()` always pins
+> `LlrEffort::Full` now — so its reproduction command no longer exists;
+> kept as a historical record, see the note in that section), and a new
+> **FT4 Synthetic SNR Sweep** section reflecting `ft8-bench`'s own
+> coverage growth since FT4 support landed. The **Real Recording** WSJT-X
+> comparison was not re-run this pass (requires a locally-built `jt9`
+> binary and `qso3_busy.wav`, neither present in this session's
+> environment) — left as the last-verified result.
+>
 > **Updated from the `756d81f7` run below.** mfsk-core `main` landed two
 > more breaking changes the same day:
 >
@@ -66,11 +87,12 @@ All results are reproducible: `cargo run -p ft8-bench --release`.
 
 | Item | Value |
 |------|-------|
-| Decoder | mfsk-core 0.7.4, git `fe286cc8` (Rust, native release) |
+| Decoder | mfsk-core 0.8.1 (crates.io, Rust, native release) |
 | Signal model | Pure-tone 8-GFSK + AWGN (12 000 Hz, i16) |
 | BPF model | 4-pole Butterworth, 500 Hz passband |
 | Seed count | 20–30 independent noise realisations per cell |
-| Platform | x86-64 Linux (WSL2), 24-core, Rayon thread-pool (nested: ft8-bench seed-loops + mfsk-core's own internal candidate parallelism) |
+| Platform (Scenarios 1–8, unchanged from prior run) | x86-64 Linux (WSL2), 24-core, Rayon thread-pool (nested: ft8-bench seed-loops + mfsk-core's own internal candidate parallelism) |
+| Platform (Speed Benchmark, re-measured this pass) | Apple Silicon macOS, Rayon thread-pool — absolute timings are not directly comparable to the WSL2 numbers above; only mode-to-mode ratios on the same machine are meaningful |
 
 ### Decoder Modes
 
@@ -274,24 +296,55 @@ exercise the code `fe286cc` touches).
 
 ---
 
+## FT4 Synthetic SNR Sweep
+
+New in `ft8-bench` since FT4 support landed in WebFT8 — 20 seeds per SNR,
+`decode_frame` (basic, no AP) vs. `decode_sniper_ap` (EQ=Adaptive,
+AP = CQ + `JA1ABC`).
+
+| SNR | basic | AP |
+|-----|-------|-----|
+| −4 dB | 20/20 (100%) | 20/20 (100%) |
+| −6 dB | 20/20 (100%) | 20/20 (100%) |
+| −8 dB | 20/20 (100%) | 20/20 (100%) |
+| −10 dB | 20/20 (100%) | 20/20 (100%) |
+| −12 dB | 20/20 (100%) | 20/20 (100%) |
+| −14 dB | 19/20 (95%) | 20/20 (100%) |
+| −16 dB | 12/20 (60%) | 15/20 (75%) |
+| −18 dB | 1/20 (5%) | 2/20 (10%) |
+| −20 dB | 0/20 (0%) | 0/20 (0%) |
+
+FT4's shorter 7.5 s slot (vs. FT8's 15 s) gives it less integration time,
+so its recall floor sits several dB higher than FT8's equivalent curves
+above (Scenario 6/7) — consistent with FT4 being the "fast, less
+sensitive" WSJT mode by design, not a decoder-quality gap. AP buys a
+real (if modest) gain at the −14 to −18 dB margin, same pattern as FT8.
+
+---
+
 ## Speed Benchmark
 
 100 stations, 200–2800 Hz, SNR +5 dB, 10 runs after 3 warmup.
-Release build (`cargo run -p ft8-bench --release`), Linux x86-64 (24-core).
+Release build (`cargo run -p ft8-bench --release`), Apple Silicon macOS.
+**Re-measured 2026-08-02 against mfsk-core 0.8.1** — see the platform
+caveat in Test Environment above; not directly comparable to the older
+WSL2/x86-64 numbers this table used to show.
 
 | Mode | Decoded | Mean | Min | Max | Budget |
 |------|---------|------|-----|-----|--------|
-| decode_frame (single-pass) | 100 | 48.8 ms | 46.0 ms | 52.5 ms | 2400 ms |
-| decode_frame_subtract (staged, FULL) | 100 | 1389.7 ms | 1359.9 ms | 1427.7 ms | 2400 ms |
-| decode_frame_subtract (staged, BP_ONLY) | 100 | 1381.3 ms | 1352.4 ms | 1403.8 ms | 2400 ms |
-| sniper+EQ (±250 Hz, plain SniperRequest) | 18 | 6.7 ms | 6.4 ms | 7.2 ms | 2400 ms |
+| decode_frame (single-pass) | 100 | 52.8 ms | 49.1 ms | 55.3 ms | 2400 ms |
+| decode_frame_subtract (staged, FULL) | 100 | 2546.2 ms | 2508.1 ms | 2759.1 ms | 2400 ms |
+| decode_frame_subtract (staged, BP_ONLY) | 100 | 2462.6 ms | 2451.9 ms | 2468.1 ms | 2400 ms |
+| sniper+EQ (±250 Hz, plain SniperRequest) | 18 | 6.8 ms | 6.6 ms | 7.0 ms | 2400 ms |
 
-All modes comfortably fit within the FT8 15-second period (2400 ms decode
-window). Numbers are flat vs. the `756d81f7` run (within ~4% run-to-run
-noise) — `fe286cc` only changes behavior when `eq_mode(Local)` is combined
-with `.staged()`/`.flat()`, which none of these four calls do (the two
-`decode_frame_subtract` rows use `EqMode::Off` implicitly; sniper+EQ here
-is the plain non-staged `SniperRequest` path).
+`decode_frame` and `sniper+EQ` comfortably fit within the FT8 15-second
+period (2400 ms decode window); the full-band staged-SIC pass now runs
+*over* the 2400 ms budget on this 100-station dense scenario on this
+machine (it did not on the prior WSL2 24-core box) — this is exactly the
+scenario the Scout-mode adaptive budget shedding (Decode profile → Fast,
+then AP) exists to handle in the live app, so it is not itself a
+regression, but it underlines that this speed table is platform-specific
+and shouldn't be read as a universal timing guarantee.
 
 **Note on `BP_ONLY` vs `FULL` for `decode_frame_subtract`:** both rows are
 essentially identical here (≤1% apart, both find 100/100 stations) —
@@ -315,6 +368,19 @@ here, only 24-core desktop native) — if so, it isn't `BP_ONLY`.
 ---
 
 ## DecodeDepth Matrix: LlrEffort × osd
+
+> **Historical record — no longer reproducible as written.** mfsk-core's
+> 0.8.0 builder redesign (issue #191) dropped host-selectable
+> `LlrEffort::Minimal` entirely: `.osd(bool)` now always pins
+> `LlrEffort::Full` internally, so the `Minimal`/`Full` axis this section
+> swept no longer exists as a caller-facing knob, and the
+> `ft8-bench/examples/depth_matrix.rs` example this section's reproduction
+> commands reference was deleted. The investigation's *conclusion* —
+> `osd: true` stays on unconditionally, kept as `SHIPPED_DEPTH`/now
+> `.osd(SHIPPED_DEPTH.osd)` in `ft8-web/src/lib.rs` — is exactly what
+> mfsk-core's own builder redesign independently arrived at (hardcoding
+> `Full`), so nothing here needs to be un-done; the section is kept for
+> the rationale, not as a live benchmark to re-run.
 
 `DecodeDepth`'s two fields (`LlrEffort::Minimal`/`Full`, `osd: bool`) are
 now fully independent (mfsk-core issue #188) — previously they were

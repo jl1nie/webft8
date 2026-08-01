@@ -2,7 +2,7 @@
 
 **[Japanese version](manual.md)** | **[Open App](https://jl1nie.github.io/webft8/)**
 
-WebFT8 is a browser-based FT8 QSO application -- decode, transmit, CAT control, and log management in a single PWA. No installation required -- works on Chrome, Edge, and Safari (WebKit).
+WebFT8 is a browser-based, multi-mode PWA -- decode FT8 / FT4 / FST4 / WSPR / Q65, CAT control, and log management, all in one app. **QSO (transmit/receive) is supported for FT8 / FT4 / Q65** -- WSPR is a one-way beacon and FST4 is currently decode-only, so those two protocols run as receive-only monitors. No installation required -- works on Chrome, Edge, and Safari (WebKit).
 
 ---
 
@@ -112,7 +112,7 @@ oooo CALLING  3Y0Z   |   12 decoded (213ms)
 
 **Scout AP decoding:**
 
-During an active QSO, A Priori (AP) decoding is automatically enabled using the QSO partner's callsign (no manual input needed). If decode time exceeds the FT8 budget, AP and subtract are automatically paused (see [Adaptive Budget](#adaptive-budget-scout-mode)).
+During an active QSO, A Priori (AP) decoding is automatically enabled using the QSO partner's callsign (no manual input needed). If decode time exceeds the FT8 budget, AP is automatically paused and the Decode profile is forced to Fast (see [Adaptive Budget](#adaptive-budget-scout-mode)).
 
 ---
 
@@ -177,7 +177,7 @@ Real-time spectrogram covering 100-3000 Hz. Scout: responsive height (min(25vh, 
 | **Top labels** | Frequency axis (200, 500, 1000, 1500, 2000, 2500 Hz) |
 | **Red dashed line (vertical)** | DF (TX frequency) -- shown in all modes on tap |
 | **Cyan band** | Snipe Call phase 500 Hz BPF window |
-| **Red dashed line (horizontal)** | Period boundary (15-second intervals) |
+| **Red dashed line (horizontal)** | Period boundary (slot length follows the mode: FT8 15s / FT4 7.5s / FST4 15-300s / WSPR 120s / Q65 30-60s) |
 | **Yellow text** | Decoded messages |
 | **Tap / click** | Set DF + status bar shows frequency |
 | **WAV drag & drop** | Offline analysis (auto-stops live audio) |
@@ -245,14 +245,14 @@ In Scout mode, when decode time exceeds the FT8 budget (2.4 seconds), heavy feat
 
 | Priority | Feature | Load |
 |----------|---------|------|
-| 1 (OFF first) | Multi-pass subtract | 3-pass SIC (heaviest) |
+| 1 (OFF first) | Force Decode profile to Fast | Full SIC (Normal/Deep, heaviest) → light SIC (2 rounds) |
 | 2 (OFF next) | A Priori (AP) | Sniper + EQ single pass |
 
-The status bar shows `[-sub]` or `[-sub,AP]` when features are paused.
+The status bar shows `[-fast]` or `[-fast,AP]` when features are paused.
 
 Recovery at 60% budget headroom, in reverse order:
 1. AP re-enabled first
-2. Subtract re-enabled when budget allows
+2. Decode profile restored to its original setting when budget allows
 
 Snipe mode always runs both features (narrow band = fast enough).
 
@@ -344,29 +344,42 @@ Open/close with the gear icon. Organized as an accordion with 5 sections (ordere
 
 | Item | Description |
 |------|-------------|
-| **Protocol** | Mode to decode: FT8 (15s) / FT4 (7.5s) / WSPR (120s) / Q65 (30s or 60s). Period length auto-follows the selected mode. **TX/QSO (CQ, auto-reply) currently supports FT8 only** — selecting FT4/WSPR/Q65 puts the app in receive-only monitor mode |
+| **Protocol** | Mode to decode: FT8 (15s) / FT4 (7.5s) / FST4 (15-300s, 5 sub-modes) / WSPR (120s) / Q65 (30s or 60s). Period length and live buffer auto-follow the selected mode |
+| **FST4 sub-mode** | Shown only when Protocol = FST4. Choose from 5 sub-modes, FST4-15 through FST4-300 (differ only in T/R period; signal spec is otherwise shared) |
 | **Q65 sub-mode** | Shown only when Protocol = Q65. Choose from 6 sub-modes: Q65-30A (terrestrial/ionoscatter) through Q65-60E (24 GHz+ EME) |
 | **Fast-fading metric** | Q65 only. Enables the fading-aware metric for high-Doppler EME |
 | **Spread (b90·Ts)** | Shown only when Fast-fading metric is ON. Fading-spread slider (3--15) |
 | **Fading model** | Shown only when Fast-fading metric is ON. Gaussian (libration/AWGN) / Lorentzian (heavy-tail spread) |
-| **Strictness** | Decode sensitivity vs false-positive (Strict / Normal / Deep) |
+| **Decode profile** | Combined decode-sensitivity + SIC-strength switch (Fast / Normal / Deep). Fast uses light SIC (2 rounds); Normal/Deep use full SIC. Replaces the old separate "Strictness" selector + "Multi-pass subtract" checkbox |
 | **Equalizer** | Adaptive equalizer (Off / Adaptive). BPF edge correction |
 | **Retry limit** | CALLING/REPORT retry count limit (1--30, default 15). FINAL state is always fixed at 3 retries regardless of this setting |
-| **Multi-pass subtract** | Successive interference cancellation (3-pass SIC). Default ON |
 | **A Priori (AP)** | AP decoding. Default ON |
 | **CQ reply: best SNR** | ON: respond to strongest CQ. OFF: first decoded |
 | **DT auto-correct** | ON: automatically corrects the clock offset using the median DT of decoded FT8 signals. Shows `DT±X.X` in the header. Default ON |
 | **Waterfall FFT** | Toggle waterfall display |
+| **Record RX audio** | Live WAV recording of received audio (see [Live RX Audio Recording](#live-rx-audio-recording)) |
 | **Open WAV File** | Select a WAV file for offline analysis |
 
-> AP target is set automatically -- from the QSO partner in Scout mode, or from the tapped target in Snipe mode. No manual input needed.
+> AP target is set automatically -- from the QSO partner in Scout mode, or from the tapped target in Snipe mode. No manual input needed. AP is not wired for WSPR / Q65 / FST4 (no fixed target-entry field for those protocols).
+
+**TX/QSO support by protocol:**
+
+| Protocol | TX/QSO | Notes |
+|----------|--------|-------|
+| FT8 | ✅ | Standard CQ → report → RRR/RR73 → 73 exchange |
+| FT4 | ✅ | Shares the exact same message grammar (WSJT-77) as FT8 |
+| Q65 | ✅ | Same as above. Free-text TX (Tx5) is not supported |
+| WSPR | ❌ receive-only | A one-way beacon by design — no call/response QSO structure to begin with |
+| FST4 | ❌ receive-only | mfsk-core has an encode implementation, but the WASM binding isn't wired yet (future work) |
+
+Selecting a TX-unsupported protocol shows an explanatory note in the bottom-bar TX actions area instead of the CQ/reply/73 buttons.
 
 ### Pipelined Decode
 
-When Subtract is ON, decoding runs in two phases:
+For FT8, decoding always runs in two phases (Decode profile picks the SIC strength):
 
-1. **Phase 1** (~200ms): fast decode of strong signals → shown in chat immediately
-2. **Phase 2** (~300-800ms): 3-pass subtract for weaker signals → appended to chat
+1. **Phase 1** (~10-20ms): fast decode of strong signals → shown in chat immediately
+2. **Phase 2** (Fast: light SIC, 2 rounds; Normal/Deep: full SIC): subtract for weaker signals → appended to chat
 
 Phase 1's FFT cache is reused by Phase 2, reducing computation. If budget is exceeded, Phase 2 is skipped (strong signals are already captured in Phase 1).
 
@@ -396,13 +409,32 @@ Tap **Export ZIP (ADIF + RX)** in the settings panel to download a ZIP containin
 
 ---
 
-## Offline Analysis with WAV Files
+## WAV Files (Offline Analysis and Live Recording)
+
+### Offline Analysis
 
 Drag & drop a WAV file onto the waterfall, or use **Open WAV File** in the settings panel.
 
 - **Requirements**: 16-bit / mono WAV (any sample rate — 12 / 44.1 / 48 kHz etc., auto-resampled in Rust)
 - Auto-stops live audio if active
 - Waterfall + decode results displayed immediately
+
+### Live RX Audio Recording
+
+The **Record RX audio** setting (Decode section) automatically saves the received audio of every slot as a WAV file (WSJT-X "Save All" style).
+
+| Mode | Behavior |
+|------|----------|
+| **Off** | No recording (default) |
+| **Save decoded** | Save a slot only if it produced 1 or more decodes |
+| **Save all** | Save every slot unconditionally |
+
+- On first use, pick a destination folder with the **Save folder** button (File System Access API directory picker)
+- The chosen folder is persisted in IndexedDB and restored on next launch (the browser still requires re-granting write permission each session — this happens automatically on Start Audio)
+- Files are 12 kHz mono 16-bit WAV, named `YYMMDD_HHMMSS.wav` (UTC slot start)
+- Writes happen concurrently with decoding (fire-and-forget), so recording never adds latency to decode
+- **Requires the File System Access API, so Chrome / Edge only.** The Record RX audio control is disabled on unsupported browsers
+- If folder write permission is lost (e.g. the folder was moved by another app), recording automatically switches back to Off and the status bar shows a notice
 
 ---
 
@@ -506,7 +538,7 @@ Setup: MENU -> Set -> Filter -> DATA-USB -> adjust FIL2 / FIL3 widths
 | CAT disconnected appears | Command write collision. Restart browser and reconnect |
 | Waterfall is black | Verify the correct Audio Input device. Tap logo to restart |
 | QSO not progressing | Check that Auto is ON. Tap an RX message to select the target station |
-| `[-sub]` `[-sub,AP]` shown | Decode is too heavy; features auto-paused. Will recover when budget allows |
+| `[-fast]` `[-fast,AP]` shown | Decode is too heavy; features auto-paused (Decode profile forced to Fast). Will recover when budget allows |
 | `<...>` not resolved | That station hasn't been decoded in this session. Hash table clears on page reload |
 
 ---
@@ -537,6 +569,7 @@ After installation, launch from your home screen / app list as a standalone app.
 | **Browser** | Chrome 90+, Edge 90+, Safari 15+ |
 | **Web Serial** | Chrome / Edge only (desktop CAT control) |
 | **Web Bluetooth** | Chrome Android (IC-705 BLE connection) |
+| **File System Access API** | Chrome / Edge only (required for Record RX audio live WAV recording) |
 | **Audio** | getUserMedia support (HTTPS or localhost) |
 | **WASM** | WebAssembly support (all modern browsers) |
 | **Display** | Mobile-friendly (responsive layout) |

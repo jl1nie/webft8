@@ -2,7 +2,7 @@
 
 **[English version](manual.en.md)** | **[アプリを開く](https://jl1nie.github.io/webft8/)**
 
-WebFT8 はブラウザだけで FT8 の QSO が完結する PWA です。デコード、送信、CAT 制御、ログ管理まで搭載。インストール不要で、Chrome / Edge / Safari (WebKit) で動作します。
+WebFT8 はブラウザだけで動作するマルチモード PWA です。FT8 / FT4 / FST4 / WSPR / Q65 のデコード、CAT 制御、ログ管理まで搭載。**QSO（送受信）できるのは FT8 / FT4 / Q65** — WSPR は一方向ビーコン、FST4 は現状デコード専用のため、この 2 モードは受信専用モニタとして動作します。インストール不要で、Chrome / Edge / Safari (WebKit) で動作します。
 
 ---
 
@@ -177,7 +177,7 @@ Snipe ビュー上部の `[Watch] [Call]` タブで切り替え。メッセー�
 | **上部ラベル** | 周波数軸（200, 500, 1000, 1500, 2000, 2500 Hz） |
 | **赤い点線（縦）** | DF（TX 周波数）-- 全モードでタップ時に表示 |
 | **水色の帯** | Snipe Call フェーズの 500 Hz BPF 窓 |
-| **赤い点線（横）** | ピリオド境界（15 秒区切り） |
+| **赤い点線（横）** | ピリオド境界（モードごとのスロット長で区切り: FT8 15s / FT4 7.5s / FST4 15–300s / WSPR 120s / Q65 30–60s） |
 | **黄色テキスト** | デコードされたメッセージ |
 | **タップ / クリック** | DF 設定 + ステータスバーに周波数表示 |
 | **WAV ドラッグ＆ドロップ** | オフライン解析（ライブ中でも自動停止して処理） |
@@ -245,14 +245,14 @@ Scout モードでは、デコード時間が FT8 バジェット（2.4 秒）�
 
 | 優先度 | 機能 | 負荷 |
 |--------|------|------|
-| 1（先に OFF） | Multi-pass subtract | 3 パス SIC（最も重い） |
+| 1（先に OFF） | Decode profile を Fast へ強制 | フル SIC（Normal/Deep、最も重い）→ 軽量 SIC（2 ラウンド） |
 | 2（次に OFF） | A Priori (AP) | Sniper + EQ 1 パス |
 
-ステータスバーに `[-sub]` や `[-sub,AP]` と表示されます。
+ステータスバーに `[-fast]` や `[-fast,AP]` と表示されます。
 
 デコード時間がバジェットの 60% 以下に戻ると、逆順で復帰:
 1. AP を先に復帰
-2. 余裕があれば subtract を復帰
+2. 余裕があれば Decode profile を元の設定に復帰
 
 Snipe モードは帯域が狭く高速なため、常に両方有効です。
 
@@ -344,29 +344,42 @@ FT8 メッセージの一部（Type 4 非標準コール、DXpedition メッセ�
 
 | 項目 | 説明 |
 |------|------|
-| **Protocol** | デコードするモード: FT8 (15s) / FT4 (7.5s) / WSPR (120s) / Q65 (30s または 60s)。ピリオド長も選択したモードに自動追従。**TX/QSO（CQ・自動応答）は現状 FT8 形式のみ対応** — FT4/WSPR/Q65 を選ぶと受信専用のモニタになる |
+| **Protocol** | デコードするモード: FT8 (15s) / FT4 (7.5s) / FST4 (15–300s、5 サブモード) / WSPR (120s) / Q65 (30s または 60s)。ピリオド長・ライブバッファも選択したモードに自動追従 |
+| **FST4 sub-mode** | Protocol = FST4 の時のみ表示。FST4-15 〜 FST4-300 の 5 種から選択（T/R ピリオド長が異なるのみで信号仕様は共通） |
 | **Q65 sub-mode** | Protocol = Q65 の時のみ表示。Q65-30A（地上波/電離層散乱）〜 Q65-60E（24 GHz+ EME）の 6 種から選択 |
 | **Fast-fading metric** | Q65 のみ。高ドップラー EME 向けのフェージング対応メトリックを有効化 |
 | **Spread (b90·Ts)** | Fast-fading metric ON 時のみ表示。フェージング広がり幅のスライダー（3--15） |
 | **Fading model** | Fast-fading metric ON 時のみ表示。Gaussian（秤動/AWGN）/ Lorentzian（裾の重いスプレッド） |
-| **Strictness** | デコード感度 vs 偽陽性のバランス（Strict / Normal / Deep） |
+| **Decode profile** | デコード感度・SIC 強度をまとめて切り替え（Fast / Normal / Deep）。Fast は軽量 SIC（2 ラウンド）、Normal/Deep はフル SIC。旧 UI の「Strictness」＋「Multi-pass subtract」チェックボックスをこの 1 セレクタに統合したもの |
 | **Equalizer** | 適応型イコライザ（Off / Adaptive）。BPF エッジ補正 |
 | **Retry limit** | CALLING/REPORT のリトライ回数上限（1--30、デフォルト 15）。FINAL ステートは常に 3 回固定でこの設定の影響を受けない |
-| **Multi-pass subtract** | 逐次干渉除去（3 パス SIC）。デフォルト ON |
 | **A Priori (AP)** | AP デコード。デフォルト ON |
 | **CQ reply: best SNR** | ON: 最強 SNR の CQ に応答。OFF: 最初にデコードされた CQ に応答 |
 | **DT auto-correct** | ON: デコード済み FT8 信号の DT 中央値でクロックを自動補正。ヘッダーに `DT±X.X` 表示。デフォルト ON |
 | **Waterfall FFT** | ウォーターフォール表示の ON/OFF |
+| **Record RX audio** | 受信音声をライブで WAV 保存（詳細は [RX 音声のライブ録音](#rx-音声のライブ録音)） |
 | **Open WAV File** | WAV ファイルを選択してオフライン解析 |
 
-> AP ターゲットは手動入力不要。Scout では QSO 中の相手局から、Snipe ではタップしたターゲット局から自動設定されます。
+> AP ターゲットは手動入力不要。Scout では QSO 中の相手局から、Snipe ではタップしたターゲット局から自動設定されます。AP は WSPR / Q65 / FST4 では未配線（決め打ちのターゲット入力欄が無い）。
+
+**モードごとの TX/QSO 対応:**
+
+| Protocol | TX/QSO | 備考 |
+|----------|--------|------|
+| FT8 | ✅ | 標準の CQ → report → RRR/RR73 → 73 交換 |
+| FT4 | ✅ | FT8 と同一のメッセージ文法（WSJT-77）を共有 |
+| Q65 | ✅ | 同上。ただしフリーテキスト送信（Tx5）は非対応 |
+| WSPR | ❌ 受信専用 | そもそも一方向ビーコンで、応答を前提とした QSO 構造を持たない |
+| FST4 | ❌ 受信専用 | mfsk-core にエンコード実装はあるが WASM binding が未配線（今後の課題） |
+
+TX 非対応のモードを選択すると、ボトムバーの TX アクション欄には理由付きの説明文が表示され、CQ/相手コール/73 ボタン自体が出ません。
 
 ### パイプラインデコード
 
-Subtract ON 時、デコードは 2 フェーズで実行されます:
+FT8 では、デコードは常に 2 フェーズで実行されます（Decode profile が SIC の強さを決める）:
 
-1. **Phase 1**（~200ms）: 強信号を高速デコード → 結果を即座にチャットに表示
-2. **Phase 2**（~300-800ms）: 3 パス減算で追加信号を検出 → チャットに追記
+1. **Phase 1**（~10-20ms）: 強信号を高速デコード → 結果を即座にチャットに表示
+2. **Phase 2**（Fast: 軽量 SIC 2 ラウンド、Normal/Deep: フル SIC）: 減算で追加信号を検出 → チャットに追記
 
 Phase 1 の FFT キャッシュを Phase 2 で再利用し、計算コストを削減。バジェット超過時は Phase 2 をスキップ（強信号は Phase 1 で取得済み）。
 
@@ -396,13 +409,32 @@ Phase 1 の FFT キャッシュを Phase 2 で再利用し、計算コストを�
 
 ---
 
-## WAV ファイルでのオフライン解析
+## WAV ファイル（オフライン解析とライブ録音）
+
+### オフライン解析
 
 ウォーターフォールに WAV ファイルをドラッグ＆ドロップするか、設定パネルの **Open WAV File** で選択。
 
 - **要件**: 16 bit / mono の WAV（サンプルレートは任意 — 12 / 44.1 / 48 kHz など。Rust 側で自動リサンプル）
 - ライブデコード中でも自動停止して処理
 - ウォーターフォール + デコード結果が即座に表示
+
+### RX 音声のライブ録音
+
+設定パネル Decode セクションの **Record RX audio** で、受信中の音声をスロットごとに WAV として自動保存できます（WSJT-X の "Save All" 相当）。
+
+| モード | 動作 |
+|--------|------|
+| **Off** | 保存しない（デフォルト） |
+| **Save decoded** | そのスロットで 1 件以上デコードできた場合のみ保存 |
+| **Save all** | 全スロットを無条件で保存 |
+
+- 初回選択時に **Save folder** ボタンで保存先フォルダを選ぶ（File System Access API のディレクトリピッカー）
+- フォルダの選択は IndexedDB に保存され、次回起動時も自動復元（ただし書き込み許可はブラウザの仕様上セッションごとに再付与が必要 — Start Audio 実行時に自動で再要求される）
+- 保存形式は 12 kHz mono 16-bit WAV。ファイル名は `YYMMDD_HHMMSS.wav`（UTC のスロット開始時刻）
+- 書き込みはデコード処理と並行して行われる（fire-and-forget）ため、録音がデコードのレイテンシに影響することはない
+- **File System Access API が必要なため、Chrome / Edge のみ対応**。非対応ブラウザでは Record RX audio 欄がグレーアウトする
+- フォルダの書き込み許可が失効した場合（他アプリでフォルダを移動した等）、録音は自動的に Off へ戻り、ステータスバーに通知される
 
 ---
 
@@ -506,7 +538,7 @@ CI-V コマンドは FIL2 / FIL3 の切り替えを行います。フィルタ�
 | CAT disconnected が出る | コマンドの送信間隔が短すぎる可能性。ブラウザ再起動後に再接続 |
 | ウォーターフォールが真っ黒 | Audio Input が正しいデバイスか確認。ロゴタップで再起動 |
 | QSO が進まない | Auto チェックが ON か確認。受信メッセージをタップして相手局を選択 |
-| `[-sub]` `[-sub,AP]` 表示 | デコードが重いため自動調整中。バジェット内に収まれば復帰 |
+| `[-fast]` `[-fast,AP]` 表示 | デコードが重いため自動調整中（Decode profile を Fast に強制）。バジェット内に収まれば復帰 |
 | `<...>` が解決されない | 同一セッション中にその局がデコードされていない。ページリロードでハッシュテーブルはクリア |
 
 ---
@@ -537,6 +569,7 @@ WebFT8 は PWA としてデバイスにインストールでき、オフライ�
 | **ブラウザ** | Chrome 90+, Edge 90+, Safari 15+ |
 | **Web Serial** | Chrome / Edge のみ（デスクトップ CAT 制御） |
 | **Web Bluetooth** | Chrome Android（IC-705 BLE 接続） |
+| **File System Access API** | Chrome / Edge のみ（Record RX audio のライブ WAV 録音に必要） |
 | **オーディオ** | getUserMedia 対応（HTTPS or localhost） |
 | **WASM** | WebAssembly 対応（現行ブラウザは全て対応） |
 | **画面** | モバイル対応（レスポンシブ） |

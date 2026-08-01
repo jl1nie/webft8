@@ -7,13 +7,13 @@
 
 ## Features
 
-- **Full FT8 QSO** — decode, encode, auto-sequence (IDLE → CALLING → REPORT → FINAL)
-- **Sniper mode** — 500 Hz hardware BPF + adaptive equalizer for extreme weak-signal DX
+- **Multi-mode** — decodes FT8 / FT4 / FST4 / WSPR / Q65. **FT8 / FT4 / Q65 support full QSO** (auto-sequence: IDLE → CALLING → REPORT → FINAL) — WSPR and FST4 run as receive-only monitors
+- **Sniper mode** — 500 Hz hardware BPF + adaptive equalizer for extreme weak-signal DX (FT8)
 - **Pipelined decode** — Phase 1 results shown instantly, Phase 2 adds subtract signals
 - **CAT control** — Yaesu / Icom PTT via Web Serial API or Bluetooth LE
 - **Works everywhere** — PC, tablet, smartphone. Chrome, Edge, Safari
 - **Offline-capable PWA** — install to home screen, works without network
-- **WAV analysis** — drag & drop any FT8 WAV for offline decode
+- **WAV analysis / live recording** — drag & drop any WAV for offline decode, or record received audio live per-slot (Chrome/Edge)
 
 ## Quick Start
 
@@ -51,7 +51,7 @@ WebFT8's sniper mode uses the transceiver's **500 Hz hardware narrow filter** to
 | Equalizer | None | **Costas Wiener adaptive EQ** |
 | Parallelism | Serial | **Rayon par_iter (7.7x)** |
 | Subtract | 4-pass | **3-pass + QSB gate** |
-| Binary size | ~120 MB | **572 KB (full PWA)** |
+| Binary size | ~120 MB | **1.51 MB / 432 KB gzip (full PWA)** |
 
 ### Decode Comparison (15 crowd stations + weak target)
 
@@ -63,7 +63,7 @@ WebFT8's sniper mode uses the transceiver's **500 Hz hardware narrow filter** to
 | BPF edge −20 dB, EQ + AP | — | **100%** |
 | Butterworth vs Elliptic 4-pole (center, −20 dB) | — | **100% both** |
 
-Numbers current as of 2026-07-25 (mfsk-core 0.7.4); see [docs/bench.md](docs/bench.md) for before/after deltas vs. the previous decode engine.
+Numbers re-verified 2026-08-02 against mfsk-core 0.8.1 (unchanged); see [docs/bench.md](docs/bench.md) for details and the decode-engine history.
 
 Full benchmark data (all scenarios, SNR sweeps, filter comparison): **[docs/bench.md](docs/bench.md)**
 
@@ -87,6 +87,8 @@ cargo run -p ft8-bench --release    # benchmarks + simulation
 # WASM
 cd ft8-web && wasm-pack build --target web --release
 ```
+
+19 unit tests (ft8-bench 9 + uvpacket-web 9 + 1 integration test; `cargo test --workspace`. ft8-web/ft8-desktop are thin binding layers with no tests of their own — the decode engine, mfsk-core, is tested separately in its own upstream repo). WASM binary 1.23 MB (339 KB gzip).
 
 ## References
 
