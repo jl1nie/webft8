@@ -602,6 +602,81 @@ pub fn encode_ft4_free_text(text: &str, freq_hz: f32) -> Result<Vec<f32>, JsValu
 }
 
 // ───────────────────────────────────────────────────────────────────────
+// FST4 — five wired sub-modes (FST4-15 / -30 / -60 / -120 / -300)
+//
+// Sub-mode encoding (T/R period):
+//   0 = FST4-15  (15 s)    1 = FST4-30  (30 s)    2 = FST4-60  (60 s)
+//   3 = FST4-120 (120 s)   4 = FST4-300 (300 s)
+//
+// FST4 shares FT4's generic `DecodeRequest` / `DecodeResult` (mfsk-core
+// #194), so decoded frames flow through the same `ft4_decode_and_register`
+// path. Frame coarse-sync finds the time offset internally, so the WAV
+// path only needs the full-slot audio — no nominal-start hint (unlike
+// Q65). FST4 SIC (subtract, issue #193) and wide-band AP are not
+// implemented upstream, so only the plain wide-band scan is exposed.
+// ───────────────────────────────────────────────────────────────────────
+
+// Audio passband + coarse-sync tuning for the FST4 wide-band scan.
+// Seeded from FT4's operating point; revisit with ft8-bench sweeps.
+const FST4_FLOW: f32 = 100.0;
+const FST4_FHIGH: f32 = 3000.0;
+const FST4_SYNC_MIN: f32 = 1.2;
+const FST4_MAX_CAND: usize = 50;
+
+macro_rules! dispatch_fst4_submode {
+    ($submode:expr, $body:ident) => {
+        match $submode {
+            0 => $body!(mfsk_core::fst4::Fst4s15),
+            1 => $body!(mfsk_core::fst4::Fst4s30),
+            2 => $body!(mfsk_core::fst4::Fst4s60),
+            3 => $body!(mfsk_core::fst4::Fst4s120),
+            4 => $body!(mfsk_core::fst4::Fst4s300),
+            _ => Vec::new(),
+        }
+    };
+}
+
+/// Decode an FST4 slot (wide-band scan). `submode` 0..=4 picks the T/R
+/// period (15/30/60/120/300 s); `profile` (0=Fast/1=Normal/2=Deep) maps
+/// to `DecodeStrictness`. Non-12 kHz input is auto-resampled.
+#[wasm_bindgen]
+pub fn decode_fst4_wav(samples: &[i16], submode: u8, profile: u8, sample_rate: u32) -> Vec<DecodedMessage> {
+    let audio = if sample_rate != 12000 {
+        resample_to_12k(samples, sample_rate)
+    } else {
+        samples.to_vec()
+    };
+    macro_rules! scan_body {
+        ($p:ty) => {
+            ft4_decode_and_register(
+                DecodeRequest::<$p>::new(&audio, FST4_FLOW, FST4_FHIGH, FST4_SYNC_MIN, FST4_MAX_CAND)
+                    .strictness(to_strictness(profile))
+                    .decode()
+                    .results,
+            )
+        };
+    }
+    dispatch_fst4_submode!(submode, scan_body)
+}
+
+/// f32 variant of [`decode_fst4_wav`].
+#[wasm_bindgen]
+pub fn decode_fst4_wav_f32(samples: &[f32], submode: u8, profile: u8, sample_rate: u32) -> Vec<DecodedMessage> {
+    let audio = resample_f32_to_12k(samples, sample_rate);
+    macro_rules! scan_body {
+        ($p:ty) => {
+            ft4_decode_and_register(
+                DecodeRequest::<$p>::new(&audio, FST4_FLOW, FST4_FHIGH, FST4_SYNC_MIN, FST4_MAX_CAND)
+                    .strictness(to_strictness(profile))
+                    .decode()
+                    .results,
+            )
+        };
+    }
+    dispatch_fst4_submode!(submode, scan_body)
+}
+
+// ───────────────────────────────────────────────────────────────────────
 // WSPR
 // ───────────────────────────────────────────────────────────────────────
 

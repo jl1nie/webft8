@@ -135,6 +135,42 @@ export function bootstrap_dt_f32(samples, sample_rate) {
 }
 
 /**
+ * Decode an FST4 slot (wide-band scan). `submode` 0..=4 picks the T/R
+ * period (15/30/60/120/300 s); `profile` (0=Fast/1=Normal/2=Deep) maps
+ * to `DecodeStrictness`. Non-12 kHz input is auto-resampled.
+ * @param {Int16Array} samples
+ * @param {number} submode
+ * @param {number} profile
+ * @param {number} sample_rate
+ * @returns {DecodedMessage[]}
+ */
+export function decode_fst4_wav(samples, submode, profile, sample_rate) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_fst4_wav(ptr0, len0, submode, profile, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * f32 variant of [`decode_fst4_wav`].
+ * @param {Float32Array} samples
+ * @param {number} submode
+ * @param {number} profile
+ * @param {number} sample_rate
+ * @returns {DecodedMessage[]}
+ */
+export function decode_fst4_wav_f32(samples, submode, profile, sample_rate) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_fst4_wav_f32(ptr0, len0, submode, profile, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
  * FT4 sniper-mode decode at a target frequency with optional AP hints.
  * @param {Int16Array} samples
  * @param {number} target_freq

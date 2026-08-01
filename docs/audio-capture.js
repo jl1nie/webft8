@@ -94,6 +94,12 @@ export class AudioCapture {
       processorOptions: { waterfallTargetRate: 6000 },
     });
 
+    // Re-apply a previously requested slot buffer size (survives a
+    // stop()/start() cycle) so long-period modes keep their larger buffer.
+    if (this._bufferSeconds) {
+      this.workletNode.port.postMessage({ type: 'setBufferSeconds', seconds: this._bufferSeconds });
+    }
+
     // Handle messages from worklet
     this.workletNode.port.onmessage = (e) => {
       const msg = e.data;
@@ -168,6 +174,17 @@ export class AudioCapture {
       };
       this.workletNode?.port.postMessage({ type: 'snapshot' });
     });
+  }
+
+  /**
+   * Resize the worklet snapshot buffer to hold `sec` seconds of audio.
+   * Long slots (WSPR 120 s, Q65-60, FST4-30..300) need more than the 15 s
+   * default or the live snapshot is truncated. Remembered so it re-applies
+   * across stop()/start().
+   */
+  setBufferSeconds(sec) {
+    this._bufferSeconds = sec;
+    this.workletNode?.port.postMessage({ type: 'setBufferSeconds', seconds: sec });
   }
 
   /** Set input gain (0.0 - 2.0). */

@@ -52,6 +52,7 @@ import { QsoManager, QSO_STATE } from './qso.js';
 import { CatController, loadRigProfiles, getRigProfiles, isTauriMode, listSerialPorts } from './cat.js';
 import { GpsNmeaSync } from './gps-nmea.js';
 import { QsoLog } from './qso-log.js';
+import { WavSaver } from './wav-save.js';
 
 // ── Protocol selector (FT8 default; FT4/WSPR opt-in via settings cog) ──────
 // Stored in localStorage as 'webft8-protocol' = 'ft8' | 'ft4' | 'wspr'.
@@ -59,8 +60,14 @@ import { QsoLog } from './qso-log.js';
 // scheduler and decode dispatch without restarts.
 function currentProtocol() {
   const v = localStorage.getItem('webft8-protocol');
-  if (v === 'ft4' || v === 'wspr' || v === 'q65') return v;
+  if (v === 'ft4' || v === 'wspr' || v === 'q65' || v === 'fst4') return v;
   return 'ft8';
+}
+
+// FST4 sub-mode: 0=FST4-15, 1=FST4-30, 2=FST4-60, 3=FST4-120, 4=FST4-300.
+function currentFst4Submode() {
+  const v = parseInt(localStorage.getItem('webft8-fst4-submode') || '0', 10);
+  return (v >= 0 && v <= 4) ? v : 0;
 }
 
 // Q65 sub-mode: 0 = Q65-30A (30 s slot), 1‥5 = Q65-60A‥E (60 s slot).
@@ -85,7 +92,17 @@ function getSlotMs() {
   if (p === 'ft4') return 7500;
   if (p === 'wspr') return 120000;
   if (p === 'q65') return currentQ65Submode() === 0 ? 30000 : 60000;
+  if (p === 'fst4') return [15000, 30000, 60000, 120000, 300000][currentFst4Submode()];
   return 15000;
+}
+
+// Live snapshot buffer must hold a full slot. FT8/FT4 fit the 15 s
+// default; WSPR/Q65-60/FST4-30..300 need a larger buffer (+2 s margin so
+// the slot tail isn't clipped). No-op until the worklet exists (guarded
+// in AudioCapture). `capture` is initialised further below, but this is
+// only ever invoked from user-interaction handlers / after start().
+function applySlotBuffer() {
+  capture?.setBufferSeconds(getSlotMs() / 1000 + 2);
 }
 
 // ── Elements ────────────────────────────────────────────────────────────────
@@ -146,25 +163,32 @@ const q65B90Slider = document.getElementById('q65-b90');
 const q65B90Label = document.getElementById('q65-b90-label');
 const q65FadingModelField = document.getElementById('q65-fading-model-field');
 const q65FadingModelSelect = document.getElementById('q65-fading-model');
+const fst4SubmodeSelect = document.getElementById('fst4-submode');
+const fst4SubmodeField = document.getElementById('fst4-submode-field');
 
 function syncQ65Visibility() {
-  const isQ65 = currentProtocol() === 'q65';
+  const proto = currentProtocol();
+  const isQ65 = proto === 'q65';
+  const isFst4 = proto === 'fst4';
   const fading = isQ65 && currentQ65Fading();
   if (q65SubmodeField)      q65SubmodeField.style.display      = isQ65 ? '' : 'none';
   if (q65FadingToggle)      q65FadingToggle.style.display      = isQ65 ? '' : 'none';
   if (q65B90Field)          q65B90Field.style.display          = fading ? '' : 'none';
   if (q65FadingModelField)  q65FadingModelField.style.display  = fading ? '' : 'none';
+  if (fst4SubmodeField)     fst4SubmodeField.style.display     = isFst4 ? '' : 'none';
 }
 
 if (protocolSelect) {
   protocolSelect.value = currentProtocol();
   protocolSelect.addEventListener('change', () => {
     const v = protocolSelect.value;
-    const normalized = (v === 'ft4' || v === 'wspr' || v === 'q65') ? v : 'ft8';
+    const normalized = (v === 'ft4' || v === 'wspr' || v === 'q65' || v === 'fst4') ? v : 'ft8';
     localStorage.setItem('webft8-protocol', normalized);
     // Push the new slot length into the running scheduler (restarts it
-    // safely) so the UI switches over without a page reload.
+    // safely) so the UI switches over without a page reload, and resize
+    // the live snapshot buffer to cover the new (possibly longer) slot.
     periodMgr.setSlotMs(getSlotMs());
+    applySlotBuffer();
     syncQ65Visibility();
   });
 }
@@ -174,6 +198,16 @@ if (q65SubmodeSelect) {
     localStorage.setItem('webft8-q65-submode', q65SubmodeSelect.value);
     // Q65-30A is 30s, Q65-60A‥E are 60s — push the new slot length.
     periodMgr.setSlotMs(getSlotMs());
+    applySlotBuffer();
+  });
+}
+if (fst4SubmodeSelect) {
+  fst4SubmodeSelect.value = String(currentFst4Submode());
+  fst4SubmodeSelect.addEventListener('change', () => {
+    localStorage.setItem('webft8-fst4-submode', fst4SubmodeSelect.value);
+    // FST4-15/30/60/120/300 — push the new slot length + resize buffer.
+    periodMgr.setSlotMs(getSlotMs());
+    applySlotBuffer();
   });
 }
 if (q65FadingCheck) {
@@ -210,6 +244,73 @@ wfLabelsCheck.checked = localStorage.getItem('webft8-wf-labels') !== '0';
 wfLabelsCheck.addEventListener('change', () => {
   localStorage.setItem('webft8-wf-labels', wfLabelsCheck.checked ? '1' : '0');
 });
+
+// ── RX audio recording (save live slots as 12 kHz WAV) ───────────────────
+// Mode: 'off' | 'decoded' (only slots that produced ≥1 decode) | 'all'.
+const wavSaver = new WavSaver();
+function readWavMode() {
+  const v = localStorage.getItem('webft8-wav-save');
+  if (v === '1') return 'all';                 // migrate old boolean toggle
+  if (v === 'decoded' || v === 'all') return v;
+  return 'off';
+}
+let wavSaveMode = readWavMode();
+const wavSaveModeSelect = document.getElementById('wav-save-mode');
+const btnWavFolder = document.getElementById('btn-wav-folder');
+const wavFolderName = document.getElementById('wav-folder-name');
+const wavFolderField = document.getElementById('wav-folder-field');
+
+function updateWavFolderLabel() {
+  if (wavFolderName) wavFolderName.textContent = wavSaver.folderName || '(none)';
+}
+
+if (wavSaveModeSelect) {
+  if (!WavSaver.supported) {
+    // File System Access API is Chrome/Edge only. Disable the whole group.
+    wavSaveMode = 'off';
+    wavSaveModeSelect.value = 'off';
+    wavSaveModeSelect.disabled = true;
+    if (btnWavFolder) btnWavFolder.disabled = true;
+    if (wavFolderName) wavFolderName.textContent = '(Chrome/Edge only)';
+  } else {
+    wavSaveModeSelect.value = wavSaveMode;
+    // Reload restores the previously chosen folder (permission re-granted
+    // lazily on the next user gesture — folder button or Start Audio).
+    wavSaver.restore().then(updateWavFolderLabel);
+
+    wavSaveModeSelect.addEventListener('change', async () => {
+      const mode = wavSaveModeSelect.value;
+      if (mode !== 'off') {
+        try {
+          if (!wavSaver.dirHandle) await wavSaver.pickFolder();
+          const ok = await wavSaver.ensureWritable();
+          if (!ok) throw new Error('permission denied');
+          wavSaveMode = mode;
+          updateWavFolderLabel();
+        } catch (e) {
+          wavSaveMode = 'off';
+          wavSaveModeSelect.value = 'off';
+          if (e && e.name !== 'AbortError') setStatus('WAV save: ' + (e.message || 'folder not set'));
+        }
+      } else {
+        wavSaveMode = 'off';
+      }
+      localStorage.setItem('webft8-wav-save', wavSaveMode);
+    });
+
+    if (btnWavFolder) {
+      btnWavFolder.addEventListener('click', async () => {
+        try {
+          await wavSaver.pickFolder();
+          await wavSaver.ensureWritable();
+          updateWavFolderLabel();
+        } catch (e) {
+          if (e && e.name !== 'AbortError') setStatus('WAV folder: ' + (e.message || 'not set'));
+        }
+      });
+    }
+  }
+}
 const profileSelect = document.getElementById('decode-profile');
 const btnCat = document.getElementById('btn-cat');
 const catStatusEl = document.getElementById('cat-status');
@@ -942,8 +1043,17 @@ async function runDecode(samples, sampleRate, onPartial) {
   const ft4   = proto === 'ft4';
   const wspr  = proto === 'wspr';
   const q65   = proto === 'q65';
+  const fst4  = proto === 'fst4';
   let fnDecodeName, fnSniperName, fnSubtractName, fnPhase1Name, fnPhase2Name;
-  if (q65) {
+  if (fst4) {
+    // FST4 wide-band scan (no SIC / sniper / AP upstream). Sub-mode +
+    // profile passed to decode_fst4_wav below.
+    fnDecodeName   = isF32 ? 'decode_fst4_wav_f32' : 'decode_fst4_wav';
+    fnSniperName   = null;
+    fnSubtractName = null;
+    fnPhase1Name   = null;
+    fnPhase2Name   = null;
+  } else if (q65) {
     // Pick fast-fading variant only when the user enabled it (EME
     // recordings with measurable Doppler spread). Plain Q65 BP scan
     // covers the terrestrial / ionoscatter common case.
@@ -990,7 +1100,10 @@ async function runDecode(samples, sampleRate, onPartial) {
   const sr = sampleRate || capture.getSampleRate();
 
   let results;
-  if (q65) {
+  if (fst4) {
+    // FST4: one-shot wide-band scan. (samples, submode, profile, sample_rate)
+    results = await workerDecode(fnDecodeName, [samples, currentFst4Submode(), profile, sr]);
+  } else if (q65) {
     // Q65: one-shot scan. Sub-mode (0..5) is a required parameter
     // both for the basic BP path and the fast-fading variant.
     const submode = currentQ65Submode();
@@ -1032,10 +1145,10 @@ async function runDecode(samples, sampleRate, onPartial) {
 
   // AP supplement: enabled by checkbox, auto-disabled by budget.
   // Skip AP when calling CQ (no target yet — AP would only produce false positives)
-  // or in WSPR / Q65 mode (no sniper entry point exposed; Q65 has its
+  // or in WSPR / Q65 / FST4 mode (no sniper entry point exposed; Q65 has its
   // own AP / AP-list strategies but they're not wired in this UI yet).
   const isCqWaiting = qso.state === QSO_STATE.CALLING && !qso.dxCall;
-  const useAp = apCheck.checked && !apDisabledAuto && !isCqWaiting && !wspr && !q65;
+  const useAp = apCheck.checked && !apDisabledAuto && !isCqWaiting && !wspr && !q65 && !fst4;
   const apTarget = useAp
     ? (apCall || (currentMode === 'scout' && qso.dxCall ? qso.dxCall : ''))
     : '';
@@ -1273,6 +1386,29 @@ const periodMgr = new FT8PeriodManager({
     const float32 = await capture.snapshot();
     if (float32.length < 12000) return;
 
+    // Record the raw (pre-normalize) slot to WAV. Capture the copy now
+    // (before the in-place normalize below); save immediately in "all"
+    // mode, or after decode in "decoded" mode (see below). Fire-and-forget
+    // so the file write never delays decode. Filename = UTC slot start.
+    let saveSlotWav = null;
+    if (wavSaveMode !== 'off' && wavSaver.dirHandle) {
+      const raw = float32.slice();
+      const sr = capture.getSampleRate();
+      const slot = getSlotMs();
+      const startMs = Math.round(Date.now() / slot) * slot - slot;
+      saveSlotWav = () => wavSaver.save(raw, sr, new Date(startMs)).catch((e) => {
+        if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+          wavSaveMode = 'off';
+          if (wavSaveModeSelect) wavSaveModeSelect.value = 'off';
+          localStorage.setItem('webft8-wav-save', 'off');
+          setStatus('WAV save stopped (folder permission lost)');
+        } else {
+          console.warn('WAV save failed', e);
+        }
+      });
+      if (wavSaveMode === 'all') saveSlotWav();
+    }
+
     // JS-side peak-normalize before decode. This is cache-safe: works even
     // if the browser serves a stale WASM build without Rust-side normalization.
     // Signals from USB radio adapters are typically at < 0.01 full-scale;
@@ -1389,6 +1525,9 @@ const periodMgr = new FT8PeriodManager({
     // Phase 2 (subtract) is still running in the worker.
     const results = await runDecode(float32, null, pushResults);
     const n = results.length;
+
+    // "Save decoded" mode: write the slot only if something decoded.
+    if (saveSlotWav && wavSaveMode === 'decoded' && n > 0) saveSlotWav();
 
     // Push any remaining results not yet shown (non-subtract path, or
     // Phase 2 results that arrived after the onPartial callback).
@@ -1659,6 +1798,19 @@ async function toggleAudio() {
     try {
       await capture.start(deviceId);
       capture.setGain(rxGainSlider.value / 100);
+      // Size the snapshot buffer to the current slot (long FST4/Q65/WSPR
+      // periods need more than the 15 s worklet default).
+      applySlotBuffer();
+      // Re-grant folder write permission (this click is a user gesture) so
+      // a folder restored from a previous session can be written silently.
+      if (wavSaveMode !== 'off' && wavSaver.dirHandle) {
+        const ok = await wavSaver.ensureWritable();
+        if (!ok) {
+          wavSaveMode = 'off';
+          if (wavSaveModeSelect) wavSaveModeSelect.value = 'off';
+          setStatus('WAV save off (no folder permission)');
+        }
+      }
       localStorage.setItem('webft8-audio-in', deviceId);
       periodMgr.start();
       liveMode = true;
@@ -1986,7 +2138,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.7.0';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);
