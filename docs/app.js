@@ -1,7 +1,7 @@
-// Main thread keeps WASM init for encode_ft8 (TX waveform synthesis).
-// Decode runs in a Web Worker (decode-worker.js) so a 200-400 ms decode
-// call doesn't freeze the waterfall or the UI.
-import init, { encode_ft8, encode_free_text } from './ft8_web.js';
+// Main thread keeps WASM init for encode_ft8/encode_ft4/encode_q65 (TX
+// waveform synthesis). Decode runs in a Web Worker (decode-worker.js) so
+// a 200-400 ms decode call doesn't freeze the waterfall or the UI.
+import init, { encode_ft8, encode_free_text, encode_ft4, encode_ft4_free_text, encode_q65 } from './ft8_web.js';
 
 // ── Decode worker (off-main-thread WASM) ───────────────────────────────────
 const decodeWorker = new Worker(
@@ -190,6 +190,7 @@ if (protocolSelect) {
     periodMgr.setSlotMs(getSlotMs());
     applySlotBuffer();
     syncQ65Visibility();
+    updateTxActions();
   });
 }
 if (q65SubmodeSelect) {
@@ -962,6 +963,25 @@ function updateQsoDisplay() {
 
 function updateTxActions() {
   txActionsEl.innerHTML = '';
+
+  // WSPR (one-way beacon, not a call/response exchange) and FST4 (no
+  // WASM encode binding yet) have no TX path. Without this guard the
+  // CQ/reply/73 buttons would still call encodeTx(), which falls through
+  // to encode_ft8() and transmits mismatched FT8 tones while the operator
+  // believes they're on WSPR/FST4 — see issue #9. Q65 TX was held back
+  // for the same reason until mfsk-core 0.8.1 (jl1nie/mfsk-core#226)
+  // added real Q65Result.snr_db — now wired via encodeTx() below.
+  const proto = currentProtocol();
+  if (proto === 'wspr' || proto === 'fst4') {
+    const note = document.createElement('div');
+    note.style.cssText = 'font-size:var(--fs-sm); color:var(--c-fg-dim)';
+    note.textContent = proto === 'wspr'
+      ? 'WSPR is receive-only in WebFT8 (one-way beacon, no QSO exchange).'
+      : 'FST4 TX is not implemented yet (decode-only).';
+    txActionsEl.appendChild(note);
+    return;
+  }
+
   const myCall = myCallInput.value.toUpperCase();
   const myGrid = myGridInput.value.toUpperCase();
   const dx = qso.dxCall;
@@ -1275,6 +1295,38 @@ async function syncNtpOffset() {
   return null;
 }
 
+// Protocol-aware TX waveform synthesis. WSPR (one-way beacon, not a
+// call/response QSO exchange) and FST4 (no WASM encode binding yet) have
+// no wired encoder — updateTxActions() hides the TX panel for those
+// protocols, so this should only be reached for ft8/ft4/q65.
+function encodeTx(call1, call2, report, freq) {
+  const proto = currentProtocol();
+  if (proto === 'ft4') {
+    return call1 === '__FREE__'
+      ? encode_ft4_free_text(report, freq)
+      : encode_ft4(call1, call2, report, freq);
+  }
+  if (proto === 'q65') {
+    // No free-text encode for Q65 (no encode_q65_free_text WASM binding
+    // — mfsk-core has no Q65 free-text message variant).
+    if (call1 === '__FREE__') throw new Error('Q65 has no free-text TX');
+    return encode_q65(call1, call2, report, freq, currentQ65Submode());
+  }
+  if (proto === 'wspr' || proto === 'fst4') {
+    // Explicit reject, not just an unreachable default: updateTxActions()
+    // hides the manual CQ/reply/73 buttons for these protocols, but
+    // qso.js's auto-reply state machine (_onIdle etc.) can still produce
+    // a txMsg from decoded traffic alone when the "Auto" checkbox is on,
+    // bypassing the button UI entirely. Falling through to encode_ft8()
+    // here would silently transmit FT8 tones while the operator believes
+    // they're on WSPR/FST4 — see issue #9.
+    throw new Error(`${proto.toUpperCase()} TX is not supported`);
+  }
+  return call1 === '__FREE__'
+    ? encode_free_text(report, freq)
+    : encode_ft8(call1, call2, report, freq);
+}
+
 // ── Transmit (called by period manager at period boundary) ─────────────────
 async function transmit(call1, call2, report, freq) {
   if (!wasmReady) return;
@@ -1301,9 +1353,7 @@ async function transmit(call1, call2, report, freq) {
     const utc = new Date().toISOString().substr(11, 8);
     addChatMsg('tx sending', utc, txText, undefined);
 
-    const samples = call1 === '__FREE__'
-      ? encode_free_text(report, freq)
-      : encode_ft8(call1, call2, report, freq);
+    const samples = encodeTx(call1, call2, report, freq);
 
     // Show TX level meter (peak of generated waveform * gain)
     const txPeak = AudioOutput.peakLevel(samples) * (txGainSlider.value / 100);

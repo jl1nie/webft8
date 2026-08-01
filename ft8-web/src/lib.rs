@@ -751,7 +751,7 @@ fn q65_decodes_to_messages(decodes: Vec<mfsk_core::q65::Q65Result>) -> Vec<Decod
         .map(|d| DecodedMessage {
             freq_hz: d.freq_hz,
             dt_sec: d.start_sample as f32 / 12_000.0,
-            snr_db: 0.0,
+            snr_db: d.snr_db,
             hard_errors: d.iterations,
             pass: 0,
             message: d.message,
