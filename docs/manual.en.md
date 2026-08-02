@@ -2,7 +2,7 @@
 
 **[Japanese version](manual.md)** | **[Open App](https://jl1nie.github.io/webft8/)**
 
-WebFT8 is a browser-based, multi-mode PWA -- decode FT8 / FT4 / FST4 / WSPR / Q65, CAT control, and log management, all in one app. **QSO (transmit/receive) is supported for FT8 / FT4 / Q65** -- WSPR is a one-way beacon and FST4 is currently decode-only, so those two protocols run as receive-only monitors. No installation required -- works on Chrome, Edge, and Safari (WebKit).
+WebFT8 is a browser-based, multi-mode PWA -- decode FT8 / FT4 / FST4 / WSPR / Q65, CAT control, and log management, all in one app. **QSO (transmit/receive) is supported for FT8 / FT4 / FST4 / Q65** -- WSPR is a one-way beacon, so it runs as a receive-only monitor. No installation required -- works on Chrome, Edge, and Safari (WebKit).
 
 ---
 
@@ -369,8 +369,8 @@ Open/close with the gear icon. Organized as an accordion with 5 sections (ordere
 | FT8 | ✅ | Standard CQ → report → RRR/RR73 → 73 exchange |
 | FT4 | ✅ | Shares the exact same message grammar (WSJT-77) as FT8 |
 | Q65 | ✅ | Same as above. Free-text TX (Tx5) is not supported |
+| FST4 | ✅ | Same as above. Free-text TX (Tx5) is not supported. TX periods run 15-300 s depending on sub-mode |
 | WSPR | ❌ receive-only | A one-way beacon by design — no call/response QSO structure to begin with |
-| FST4 | ❌ receive-only | mfsk-core has an encode implementation, but the WASM binding isn't wired yet (future work) |
 
 Selecting a TX-unsupported protocol shows an explanatory note in the bottom-bar TX actions area instead of the CQ/reply/73 buttons.
 

@@ -611,6 +611,36 @@ export function encode_free_text(text, freq_hz) {
 }
 
 /**
+ * Encode a standard FST4 message (CALL1 CALL2 GRID/REPORT) at the
+ * requested sub-mode + audio centre frequency. `submode` 0..=4 picks
+ * the T/R period (15/30/60/120/300 s), which only changes the GFSK
+ * pulse-shaping constant — the 77-bit message packing and tone
+ * sequence are sub-mode independent (shared with FT4/FT8). Returns
+ * 12 kHz f32 PCM at amplitude 1.0.
+ * @param {string} call1
+ * @param {string} call2
+ * @param {string} report
+ * @param {number} freq_hz
+ * @param {number} submode
+ * @returns {Float32Array}
+ */
+export function encode_fst4(call1, call2, report, freq_hz, submode) {
+    const ptr0 = passStringToWasm0(call1, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(call2, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(report, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.encode_fst4(ptr0, len0, ptr1, len1, ptr2, len2, freq_hz, submode);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v4;
+}
+
+/**
  * Encode an FT4 standard message (CALL1 CALL2 GRID/REPORT) as 12 kHz PCM.
  * @param {string} call1
  * @param {string} call2

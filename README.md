@@ -7,7 +7,7 @@
 
 ## Features
 
-- **Multi-mode** — decodes FT8 / FT4 / FST4 / WSPR / Q65. **FT8 / FT4 / Q65 support full QSO** (auto-sequence: IDLE → CALLING → REPORT → FINAL) — WSPR and FST4 run as receive-only monitors
+- **Multi-mode** — decodes FT8 / FT4 / FST4 / WSPR / Q65. **FT8 / FT4 / FST4 / Q65 support full QSO** (auto-sequence: IDLE → CALLING → REPORT → FINAL) — WSPR runs as a receive-only monitor (one-way beacon)
 - **Sniper mode** — 500 Hz hardware BPF + adaptive equalizer for extreme weak-signal DX (FT8)
 - **Pipelined decode** — Phase 1 results shown instantly, Phase 2 adds subtract signals
 - **CAT control** — Yaesu / Icom PTT via Web Serial API or Bluetooth LE

@@ -7,7 +7,7 @@
 
 ## 機能
 
-- **マルチモード対応** — FT8 / FT4 / FST4 / WSPR / Q65 をデコード。**FT8 / FT4 / Q65 は QSO（送受信）も対応**（自動シーケンス: IDLE → CALLING → REPORT → FINAL）— WSPR・FST4 は受信専用モニタ
+- **マルチモード対応** — FT8 / FT4 / FST4 / WSPR / Q65 をデコード。**FT8 / FT4 / FST4 / Q65 は QSO（送受信）も対応**（自動シーケンス: IDLE → CALLING → REPORT → FINAL）— WSPR は一方向ビーコンのため受信専用モニタ
 - **スナイパーモード** — 500 Hz ハードウェア BPF + 適応型イコライザで超弱信号 DX に対応（FT8）
 - **パイプラインデコード** — Phase 1 結果を即時表示、Phase 2 で減算デコードを追加
 - **CAT 制御** — Web Serial API または Bluetooth LE で八重洲・Icom の PTT 制御

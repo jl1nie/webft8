@@ -676,6 +676,32 @@ pub fn decode_fst4_wav_f32(samples: &[f32], submode: u8, profile: u8, sample_rat
     dispatch_fst4_submode!(submode, scan_body)
 }
 
+/// Encode a standard FST4 message (CALL1 CALL2 GRID/REPORT) at the
+/// requested sub-mode + audio centre frequency. `submode` 0..=4 picks
+/// the T/R period (15/30/60/120/300 s), which only changes the GFSK
+/// pulse-shaping constant — the 77-bit message packing and tone
+/// sequence are sub-mode independent (shared with FT4/FT8). Returns
+/// 12 kHz f32 PCM at amplitude 1.0.
+#[wasm_bindgen]
+pub fn encode_fst4(call1: &str, call2: &str, report: &str, freq_hz: f32, submode: u8) -> Result<Vec<f32>, JsValue> {
+    use mfsk_core::fst4::encode::{
+        message_to_tones, tones_to_f32_with_gfsk, FST4_120_GFSK, FST4_15_GFSK, FST4_300_GFSK, FST4_30_GFSK,
+        FST4_60A_GFSK,
+    };
+    use mfsk_core::msg::wsjt77::pack77;
+    let msg77 = pack77(call1, call2, report).ok_or_else(|| JsValue::from_str("Failed to pack message"))?;
+    let tones = message_to_tones(&msg77);
+    let cfg = match submode {
+        0 => &FST4_15_GFSK,
+        1 => &FST4_30_GFSK,
+        2 => &FST4_60A_GFSK,
+        3 => &FST4_120_GFSK,
+        4 => &FST4_300_GFSK,
+        _ => return Err(JsValue::from_str("Invalid FST4 sub-mode (expected 0..=4)")),
+    };
+    Ok(tones_to_f32_with_gfsk(&tones, freq_hz, 1.0, cfg))
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // WSPR
 // ───────────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
-// Main thread keeps WASM init for encode_ft8/encode_ft4/encode_q65 (TX
-// waveform synthesis). Decode runs in a Web Worker (decode-worker.js) so
+// Main thread keeps WASM init for encode_ft8/encode_ft4/encode_q65/encode_fst4
+// (TX waveform synthesis). Decode runs in a Web Worker (decode-worker.js) so
 // a 200-400 ms decode call doesn't freeze the waterfall or the UI.
-import init, { encode_ft8, encode_free_text, encode_ft4, encode_ft4_free_text, encode_q65 } from '../pkg/ft8_web.js';
+import init, { encode_ft8, encode_free_text, encode_ft4, encode_ft4_free_text, encode_q65, encode_fst4 } from '../pkg/ft8_web.js';
 
 // ── Decode worker (off-main-thread WASM) ───────────────────────────────────
 const decodeWorker = new Worker(
@@ -965,20 +965,18 @@ function updateQsoDisplay() {
 function updateTxActions() {
   txActionsEl.innerHTML = '';
 
-  // WSPR (one-way beacon, not a call/response exchange) and FST4 (no
-  // WASM encode binding yet) have no TX path. Without this guard the
-  // CQ/reply/73 buttons would still call encodeTx(), which falls through
-  // to encode_ft8() and transmits mismatched FT8 tones while the operator
-  // believes they're on WSPR/FST4 — see issue #9. Q65 TX was held back
-  // for the same reason until mfsk-core 0.8.1 (jl1nie/mfsk-core#226)
-  // added real Q65Result.snr_db — now wired via encodeTx() below.
+  // WSPR is a one-way beacon, not a call/response exchange, so it has no
+  // TX path. Without this guard the CQ/reply/73 buttons would still call
+  // encodeTx(), which falls through to encode_ft8() and transmits
+  // mismatched FT8 tones while the operator believes they're on WSPR —
+  // see issue #9. Q65 and FST4 TX were held back for the same reason
+  // until their WASM encode bindings landed — now wired via encodeTx()
+  // below.
   const proto = currentProtocol();
-  if (proto === 'wspr' || proto === 'fst4') {
+  if (proto === 'wspr') {
     const note = document.createElement('div');
     note.style.cssText = 'font-size:var(--fs-sm); color:var(--c-fg-dim)';
-    note.textContent = proto === 'wspr'
-      ? 'WSPR is receive-only in WebFT8 (one-way beacon, no QSO exchange).'
-      : 'FST4 TX is not implemented yet (decode-only).';
+    note.textContent = 'WSPR is receive-only in WebFT8 (one-way beacon, no QSO exchange).';
     txActionsEl.appendChild(note);
     return;
   }
@@ -1313,14 +1311,19 @@ function encodeTx(call1, call2, report, freq) {
     if (call1 === '__FREE__') throw new Error('Q65 has no free-text TX');
     return encode_q65(call1, call2, report, freq, currentQ65Submode());
   }
-  if (proto === 'wspr' || proto === 'fst4') {
+  if (proto === 'fst4') {
+    // No free-text encode for FST4 either (same reason as Q65).
+    if (call1 === '__FREE__') throw new Error('FST4 has no free-text TX');
+    return encode_fst4(call1, call2, report, freq, currentFst4Submode());
+  }
+  if (proto === 'wspr') {
     // Explicit reject, not just an unreachable default: updateTxActions()
-    // hides the manual CQ/reply/73 buttons for these protocols, but
-    // qso.js's auto-reply state machine (_onIdle etc.) can still produce
-    // a txMsg from decoded traffic alone when the "Auto" checkbox is on,
+    // hides the manual CQ/reply/73 buttons for WSPR, but qso.js's
+    // auto-reply state machine (_onIdle etc.) can still produce a txMsg
+    // from decoded traffic alone when the "Auto" checkbox is on,
     // bypassing the button UI entirely. Falling through to encode_ft8()
     // here would silently transmit FT8 tones while the operator believes
-    // they're on WSPR/FST4 — see issue #9.
+    // they're on WSPR — see issue #9.
     throw new Error(`${proto.toUpperCase()} TX is not supported`);
   }
   return call1 === '__FREE__'
