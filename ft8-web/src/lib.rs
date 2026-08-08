@@ -7,6 +7,7 @@ use mfsk_core::ft8::message::{unpack77_with_hash, is_plausible_message};
 use mfsk_core::ft8::resample::{resample_to_12k, resample_f32_to_12k};
 use mfsk_core::ft8::decode_block::{coarse_sync, compute_spectrogram};
 use mfsk_core::engine::sync::bootstrap_dt_median;
+use js_sys::Function;
 
 use std::cell::RefCell;
 
@@ -133,6 +134,37 @@ fn decode_and_register(results: Vec<mfsk_core::ft8::decode::DecodeResult>) -> Ve
         }
     }
     out
+}
+
+/// Bridges mfsk-core 0.9's `.on_result()` — a plain synchronous
+/// `Fn(&DecodeResult) + Sync` callback, deliberately not async/Tokio (see
+/// upstream `docs/reference/STREAMING.md`) so the crate stays executor-free
+/// for its `no_std` embedded consumers — across the wasm-bindgen boundary to
+/// a JS `Function`.
+///
+/// `js_sys::Function` (like every `JsValue`-backed type) is `!Sync`, so it
+/// can't satisfy `.on_result()`'s bound directly. This build is single-
+/// threaded wasm32-unknown-unknown: the `parallel` (rayon) mfsk-core feature
+/// is off (see ft8-web/Cargo.toml) and `.cargo/config.toml` enables no
+/// atomics/shared-memory, so concurrent access to the wrapped `Function` is
+/// physically impossible here — the `unsafe impl Sync` is sound under that
+/// invariant. If this crate ever gains real wasm threading, this wrapper
+/// must be revisited.
+struct JsCallbackSync(Function);
+unsafe impl Sync for JsCallbackSync {}
+
+/// Per-candidate sink shared by every FT8 `*_streaming` entry point: applies
+/// the same `to_decoded` (hash-table unpack + plausibility filter) +
+/// `register_callsigns` pipeline as `decode_and_register`, then hands the
+/// single result to the JS callback. Firing order matches `decode_and_register`'s
+/// sequential loop exactly (this wasm build never takes mfsk-core's `parallel`
+/// path — see `JsCallbackSync`), so callsign-hash registration order is
+/// unchanged from the pre-streaming batch behaviour.
+fn emit_streamed(r: &mfsk_core::ft8::decode::DecodeResult, cb: &JsCallbackSync) {
+    if let Some(dm) = to_decoded(r.clone()) {
+        register_callsigns(&dm.message);
+        let _ = cb.0.call1(&JsValue::NULL, &JsValue::from(dm));
+    }
 }
 
 /// Decode a 15-second FT8 audio frame (wide-band scan).
@@ -416,6 +448,96 @@ pub fn decode_phase2_f32(profile: u8) -> Vec<DecodedMessage> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Streaming siblings: same decode, plus mfsk-core 0.9's `.on_result()`
+// firing `on_result` once per accepted candidate as it's found, instead of
+// only after the whole slot finishes. `decode_phase1`/`decode_phase2` (and
+// their f32 twins) above are untouched — these are purely additive, matching
+// mfsk-core's own `_streaming` sibling convention rather than a parameter on
+// the existing functions. See `emit_streamed`/`JsCallbackSync` for the
+// sync-callback-to-JS bridge and why it's sound in this single-threaded wasm
+// build.
+
+/// Phase 1 decode (i16), streaming: identical to `decode_phase1`, but calls
+/// `on_result(msg)` once per accepted candidate as Phase 1 finds it, in
+/// addition to returning the full batch at the end.
+#[wasm_bindgen]
+pub fn decode_phase1_streaming(samples: &[i16], sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    let cb = JsCallbackSync(on_result);
+    let emit = |r: &mfsk_core::ft8::decode::DecodeResult| emit_streamed(r, &cb);
+    let audio = if sample_rate != 12000 { resample_to_12k(samples, sample_rate) } else { samples.to_vec() };
+    let outcome = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+        .on_result(&emit)
+        .decode();
+    CACHED_AUDIO.with(|a| *a.borrow_mut() = Some(audio));
+    CACHED_FFT.with(|f| *f.borrow_mut() = Some(outcome.fft_cache));
+    CACHED_PHASE1.with(|p| *p.borrow_mut() = outcome.results.clone());
+    decode_and_register(outcome.results)
+}
+
+/// Phase 2 decode (i16), streaming: identical to `decode_phase2`, but calls
+/// `on_result(msg)` once per accepted SIC candidate as it's found.
+///
+/// Panics if `decode_phase1`/`decode_phase1_streaming` was not called first.
+#[wasm_bindgen]
+pub fn decode_phase2_streaming(profile: u8, on_result: Function) -> Vec<DecodedMessage> {
+    let cb = JsCallbackSync(on_result);
+    let emit = |r: &mfsk_core::ft8::decode::DecodeResult| emit_streamed(r, &cb);
+    let audio = CACHED_AUDIO.with(|a| a.borrow_mut().take())
+        .expect("decode_phase1/decode_phase1_streaming must run first");
+    let fft = CACHED_FFT.with(|f| f.borrow_mut().take());
+    let known = CACHED_PHASE1.with(|p| std::mem::take(&mut *p.borrow_mut()));
+    let mut req = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
+        .strictness(to_strictness(profile))
+        .known(&known)
+        .on_result(&emit);
+    if let Some(fft) = fft {
+        req = req.fft_cache(fft);
+    }
+    req = if wants_light_sic(profile) { req.sic_rounds(2) } else { req.sic_early() };
+    decode_and_register(req.decode().results)
+}
+
+/// Phase 1 decode (f32), streaming: `decode_phase1_f32` + per-candidate
+/// `on_result(msg)` delivery, for the live AudioWorklet path.
+#[wasm_bindgen]
+pub fn decode_phase1_streaming_f32(samples: &[f32], sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    let cb = JsCallbackSync(on_result);
+    let emit = |r: &mfsk_core::ft8::decode::DecodeResult| emit_streamed(r, &cb);
+    let audio = resample_f32_to_12k(samples, sample_rate);
+    let outcome = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.5, 200)
+        .on_result(&emit)
+        .decode();
+    CACHED_AUDIO.with(|a| *a.borrow_mut() = Some(audio));
+    CACHED_FFT.with(|f| *f.borrow_mut() = Some(outcome.fft_cache));
+    CACHED_PHASE1.with(|p| *p.borrow_mut() = outcome.results.clone());
+    decode_and_register(outcome.results)
+}
+
+/// Phase 2 decode (f32), streaming: `decode_phase2_f32` + per-candidate
+/// `on_result(msg)` delivery.
+///
+/// Panics if `decode_phase1_f32`/`decode_phase1_streaming_f32` was not
+/// called first.
+#[wasm_bindgen]
+pub fn decode_phase2_streaming_f32(profile: u8, on_result: Function) -> Vec<DecodedMessage> {
+    let cb = JsCallbackSync(on_result);
+    let emit = |r: &mfsk_core::ft8::decode::DecodeResult| emit_streamed(r, &cb);
+    let audio = CACHED_AUDIO.with(|a| a.borrow_mut().take())
+        .expect("decode_phase1_f32/decode_phase1_streaming_f32 must run first");
+    let fft = CACHED_FFT.with(|f| f.borrow_mut().take());
+    let known = CACHED_PHASE1.with(|p| std::mem::take(&mut *p.borrow_mut()));
+    let mut req = DecodeRequest::<Ft8>::new(&audio, 100.0, 3000.0, 1.0, 200)
+        .strictness(to_strictness(profile))
+        .known(&known)
+        .on_result(&emit);
+    if let Some(fft) = fft {
+        req = req.fft_cache(fft);
+    }
+    req = if wants_light_sic(profile) { req.sic_rounds(2) } else { req.sic_early() };
+    decode_and_register(req.decode().results)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // FT4 entry points
 //
 // FT4 reuses the 77-bit WSJT message format (same DecodedMessage struct,
@@ -452,6 +574,16 @@ fn ft4_decode_and_register(results: Vec<mfsk_core::ft4::decode::DecodeResult>) -
         }
     }
     out
+}
+
+/// FT4/FST4 twin of `emit_streamed` (both share `ft4::decode::DecodeResult`
+/// — mfsk-core #194). See `JsCallbackSync` for why the `unsafe impl Sync`
+/// bridge is sound in this build.
+fn ft4_emit_streamed(r: &mfsk_core::ft4::decode::DecodeResult, cb: &JsCallbackSync) {
+    if let Some(dm) = ft4_to_decoded(r.clone()) {
+        register_callsigns(&dm.message);
+        let _ = cb.0.call1(&JsValue::NULL, &JsValue::from(dm));
+    }
 }
 
 /// Decode a 7.5-second FT4 slot (wide-band scan). Non-12 kHz input is
@@ -510,6 +642,44 @@ pub fn decode_ft4_wav_subtract_f32(samples: &[f32], profile: u8, sample_rate: u3
         DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
             .strictness(to_strictness(profile))
             .sic_rounds(if wants_light_sic(profile) { 2 } else { 3 })
+            .decode()
+            .results,
+    )
+}
+
+/// Streaming sibling of [`decode_ft4_wav_subtract`]: same SIC decode, plus
+/// `on_result(msg)` once per accepted candidate as it's found (mfsk-core
+/// 0.9 `.on_result()`). `decode_ft4_wav_subtract` itself is untouched.
+#[wasm_bindgen]
+pub fn decode_ft4_wav_subtract_streaming(samples: &[i16], profile: u8, sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    let cb = JsCallbackSync(on_result);
+    let emit = |r: &mfsk_core::ft4::decode::DecodeResult| ft4_emit_streamed(r, &cb);
+    let audio = if sample_rate != 12000 {
+        resample_to_12k(samples, sample_rate)
+    } else {
+        samples.to_vec()
+    };
+    ft4_decode_and_register(
+        DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
+            .strictness(to_strictness(profile))
+            .sic_rounds(if wants_light_sic(profile) { 2 } else { 3 })
+            .on_result(&emit)
+            .decode()
+            .results,
+    )
+}
+
+/// f32 variant of [`decode_ft4_wav_subtract_streaming`].
+#[wasm_bindgen]
+pub fn decode_ft4_wav_subtract_streaming_f32(samples: &[f32], profile: u8, sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    let cb = JsCallbackSync(on_result);
+    let emit = |r: &mfsk_core::ft4::decode::DecodeResult| ft4_emit_streamed(r, &cb);
+    let audio = resample_f32_to_12k(samples, sample_rate);
+    ft4_decode_and_register(
+        DecodeRequest::<mfsk_core::ft4::Ft4>::new(&audio, 300.0, 2700.0, 1.2, 50)
+            .strictness(to_strictness(profile))
+            .sic_rounds(if wants_light_sic(profile) { 2 } else { 3 })
+            .on_result(&emit)
             .decode()
             .results,
     )
@@ -676,6 +846,54 @@ pub fn decode_fst4_wav_f32(samples: &[f32], submode: u8, profile: u8, sample_rat
     dispatch_fst4_submode!(submode, scan_body)
 }
 
+/// Streaming sibling of [`decode_fst4_wav`]: same wide-band scan, plus
+/// `on_result(msg)` once per accepted candidate as it's found — most
+/// valuable here of all four protocols, since FST4 slots run 15-300 s
+/// (vs FT8's 15 s), so the old "nothing until the whole slot is decoded"
+/// wait was the longest.
+#[wasm_bindgen]
+pub fn decode_fst4_wav_streaming(samples: &[i16], submode: u8, profile: u8, sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    let cb = JsCallbackSync(on_result);
+    let audio = if sample_rate != 12000 {
+        resample_to_12k(samples, sample_rate)
+    } else {
+        samples.to_vec()
+    };
+    macro_rules! scan_body {
+        ($p:ty) => {{
+            let emit = |r: &mfsk_core::ft4::decode::DecodeResult| ft4_emit_streamed(r, &cb);
+            ft4_decode_and_register(
+                DecodeRequest::<$p>::new(&audio, FST4_FLOW, FST4_FHIGH, FST4_SYNC_MIN, FST4_MAX_CAND)
+                    .strictness(to_strictness(profile))
+                    .on_result(&emit)
+                    .decode()
+                    .results,
+            )
+        }};
+    }
+    dispatch_fst4_submode!(submode, scan_body)
+}
+
+/// f32 variant of [`decode_fst4_wav_streaming`].
+#[wasm_bindgen]
+pub fn decode_fst4_wav_streaming_f32(samples: &[f32], submode: u8, profile: u8, sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    let cb = JsCallbackSync(on_result);
+    let audio = resample_f32_to_12k(samples, sample_rate);
+    macro_rules! scan_body {
+        ($p:ty) => {{
+            let emit = |r: &mfsk_core::ft4::decode::DecodeResult| ft4_emit_streamed(r, &cb);
+            ft4_decode_and_register(
+                DecodeRequest::<$p>::new(&audio, FST4_FLOW, FST4_FHIGH, FST4_SYNC_MIN, FST4_MAX_CAND)
+                    .strictness(to_strictness(profile))
+                    .on_result(&emit)
+                    .decode()
+                    .results,
+            )
+        }};
+    }
+    dispatch_fst4_submode!(submode, scan_body)
+}
+
 /// Encode a standard FST4 message (CALL1 CALL2 GRID/REPORT) at the
 /// requested sub-mode + audio centre frequency. `submode` 0..=4 picks
 /// the T/R period (15/30/60/120/300 s), which only changes the GFSK
@@ -706,19 +924,27 @@ pub fn encode_fst4(call1: &str, call2: &str, report: &str, freq_hz: f32, submode
 // WSPR
 // ───────────────────────────────────────────────────────────────────────
 
+fn wspr_to_decoded(d: &mfsk_core::wspr::WsprResult) -> DecodedMessage {
+    DecodedMessage {
+        freq_hz: d.freq_hz,
+        // dt_sec reported relative to the 12 kHz pipeline (post-resample).
+        dt_sec: d.start_sample as f32 / 12_000.0,
+        snr_db: 0.0,
+        hard_errors: 0,
+        pass: 0,
+        message: d.message.to_string(),
+    }
+}
+
 fn wspr_decode_to_messages(decodes: Vec<mfsk_core::wspr::WsprResult>) -> Vec<DecodedMessage> {
-    decodes
-        .into_iter()
-        .map(|d| DecodedMessage {
-            freq_hz: d.freq_hz,
-            // dt_sec reported relative to the 12 kHz pipeline (post-resample).
-            dt_sec: d.start_sample as f32 / 12_000.0,
-            snr_db: 0.0,
-            hard_errors: 0,
-            pass: 0,
-            message: d.message.to_string(),
-        })
-        .collect()
+    decodes.iter().map(wspr_to_decoded).collect()
+}
+
+/// WSPR twin of `emit_streamed`: WSPR has no callsign hash table (its
+/// messages are never hashed/compressed the way WSJT-77 ones can be), so
+/// this is just `wspr_to_decoded` + the JS call.
+fn wspr_emit_streamed(d: &mfsk_core::wspr::WsprResult, cb: &JsCallbackSync) {
+    let _ = cb.0.call1(&JsValue::NULL, &JsValue::from(wspr_to_decoded(d)));
 }
 
 /// Decode a 120-s WSPR slot. Non-12 kHz input is auto-resampled. Runs
@@ -739,6 +965,36 @@ pub fn decode_wspr_wav_f32(samples: &[f32], sample_rate: u32) -> Vec<DecodedMess
     use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
     let decodes = mfsk_core::wspr::decode::decode_scan_default(&audio, 12_000);
+    wspr_decode_to_messages(decodes)
+}
+
+/// Streaming sibling of [`decode_wspr_wav`]: same 120-s scan (mfsk-core's
+/// `decode_scan_streaming`, matching `decode_scan_default`'s params — see
+/// that function), plus `on_result(msg)` once per accepted candidate.
+/// WSPR's own delivery contract is the "parallel" one (both coarse passes
+/// run under rayon) — dedup against `known` doesn't apply here (WSPR has
+/// no cross-phase pipeline in this build), so unlike FT8/FT4/FST4's
+/// `.known()` gap this path was never at risk of a post-hoc retract.
+#[wasm_bindgen]
+pub fn decode_wspr_wav_streaming(samples: &[i16], sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
+    use mfsk_core::wspr::SearchParams;
+    let cb = JsCallbackSync(on_result);
+    let emit = |d: &mfsk_core::wspr::WsprResult| wspr_emit_streamed(d, &cb);
+    let audio = resample_i16_to_12k_f32(samples, sample_rate);
+    let decodes = mfsk_core::wspr::decode::decode_scan_streaming(&audio, 12_000, 0, &SearchParams::default(), &emit);
+    wspr_decode_to_messages(decodes)
+}
+
+/// f32 variant of [`decode_wspr_wav_streaming`].
+#[wasm_bindgen]
+pub fn decode_wspr_wav_streaming_f32(samples: &[f32], sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
+    use mfsk_core::wspr::SearchParams;
+    let cb = JsCallbackSync(on_result);
+    let emit = |d: &mfsk_core::wspr::WsprResult| wspr_emit_streamed(d, &cb);
+    let audio = resample_f32_to_12k_f32(samples, sample_rate);
+    let decodes = mfsk_core::wspr::decode::decode_scan_streaming(&audio, 12_000, 0, &SearchParams::default(), &emit);
     wspr_decode_to_messages(decodes)
 }
 
@@ -771,18 +1027,26 @@ pub fn encode_wspr(
 // at 0.0 (Q65 doesn't report a comparable SNR through this surface).
 // ───────────────────────────────────────────────────────────────────────
 
+fn q65_to_decoded(d: mfsk_core::q65::Q65Result) -> DecodedMessage {
+    DecodedMessage {
+        freq_hz: d.freq_hz,
+        dt_sec: d.start_sample as f32 / 12_000.0,
+        snr_db: d.snr_db,
+        hard_errors: d.iterations,
+        pass: 0,
+        message: d.message,
+    }
+}
+
 fn q65_decodes_to_messages(decodes: Vec<mfsk_core::q65::Q65Result>) -> Vec<DecodedMessage> {
-    decodes
-        .into_iter()
-        .map(|d| DecodedMessage {
-            freq_hz: d.freq_hz,
-            dt_sec: d.start_sample as f32 / 12_000.0,
-            snr_db: d.snr_db,
-            hard_errors: d.iterations,
-            pass: 0,
-            message: d.message,
-        })
-        .collect()
+    decodes.into_iter().map(q65_to_decoded).collect()
+}
+
+/// Q65 twin of `emit_streamed`: Q65 has no callsign hash table on this
+/// surface either (see `q65_decodes_to_messages`), so just `q65_to_decoded`
+/// (cloned — `on_result` only lends `&Q65Result`) + the JS call.
+fn q65_emit_streamed(d: &mfsk_core::q65::Q65Result, cb: &JsCallbackSync) {
+    let _ = cb.0.call1(&JsValue::NULL, &JsValue::from(q65_to_decoded(d.clone())));
 }
 
 macro_rules! dispatch_q65_submode {
@@ -920,6 +1184,114 @@ pub fn decode_q65_wav_fading(
                 .fading(fading, b90_ts)
                 .decode()
         };
+    }
+    let decodes = dispatch_q65_submode!(submode, scan_body);
+    q65_decodes_to_messages(decodes)
+}
+
+/// Streaming sibling of [`decode_q65_wav`]: same basic BP scan, plus
+/// `on_result(msg)` once per accepted candidate as it's found.
+#[wasm_bindgen]
+pub fn decode_q65_wav_streaming(samples: &[i16], submode: u8, sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
+    let cb = JsCallbackSync(on_result);
+    let audio = resample_i16_to_12k_f32(samples, sample_rate);
+    let params = q65_wav_search_params();
+    let nominal_mid = q65_slot_midpoint_samples(submode);
+    macro_rules! scan_body {
+        ($p:ty) => {{
+            let emit = |d: &mfsk_core::q65::Q65Result| q65_emit_streamed(d, &cb);
+            mfsk_core::q65::DecodeRequest::<$p>::new(&audio, 12_000, nominal_mid, params)
+                .on_result(&emit)
+                .decode()
+        }};
+    }
+    let decodes = dispatch_q65_submode!(submode, scan_body);
+    q65_decodes_to_messages(decodes)
+}
+
+/// f32 variant of [`decode_q65_wav_streaming`].
+#[wasm_bindgen]
+pub fn decode_q65_wav_streaming_f32(samples: &[f32], submode: u8, sample_rate: u32, on_result: Function) -> Vec<DecodedMessage> {
+    use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
+    let cb = JsCallbackSync(on_result);
+    let audio = resample_f32_to_12k_f32(samples, sample_rate);
+    let params = q65_wav_search_params();
+    let nominal_mid = q65_slot_midpoint_samples(submode);
+    macro_rules! scan_body {
+        ($p:ty) => {{
+            let emit = |d: &mfsk_core::q65::Q65Result| q65_emit_streamed(d, &cb);
+            mfsk_core::q65::DecodeRequest::<$p>::new(&audio, 12_000, nominal_mid, params)
+                .on_result(&emit)
+                .decode()
+        }};
+    }
+    let decodes = dispatch_q65_submode!(submode, scan_body);
+    q65_decodes_to_messages(decodes)
+}
+
+/// Streaming sibling of [`decode_q65_wav_fading`]: same fast-fading metric
+/// decode, plus `on_result(msg)` once per accepted candidate.
+#[wasm_bindgen]
+pub fn decode_q65_wav_fading_streaming(
+    samples: &[i16],
+    submode: u8,
+    b90_ts: f32,
+    model: u8,
+    sample_rate: u32,
+    on_result: Function,
+) -> Vec<DecodedMessage> {
+    use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
+    use mfsk_core::fec::qra::FadingModel;
+    let cb = JsCallbackSync(on_result);
+    let audio = resample_i16_to_12k_f32(samples, sample_rate);
+    let params = q65_wav_search_params();
+    let nominal_mid = q65_slot_midpoint_samples(submode);
+    let fading = match model {
+        1 => FadingModel::Lorentzian,
+        _ => FadingModel::Gaussian,
+    };
+    macro_rules! scan_body {
+        ($p:ty) => {{
+            let emit = |d: &mfsk_core::q65::Q65Result| q65_emit_streamed(d, &cb);
+            mfsk_core::q65::DecodeRequest::<$p>::new(&audio, 12_000, nominal_mid, params)
+                .fading(fading, b90_ts)
+                .on_result(&emit)
+                .decode()
+        }};
+    }
+    let decodes = dispatch_q65_submode!(submode, scan_body);
+    q65_decodes_to_messages(decodes)
+}
+
+/// f32 variant of [`decode_q65_wav_fading_streaming`].
+#[wasm_bindgen]
+pub fn decode_q65_wav_fading_streaming_f32(
+    samples: &[f32],
+    submode: u8,
+    b90_ts: f32,
+    model: u8,
+    sample_rate: u32,
+    on_result: Function,
+) -> Vec<DecodedMessage> {
+    use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
+    use mfsk_core::fec::qra::FadingModel;
+    let cb = JsCallbackSync(on_result);
+    let audio = resample_f32_to_12k_f32(samples, sample_rate);
+    let params = q65_wav_search_params();
+    let nominal_mid = q65_slot_midpoint_samples(submode);
+    let fading = match model {
+        1 => FadingModel::Lorentzian,
+        _ => FadingModel::Gaussian,
+    };
+    macro_rules! scan_body {
+        ($p:ty) => {{
+            let emit = |d: &mfsk_core::q65::Q65Result| q65_emit_streamed(d, &cb);
+            mfsk_core::q65::DecodeRequest::<$p>::new(&audio, 12_000, nominal_mid, params)
+                .fading(fading, b90_ts)
+                .on_result(&emit)
+                .decode()
+        }};
     }
     let decodes = dispatch_q65_submode!(submode, scan_body);
     q65_decodes_to_messages(decodes)

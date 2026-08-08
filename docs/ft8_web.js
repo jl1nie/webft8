@@ -171,6 +171,46 @@ export function decode_fst4_wav_f32(samples, submode, profile, sample_rate) {
 }
 
 /**
+ * Streaming sibling of [`decode_fst4_wav`]: same wide-band scan, plus
+ * `on_result(msg)` once per accepted candidate as it's found — most
+ * valuable here of all four protocols, since FST4 slots run 15-300 s
+ * (vs FT8's 15 s), so the old "nothing until the whole slot is decoded"
+ * wait was the longest.
+ * @param {Int16Array} samples
+ * @param {number} submode
+ * @param {number} profile
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_fst4_wav_streaming(samples, submode, profile, sample_rate, on_result) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_fst4_wav_streaming(ptr0, len0, submode, profile, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * f32 variant of [`decode_fst4_wav_streaming`].
+ * @param {Float32Array} samples
+ * @param {number} submode
+ * @param {number} profile
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_fst4_wav_streaming_f32(samples, submode, profile, sample_rate, on_result) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_fst4_wav_streaming_f32(ptr0, len0, submode, profile, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
  * FT4 sniper-mode decode at a target frequency with optional AP hints.
  * @param {Int16Array} samples
  * @param {number} target_freq
@@ -284,6 +324,42 @@ export function decode_ft4_wav_subtract_f32(samples, profile, sample_rate) {
 }
 
 /**
+ * Streaming sibling of [`decode_ft4_wav_subtract`]: same SIC decode, plus
+ * `on_result(msg)` once per accepted candidate as it's found (mfsk-core
+ * 0.9 `.on_result()`). `decode_ft4_wav_subtract` itself is untouched.
+ * @param {Int16Array} samples
+ * @param {number} profile
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_ft4_wav_subtract_streaming(samples, profile, sample_rate, on_result) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_ft4_wav_subtract_streaming(ptr0, len0, profile, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * f32 variant of [`decode_ft4_wav_subtract_streaming`].
+ * @param {Float32Array} samples
+ * @param {number} profile
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_ft4_wav_subtract_streaming_f32(samples, profile, sample_rate, on_result) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_ft4_wav_subtract_streaming_f32(ptr0, len0, profile, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
  * Phase 1 decode (i16): fast single-pass decode.
  *
  * Caches the resampled audio and FFT for a subsequent `decode_phase2` call.
@@ -312,6 +388,41 @@ export function decode_phase1_f32(samples, sample_rate) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.decode_phase1_f32(ptr0, len0, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Phase 1 decode (i16), streaming: identical to `decode_phase1`, but calls
+ * `on_result(msg)` once per accepted candidate as Phase 1 finds it, in
+ * addition to returning the full batch at the end.
+ * @param {Int16Array} samples
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_phase1_streaming(samples, sample_rate, on_result) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_phase1_streaming(ptr0, len0, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Phase 1 decode (f32), streaming: `decode_phase1_f32` + per-candidate
+ * `on_result(msg)` delivery, for the live AudioWorklet path.
+ * @param {Float32Array} samples
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_phase1_streaming_f32(samples, sample_rate, on_result) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_phase1_streaming_f32(ptr0, len0, sample_rate, on_result);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
@@ -350,6 +461,39 @@ export function decode_phase2(profile) {
  */
 export function decode_phase2_f32(profile) {
     const ret = wasm.decode_phase2_f32(profile);
+    var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+}
+
+/**
+ * Phase 2 decode (i16), streaming: identical to `decode_phase2`, but calls
+ * `on_result(msg)` once per accepted SIC candidate as it's found.
+ *
+ * Panics if `decode_phase1`/`decode_phase1_streaming` was not called first.
+ * @param {number} profile
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_phase2_streaming(profile, on_result) {
+    const ret = wasm.decode_phase2_streaming(profile, on_result);
+    var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+}
+
+/**
+ * Phase 2 decode (f32), streaming: `decode_phase2_f32` + per-candidate
+ * `on_result(msg)` delivery.
+ *
+ * Panics if `decode_phase1_f32`/`decode_phase1_streaming_f32` was not
+ * called first.
+ * @param {number} profile
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_phase2_streaming_f32(profile, on_result) {
+    const ret = wasm.decode_phase2_streaming_f32(profile, on_result);
     var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
@@ -423,6 +567,80 @@ export function decode_q65_wav_fading_f32(samples, submode, b90_ts, model, sampl
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.decode_q65_wav_fading_f32(ptr0, len0, submode, b90_ts, model, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Streaming sibling of [`decode_q65_wav_fading`]: same fast-fading metric
+ * decode, plus `on_result(msg)` once per accepted candidate.
+ * @param {Int16Array} samples
+ * @param {number} submode
+ * @param {number} b90_ts
+ * @param {number} model
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_q65_wav_fading_streaming(samples, submode, b90_ts, model, sample_rate, on_result) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_q65_wav_fading_streaming(ptr0, len0, submode, b90_ts, model, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * f32 variant of [`decode_q65_wav_fading_streaming`].
+ * @param {Float32Array} samples
+ * @param {number} submode
+ * @param {number} b90_ts
+ * @param {number} model
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_q65_wav_fading_streaming_f32(samples, submode, b90_ts, model, sample_rate, on_result) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_q65_wav_fading_streaming_f32(ptr0, len0, submode, b90_ts, model, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Streaming sibling of [`decode_q65_wav`]: same basic BP scan, plus
+ * `on_result(msg)` once per accepted candidate as it's found.
+ * @param {Int16Array} samples
+ * @param {number} submode
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_q65_wav_streaming(samples, submode, sample_rate, on_result) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_q65_wav_streaming(ptr0, len0, submode, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * f32 variant of [`decode_q65_wav_streaming`].
+ * @param {Float32Array} samples
+ * @param {number} submode
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_q65_wav_streaming_f32(samples, submode, sample_rate, on_result) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_q65_wav_streaming_f32(ptr0, len0, submode, sample_rate, on_result);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
@@ -585,6 +803,44 @@ export function decode_wspr_wav_f32(samples, sample_rate) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.decode_wspr_wav_f32(ptr0, len0, sample_rate);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Streaming sibling of [`decode_wspr_wav`]: same 120-s scan (mfsk-core's
+ * `decode_scan_streaming`, matching `decode_scan_default`'s params — see
+ * that function), plus `on_result(msg)` once per accepted candidate.
+ * WSPR's own delivery contract is the "parallel" one (both coarse passes
+ * run under rayon) — dedup against `known` doesn't apply here (WSPR has
+ * no cross-phase pipeline in this build), so unlike FT8/FT4/FST4's
+ * `.known()` gap this path was never at risk of a post-hoc retract.
+ * @param {Int16Array} samples
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_wspr_wav_streaming(samples, sample_rate, on_result) {
+    const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_wspr_wav_streaming(ptr0, len0, sample_rate, on_result);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * f32 variant of [`decode_wspr_wav_streaming`].
+ * @param {Float32Array} samples
+ * @param {number} sample_rate
+ * @param {Function} on_result
+ * @returns {DecodedMessage[]}
+ */
+export function decode_wspr_wav_streaming_f32(samples, sample_rate, on_result) {
+    const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_wspr_wav_streaming_f32(ptr0, len0, sample_rate, on_result);
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
@@ -760,6 +1016,10 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_344f42d3211c4765: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
+        __wbg_call_a6e5c5dce5018821: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = arg0.call(arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_decodedmessage_new: function(arg0) {
             const ret = DecodedMessage.__wrap(arg0);
             return ret;
@@ -788,6 +1048,12 @@ function __wbg_get_imports() {
 const DecodedMessageFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decodedmessage_free(ptr, 1));
+
+function addToExternrefTable0(obj) {
+    const idx = wasm.__externref_table_alloc();
+    wasm.__wbindgen_externrefs.set(idx, obj);
+    return idx;
+}
 
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
@@ -839,6 +1105,15 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function handleError(f, args) {
+    try {
+        return f.apply(this, args);
+    } catch (e) {
+        const idx = addToExternrefTable0(e);
+        wasm.__wbindgen_exn_store(idx);
+    }
 }
 
 function passArray16ToWasm0(arg, malloc) {

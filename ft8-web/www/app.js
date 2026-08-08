@@ -20,7 +20,7 @@ const decodeWorkerReadyPromise = new Promise((resolve) => {
   decodeWorker.addEventListener('message', onReady);
 });
 
-// Pending request map: id → { resolve, reject }
+// Pending request map: id → { resolve, reject, onPartial }
 const _decodePending = new Map();
 let _decodeNextId = 1;
 decodeWorker.addEventListener('message', (e) => {
@@ -28,6 +28,13 @@ decodeWorker.addEventListener('message', (e) => {
   if (msg?.id == null) return; // ignore 'ready' and other broadcasts
   const cb = _decodePending.get(msg.id);
   if (!cb) return;
+  // Partial (mfsk-core 0.9 `.on_result()` streaming, see decode-worker.js's
+  // STREAMING_FNS): forward to onPartial and keep the entry — more of these,
+  // or the final ok/error reply, may still follow for this id.
+  if (msg.type === 'partial') {
+    cb.onPartial?.(msg.result);
+    return;
+  }
   _decodePending.delete(msg.id);
   if (msg.ok) cb.resolve(msg.results);
   else cb.reject(new Error(msg.error));
@@ -36,11 +43,16 @@ decodeWorker.addEventListener('message', (e) => {
 /**
  * Call a WASM decode function inside the worker. Returns a Promise that
  * resolves to plain-object decoded messages (NOT WASM-backed, no .free()).
+ *
+ * `onPartial(result)`, if given, is called once per candidate for the
+ * `*_streaming` WASM fns (mfsk-core 0.9 `.on_result()`) as they're found,
+ * ahead of the resolved batch — see decode-worker.js's STREAMING_FNS.
+ * Ignored for non-streaming fns (they never emit `partial` messages).
  */
-function workerDecode(fn, args) {
+function workerDecode(fn, args, onPartial) {
   const id = _decodeNextId++;
   return new Promise((resolve, reject) => {
-    _decodePending.set(id, { resolve, reject });
+    _decodePending.set(id, { resolve, reject, onPartial });
     decodeWorker.postMessage({ id, fn, args });
   });
 }
@@ -1066,8 +1078,10 @@ async function runDecode(samples, sampleRate, onPartial) {
   let fnDecodeName, fnSniperName, fnSubtractName, fnPhase1Name, fnPhase2Name;
   if (fst4) {
     // FST4 wide-band scan (no SIC / sniper / AP upstream). Sub-mode +
-    // profile passed to decode_fst4_wav below.
-    fnDecodeName   = isF32 ? 'decode_fst4_wav_f32' : 'decode_fst4_wav';
+    // profile passed to decode_fst4_wav_streaming below. `_streaming`
+    // (mfsk-core 0.9 `.on_result()`) matters most here of all protocols —
+    // FST4 slots run 15-300s, the longest "nothing shown" wait of any mode.
+    fnDecodeName   = isF32 ? 'decode_fst4_wav_streaming_f32' : 'decode_fst4_wav_streaming';
     fnSniperName   = null;
     fnSubtractName = null;
     fnPhase1Name   = null;
@@ -1078,34 +1092,38 @@ async function runDecode(samples, sampleRate, onPartial) {
     // covers the terrestrial / ionoscatter common case.
     const fading = currentQ65Fading();
     if (fading) {
-      fnDecodeName = isF32 ? 'decode_q65_wav_fading_f32' : 'decode_q65_wav_fading';
+      fnDecodeName = isF32 ? 'decode_q65_wav_fading_streaming_f32' : 'decode_q65_wav_fading_streaming';
     } else {
-      fnDecodeName = isF32 ? 'decode_q65_wav_f32'        : 'decode_q65_wav';
+      fnDecodeName = isF32 ? 'decode_q65_wav_streaming_f32'        : 'decode_q65_wav_streaming';
     }
     fnSniperName   = null; // no sniper / Phase1+2 / subtract for Q65 — WAV-drop path only
     fnSubtractName = null;
     fnPhase1Name   = null;
     fnPhase2Name   = null;
   } else if (wspr) {
-    fnDecodeName   = isF32 ? 'decode_wspr_wav_f32' : 'decode_wspr_wav';
+    fnDecodeName   = isF32 ? 'decode_wspr_wav_streaming_f32' : 'decode_wspr_wav_streaming';
     fnSniperName   = null; // no sniper mode for WSPR yet (coarse-only path)
     fnSubtractName = null;
     fnPhase1Name   = null;
     fnPhase2Name   = null;
   } else if (ft4) {
     // decode_ft4_wav/_f32 (no SIC) are unused here — every profile tier
-    // now runs some SIC strength via fnSubtractName (see decode_ft4_wav_subtract).
-    fnSniperName   = isF32 ? 'decode_ft4_sniper_f32'       : 'decode_ft4_sniper';
-    fnSubtractName = isF32 ? 'decode_ft4_wav_subtract_f32' : 'decode_ft4_wav_subtract';
+    // now runs some SIC strength via fnSubtractName (see
+    // decode_ft4_wav_subtract_streaming).
+    fnSniperName   = isF32 ? 'decode_ft4_sniper_f32'                 : 'decode_ft4_sniper';
+    fnSubtractName = isF32 ? 'decode_ft4_wav_subtract_streaming_f32' : 'decode_ft4_wav_subtract_streaming';
     fnPhase1Name   = null;
     fnPhase2Name   = null;
   } else {
     // decode_wav/_f32 (no SIC) are unused here — every profile tier runs
-    // the Phase 1 + Phase 2 pipeline below (see decode_phase2).
+    // the Phase 1 + Phase 2 pipeline below (see decode_phase2). The
+    // `_streaming` siblings (mfsk-core 0.9 `.on_result()`) stream each
+    // candidate as it's found instead of only at phase end — see the FT8
+    // branch below.
     fnSniperName   = isF32 ? 'decode_sniper_f32'  : 'decode_sniper';
     fnSubtractName = null;
-    fnPhase1Name   = isF32 ? 'decode_phase1_f32'  : 'decode_phase1';
-    fnPhase2Name   = isF32 ? 'decode_phase2_f32'  : 'decode_phase2';
+    fnPhase1Name   = isF32 ? 'decode_phase1_streaming_f32'  : 'decode_phase1_streaming';
+    fnPhase2Name   = isF32 ? 'decode_phase2_streaming_f32'  : 'decode_phase2_streaming';
   }
 
   // Decode profile (0=Fast/1=Normal/2=Deep) selects both DecodeStrictness
@@ -1118,10 +1136,20 @@ async function runDecode(samples, sampleRate, onPartial) {
   const profile = subDisabledAuto ? 0 : userProfile;
   const sr = sampleRate || capture.getSampleRate();
 
+  // Shared by every `_streaming` WASM call below (mfsk-core 0.9
+  // `.on_result()`): fires once per accepted candidate as the decoder finds
+  // it, well before the phase/call itself finishes — true per-candidate
+  // delivery instead of "whole call done" batch-only display. pushResults
+  // (passed in as onPartial) takes an array, hence `[r]`. Duplicate-message
+  // firings from the "default wide-band" strategies (FST4, FT8 Phase 1) are
+  // already de-duped upstream in decode-worker.js's `seen` Set — see its
+  // comment for why that class of duplicate is expected/documented, not a bug.
+  const onCandidate = (r) => { if (onPartial) onPartial([r]); };
+
   let results;
   if (fst4) {
     // FST4: one-shot wide-band scan. (samples, submode, profile, sample_rate)
-    results = await workerDecode(fnDecodeName, [samples, currentFst4Submode(), profile, sr]);
+    results = await workerDecode(fnDecodeName, [samples, currentFst4Submode(), profile, sr], onCandidate);
   } else if (q65) {
     // Q65: one-shot scan. Sub-mode (0..5) is a required parameter
     // both for the basic BP path and the fast-fading variant.
@@ -1130,34 +1158,31 @@ async function runDecode(samples, sampleRate, onPartial) {
       // (samples, submode, b90_ts, model, sample_rate)
       results = await workerDecode(fnDecodeName, [
         samples, submode, currentQ65B90(), currentQ65FadingModel(), sr,
-      ]);
+      ], onCandidate);
     } else {
       // (samples, submode, sample_rate)
-      results = await workerDecode(fnDecodeName, [samples, submode, sr]);
+      results = await workerDecode(fnDecodeName, [samples, submode, sr], onCandidate);
     }
   } else if (wspr) {
     // WSPR: one-shot scan. No subtract, no phase split, no AP yet.
     // sampleRate argument uses the same signature convention but the
     // decoder takes only (samples, sample_rate).
-    results = await workerDecode(fnDecodeName, [samples, sr]);
+    results = await workerDecode(fnDecodeName, [samples, sr], onCandidate);
   } else if (ft4) {
     // FT4 one-shot decode with profile-selected strictness + SIC rounds
-    // (2 for Fast, 3 for Normal/Deep — see decode_ft4_wav_subtract).
-    results = await workerDecode(fnSubtractName, [samples, profile, sr]);
+    // (2 for Fast, 3 for Normal/Deep — see decode_ft4_wav_subtract_streaming).
+    results = await workerDecode(fnSubtractName, [samples, profile, sr], onCandidate);
   } else {
     // FT8 pipelined decode: Phase 1 (fast, ~10-20ms) + Phase 2 (SIC,
     // budget permitting — sic_rounds(2) for Fast, sic_early() for
     // Normal/Deep, see decode_phase2). Phase 1 caches audio + FFT in
     // WASM thread_local; Phase 2 reuses them.
-    const p1 = await workerDecode(fnPhase1Name, [samples, sr]);
+    const p1 = await workerDecode(fnPhase1Name, [samples, sr], onCandidate);
     const p1Ms = performance.now() - t0;
-
-    // Show Phase 1 results immediately while Phase 2 runs
-    if (onPartial && p1.length > 0) onPartial(p1);
 
     let p2 = [];
     if (BUDGET_MS - p1Ms > 200) {
-      p2 = await workerDecode(fnPhase2Name, [profile]);
+      p2 = await workerDecode(fnPhase2Name, [profile], onCandidate);
     }
     results = [...p1, ...p2];
   }
