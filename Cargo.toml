@@ -32,8 +32,15 @@ resolver = "2"
 # threads the already-computed refine through instead (measured wall-clock
 # neutral on the one golden file profiled — eliminates dead recompute, but
 # that file's redundant-candidate count was too small to show above noise).
+# Also past 2d94ff4 (issue #246): rustfft's `wasm_simd` Cargo feature was
+# never enabled for the wasm32 build — its own stale comment claimed it was
+# "on by default" like avx/sse/neon, but wasm_simd is opt-in-only, so
+# `FftPlanner::new()` was silently falling back to `FftPlannerScalar` the
+# whole time. A/B'd here first (ft8-web/Cargo.toml, Cargo feature
+# unification, ~1.11x on decode_wav) before landing upstream as a
+# target-specific dependency override — no caller action needed now.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "22fe013573094a3dd22a618c0e32f0f6c650ff73", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "4e3c7ce331c4362be680acf83870c805e51f7be5", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
