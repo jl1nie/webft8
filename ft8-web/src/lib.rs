@@ -114,15 +114,35 @@ fn to_strictness(level: u8) -> DecodeStrictness {
 }
 
 /// GUI decode-profile levels (0=Fast/1=Normal/2=Deep) pick both
-/// `to_strictness` above and SIC strength: Fast uses a light
-/// `.sic_rounds(2)` pass (mfsk-core issues #220/#221 — full `.sic_early()`
-/// buys real recall over `.sic_rounds(2)` only against a target masked by
-/// a strong same-neighbourhood interferer, which light SIC can't rescue
-/// regardless of round count; on generic crowded-band audio rounds(2)
-/// already captures most of the gain at a fraction of the cost), Normal/Deep
-/// use the full SIC strategy.
+/// `to_strictness` above and SIC strength.
+///
+/// **FT4** (still the original 3-tier split, mfsk-core issues #220/#221):
+/// Fast uses a light `.sic_rounds(2)` pass — full `.sic_early()` buys real
+/// recall over `.sic_rounds(2)` only against a target masked by a strong
+/// same-neighbourhood interferer, which light SIC can't rescue regardless
+/// of round count; on generic crowded-band audio rounds(2) already
+/// captures most of the gain at a fraction of the cost — Normal/Deep use
+/// the full SIC strategy (`wants_normal_sic`/FT4's own `sic_rounds(3)`
+/// call sites, not this fn).
 fn wants_light_sic(profile: u8) -> bool {
     profile == 0
+}
+
+/// **FT8 only** (`decode_phase2`/`_f32`/`_streaming`/`_streaming_f32`):
+/// Fast is Phase 1 alone, no SIC at all — `app.js`'s FT8 branch skips the
+/// Phase 2 call entirely when `profile == 0`, not just skipping SIC inside
+/// it, since re-running the wideband scan (even with zero SIC rounds)
+/// costs most of a second Phase 1 regardless of round count (measured:
+/// no-SIC decode_wav ~90ms vs. any `.sic_rounds(n>=1)` pass ~580ms+ on
+/// qso3_busy.wav — the fixed cost of one more wideband BP/OSD sweep, not
+/// the round count, dominates). Normal gets a single light SIC round
+/// (`.sic_rounds(1)`, this fn) — measured 91% of Deep's total recall for
+/// ~half Deep's time on the same file; Deep keeps the full `.sic_early()`
+/// strategy. Distinct from `wants_light_sic` above (FT4's own, unrelated,
+/// 2-tier split) — named separately rather than overloading that fn's
+/// meaning across two different ladders.
+fn wants_normal_sic(profile: u8) -> bool {
+    profile == 1
 }
 
 fn decode_and_register(results: Vec<mfsk_core::ft8::decode::DecodeResult>) -> Vec<DecodedMessage> {
@@ -386,7 +406,11 @@ pub fn decode_phase1(samples: &[i16], sample_rate: u32) -> Vec<DecodedMessage> {
 }
 
 /// Phase 2 decode (i16): SIC using cached Phase 1 state, strength picked by
-/// the GUI decode-profile level (see `wants_light_sic`).
+/// the GUI decode-profile level (see `wants_normal_sic`). `profile == 0`
+/// (Fast) is not specially handled here — callers wanting Fast's "Phase 1
+/// alone, no SIC at all" semantics skip calling this at all (see
+/// `wants_normal_sic`'s doc comment); calling it with `profile == 0`
+/// anyway just runs the full `.sic_early()` strategy, same as Deep.
 ///
 /// Panics if `decode_phase1` was not called first. Prior to mfsk-core
 /// commit fe286cc / issue #191, this call went through a separate,
@@ -407,7 +431,7 @@ pub fn decode_phase2(profile: u8) -> Vec<DecodedMessage> {
     if let Some(fft) = fft {
         req = req.fft_cache(fft);
     }
-    req = if wants_light_sic(profile) { req.sic_rounds(2) } else { req.sic_early() };
+    req = if wants_normal_sic(profile) { req.sic_rounds(1) } else { req.sic_early() };
     decode_and_register(req.decode().results)
 }
 
@@ -426,7 +450,11 @@ pub fn decode_phase1_f32(samples: &[f32], sample_rate: u32) -> Vec<DecodedMessag
 }
 
 /// Phase 2 decode (f32): SIC using cached Phase 1 state, strength picked by
-/// the GUI decode-profile level (see `wants_light_sic`).
+/// the GUI decode-profile level (see `wants_normal_sic`). `profile == 0`
+/// (Fast) is not specially handled here — callers wanting Fast's "Phase 1
+/// alone, no SIC at all" semantics skip calling this at all (see
+/// `wants_normal_sic`'s doc comment); calling it with `profile == 0`
+/// anyway just runs the full `.sic_early()` strategy, same as Deep.
 ///
 /// Panics if `decode_phase1_f32` was not called first. See `decode_phase2`
 /// for why this now shares the same staged-checkpoint SIC engine as
@@ -443,7 +471,7 @@ pub fn decode_phase2_f32(profile: u8) -> Vec<DecodedMessage> {
     if let Some(fft) = fft {
         req = req.fft_cache(fft);
     }
-    req = if wants_light_sic(profile) { req.sic_rounds(2) } else { req.sic_early() };
+    req = if wants_normal_sic(profile) { req.sic_rounds(1) } else { req.sic_early() };
     decode_and_register(req.decode().results)
 }
 
@@ -493,7 +521,7 @@ pub fn decode_phase2_streaming(profile: u8, on_result: Function) -> Vec<DecodedM
     if let Some(fft) = fft {
         req = req.fft_cache(fft);
     }
-    req = if wants_light_sic(profile) { req.sic_rounds(2) } else { req.sic_early() };
+    req = if wants_normal_sic(profile) { req.sic_rounds(1) } else { req.sic_early() };
     decode_and_register(req.decode().results)
 }
 
@@ -533,7 +561,7 @@ pub fn decode_phase2_streaming_f32(profile: u8, on_result: Function) -> Vec<Deco
     if let Some(fft) = fft {
         req = req.fft_cache(fft);
     }
-    req = if wants_light_sic(profile) { req.sic_rounds(2) } else { req.sic_early() };
+    req = if wants_normal_sic(profile) { req.sic_rounds(1) } else { req.sic_early() };
     decode_and_register(req.decode().results)
 }
 

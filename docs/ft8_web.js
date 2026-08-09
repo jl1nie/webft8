@@ -430,7 +430,11 @@ export function decode_phase1_streaming_f32(samples, sample_rate, on_result) {
 
 /**
  * Phase 2 decode (i16): SIC using cached Phase 1 state, strength picked by
- * the GUI decode-profile level (see `wants_light_sic`).
+ * the GUI decode-profile level (see `wants_normal_sic`). `profile == 0`
+ * (Fast) is not specially handled here — callers wanting Fast's "Phase 1
+ * alone, no SIC at all" semantics skip calling this at all (see
+ * `wants_normal_sic`'s doc comment); calling it with `profile == 0`
+ * anyway just runs the full `.sic_early()` strategy, same as Deep.
  *
  * Panics if `decode_phase1` was not called first. Prior to mfsk-core
  * commit fe286cc / issue #191, this call went through a separate,
@@ -451,7 +455,11 @@ export function decode_phase2(profile) {
 
 /**
  * Phase 2 decode (f32): SIC using cached Phase 1 state, strength picked by
- * the GUI decode-profile level (see `wants_light_sic`).
+ * the GUI decode-profile level (see `wants_normal_sic`). `profile == 0`
+ * (Fast) is not specially handled here — callers wanting Fast's "Phase 1
+ * alone, no SIC at all" semantics skip calling this at all (see
+ * `wants_normal_sic`'s doc comment); calling it with `profile == 0`
+ * anyway just runs the full `.sic_early()` strategy, same as Deep.
  *
  * Panics if `decode_phase1_f32` was not called first. See `decode_phase2`
  * for why this now shares the same staged-checkpoint SIC engine as

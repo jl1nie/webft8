@@ -1173,15 +1173,26 @@ async function runDecode(samples, sampleRate, onPartial) {
     // (2 for Fast, 3 for Normal/Deep — see decode_ft4_wav_subtract_streaming).
     results = await workerDecode(fnSubtractName, [samples, profile, sr], onCandidate);
   } else {
-    // FT8 pipelined decode: Phase 1 (fast, ~10-20ms) + Phase 2 (SIC,
-    // budget permitting — sic_rounds(2) for Fast, sic_early() for
-    // Normal/Deep, see decode_phase2). Phase 1 caches audio + FFT in
-    // WASM thread_local; Phase 2 reuses them.
+    // FT8 pipelined decode: Phase 1 (wideband scan, no SIC, ~90ms on
+    // qso3_busy.wav) + Phase 2 (SIC, see decode_phase2/wants_normal_sic:
+    // sic_rounds(1) for Normal, sic_early() for Deep). Phase 1 caches
+    // audio + FFT in WASM thread_local; Phase 2 reuses them.
+    //
+    // Fast (profile 0) skips the Phase 2 call *entirely* rather than
+    // running it with zero SIC rounds — measured on qso3_busy.wav, even
+    // one SIC round costs nearly as much as Phase 1 itself (~580ms vs
+    // ~90ms): the fixed cost of one more wideband BP/OSD sweep over the
+    // subtracted audio, not the round count, dominates. So Fast is
+    // genuinely ~90ms end to end, not "~580ms with round count creeping
+    // toward zero" — this is also what subDisabledAuto's adaptive
+    // shedding (forces profile 0 under budget pressure) now falls back
+    // to, giving Scout mode a real last-resort rung instead of the old
+    // Fast's own ~720ms sic_rounds(2) floor.
     const p1 = await workerDecode(fnPhase1Name, [samples, sr], onCandidate);
     const p1Ms = performance.now() - t0;
 
     let p2 = [];
-    if (BUDGET_MS - p1Ms > 200) {
+    if (profile !== 0 && BUDGET_MS - p1Ms > 200) {
       p2 = await workerDecode(fnPhase2Name, [profile], onCandidate);
     }
     results = [...p1, ...p2];
