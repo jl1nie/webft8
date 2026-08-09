@@ -596,12 +596,17 @@ const qso = new QsoManager({
 });
 qso.maxRetries = parseInt(retryLimitInput.value, 10) || 15;
 
+// Persist on every keystroke (not just 'change'/blur below) — a callsign
+// typed and never blurred (e.g. straight into Start, or a mobile tab
+// switch) used to vanish on reload because 'change' never fired.
 myCallInput.addEventListener('input', () => {
   myCallInput.value = myCallInput.value.toUpperCase();
+  localStorage.setItem('webft8-mycall', myCallInput.value);
   qso.setMyInfo(myCallInput.value, myGridInput.value);
 });
 myGridInput.addEventListener('input', () => {
   myGridInput.value = myGridInput.value.toUpperCase();
+  localStorage.setItem('webft8-mygrid', myGridInput.value);
   qso.setMyInfo(myCallInput.value, myGridInput.value);
 });
 
