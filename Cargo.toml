@@ -15,9 +15,10 @@ resolver = "2"
 # revoke-less-retract dedup-gate fix, the FST4 pre-decode near-duplicate dedup
 # for issue #244, and the wasm_simd rustfft enablement for issue #246).
 #
-# Pinned to af4766e for five unreleased fixes — two FT8 false-decode and two FT8
-# SNR calibration (issue #253), one FT4 SNR calibration (issue #255). This is a
-# field-verification deploy — revert to `version = "0.9.x"` once they ship.
+# Pinned to 81ea2d0 for the unreleased issue #253/#255/#256 run: two FT8
+# false-decode fixes and two FT8 SNR calibrations (#253), then real WSJT-X SNR
+# formulas for FT4, FST4 and Q65 (#255/#256). This is a field-verification
+# deploy — revert to `version = "0.9.x"` once they ship.
 #
 # The headline fix (65986bc) is aimed squarely at this project: the false decode
 # it eliminates (7Y8CIH HN1GD OP30 @509 Hz, hard_errors=31, on
@@ -84,14 +85,41 @@ resolver = "2"
 # slope), so the residual is a calibration constant rather than a scale error.
 # Part of that -1.5 dB may be the simulator's own convention rather than the
 # decoder's — upstream's check against a real jt9 -5 build put the residual near
-# 1 dB, which is consistent. FST4 keeps the old heuristic for now (its real
-# formula is submode-dependent, tracked separately under issue #255), so this
-# app's FST4 SNR stays uncalibrated.
+# 1 dB, which is consistent.
 #
-# FT8 verified unaffected by af4766e rather than assumed: qso3_busy.wav through
-# the phase1 + phase2(Deep) pipeline gives bit-identical output to ee12d47 on
-# all 21 decodes. The FT4 fix lives in engine/pipeline.rs's generic path, which
-# FT8 (own decode.rs/decode_block engines) never enters.
+# dd934b8..81ea2d0 then finish the sweep. dd934b8 replaces af4766e's three ad-hoc
+# `if P::ID == Ft4` branches with a `GenericPipelineProtocol::snr_db` trait
+# method, which also picks up a 4th call site af4766e had missed —
+# `msg::pipeline_ap::finalise_result`, i.e. the AP/sniper path this app reaches
+# through `decode_ft4_sniper`. e1200b6 lands FST4's real formula (a jt9-verified
+# port with the NDOWN scale correction, wired via the same trait); 0458481 +
+# 81ea2d0 do the same for Q65's `q65_snr` on both the single-slot and
+# multi-period averaging paths.
+#
+# Measured here against synthetic signals at known WSJT-X-convention SNRs
+# (ft8-bench's FT4 simulator; an equivalent local FST4-60 synth using
+# fst4::encode + the same AWGN convention), through each entry point's own
+# request shape — mean error, af4766e → 81ea2d0:
+#
+#   FT4 wide-band (decode_ft4_wav)     -1.51 dB → -1.51 dB   (already fixed)
+#   FT4 sniper    (decode_ft4_sniper)  -6.95 dB → +0.92 dB   (dd934b8's 4th site)
+#   FST4-60       (decode_fst4_wav)    +1.93 dB → -0.39 dB   (e1200b6)
+#
+# So the sniper path really was still on the old heuristic in the af4766e build
+# this repo shipped, and both new formulas do reach this app's entry points —
+# checked because 21c1be7 taught us an upstream SNR fix can land in a code path
+# we never enter. Note the two FT4 paths now sit ~2.4 dB apart from each other
+# (wide-band -1.5, sniper +0.9) where before they shared one metric; both are
+# closer to truth than before, but they are no longer mutually consistent.
+#
+# Q65 (0458481/81ea2d0) is NOT verified locally — no Q65 sample here and no
+# synth harness for it — so this app's Q65 SNR rests on upstream's own tests.
+#
+# FT8 verified unaffected by all of it rather than assumed: qso3_busy.wav
+# through the phase1 + phase2(Deep) pipeline gives bit-identical output to
+# ee12d47 on all 21 decodes. FT4/FST4/Q65 work lives in engine/pipeline.rs's
+# generic path plus per-protocol modules, none of which FT8's own
+# decode.rs/decode_block engines enter.
 #
 # Not display-only: qso.js's `setRxSnr` → `_autoReport` feeds the decoded SNR
 # straight into the signal report we transmit, so this shifts what this station
@@ -101,7 +129,7 @@ resolver = "2"
 # absolute SNR threshold or filter exists anywhere, so nothing silently changes
 # what gets decoded or displayed.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "af4766eb405b56f1dd5a5f1d3ef0107600835f6e", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "81ea2d0ba491ddc2d71b4192e93517005d5c1a6e", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
