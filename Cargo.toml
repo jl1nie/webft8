@@ -9,38 +9,16 @@ exclude = [
 ]
 resolver = "2"
 
-# mfsk-core 0.9.0 is unreleased (CHANGELOG "0.9.0 (unreleased)") — pin to its
-# main HEAD by rev until it ships on crates.io, then switch back to a plain
-# version pin. Brings `.on_result()` streaming delivery (issue #204, PR
-# #237/#239/#240), which ft8-web's decode_phase1_streaming/decode_phase2_streaming
-# consume (see ft8-web/src/lib.rs). Pinned past commit 1a4cbda ("close
-# revoke-less-retract gap in .known()+on_result") specifically — without
-# it, decode_phase2's SIC path (.sic_early(), ft8/decode.rs's
-# decode_frame_subtract_staged_with_ap_inner) could stream a candidate via
-# on_result that a later post-hoc `.known(...)` retain then dropped from
-# the final Vec (reproduced on ft8-bench/testdata/qso3_busy.wav: on_result
-# fired for K1BZM DK8NE -10 / XE2X HA2NP RR73, neither present in the
-# batch result). b087902 (xsnr2 atomicity) alone did not cover this path —
-# 1a4cbda threads `known` into the dedup gate itself, closing it for real.
-# Also past d22d1cf+22fe013 (FST4 pre-decode near-duplicate dedup, issue
-# #244 — reproduced on this project's decode_fst4_wav_streaming: on_result
-# fired 9x for one real signal, all but one dropped by post-decode dedup;
-# see ft8-web/www/decode-worker.js's `seen` Set for the client-side
-# mitigation that stays regardless). d22d1cf's first cut discarded the
-# refine it computed for the dedup decision, so every surviving candidate
-# recomputed it a second time in process_candidate_basic_impl; 22fe013
-# threads the already-computed refine through instead (measured wall-clock
-# neutral on the one golden file profiled — eliminates dead recompute, but
-# that file's redundant-candidate count was too small to show above noise).
-# Also past 2d94ff4 (issue #246): rustfft's `wasm_simd` Cargo feature was
-# never enabled for the wasm32 build — its own stale comment claimed it was
-# "on by default" like avx/sse/neon, but wasm_simd is opt-in-only, so
-# `FftPlanner::new()` was silently falling back to `FftPlannerScalar` the
-# whole time. A/B'd here first (ft8-web/Cargo.toml, Cargo feature
-# unification, ~1.11x on decode_wav) before landing upstream as a
-# target-specific dependency override — no caller action needed now.
+# mfsk-core 0.9.0 shipped on crates.io 2026-08-10 — switched back from the
+# git-rev pin (was 4e3c7ce3, confirmed an ancestor of the v0.9.0 tag) to a
+# plain version pin. Brings `.on_result()` streaming delivery (issue #204,
+# PR #237/#239/#240) that ft8-web's decode_phase1_streaming/
+# decode_phase2_streaming consume (see ft8-web/src/lib.rs), the
+# revoke-less-retract dedup-gate fix (1a4cbda), the FST4 pre-decode
+# near-duplicate dedup (issue #244, d22d1cf/22fe013), and the wasm_simd
+# rustfft feature enablement (issue #246, 2d94ff4).
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "4e3c7ce331c4362be680acf83870c805e51f7be5", default-features = false }
+mfsk-core = { version = "0.9.0", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
