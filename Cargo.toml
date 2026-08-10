@@ -9,16 +9,36 @@ exclude = [
 ]
 resolver = "2"
 
-# mfsk-core 0.9.0 shipped on crates.io 2026-08-10 — switched back from the
-# git-rev pin (was 4e3c7ce3, confirmed an ancestor of the v0.9.0 tag) to a
-# plain version pin. Brings `.on_result()` streaming delivery (issue #204,
-# PR #237/#239/#240) that ft8-web's decode_phase1_streaming/
-# decode_phase2_streaming consume (see ft8-web/src/lib.rs), the
-# revoke-less-retract dedup-gate fix (1a4cbda), the FST4 pre-decode
-# near-duplicate dedup (issue #244, d22d1cf/22fe013), and the wasm_simd
-# rustfft feature enablement (issue #246, 2d94ff4).
+# TEMPORARY git-rev pin ahead of the 0.9.0 crates.io release (which stays the
+# baseline: 0.9.0 brought `.on_result()` streaming delivery for issue #204 that
+# ft8-web's decode_phase1_streaming/decode_phase2_streaming consume, the
+# revoke-less-retract dedup-gate fix, the FST4 pre-decode near-duplicate dedup
+# for issue #244, and the wasm_simd rustfft enablement for issue #246).
+#
+# Pinned to 65986bc for the two unreleased issue #253 false-decode fixes. This
+# is a field-verification deploy — revert to `version = "0.9.x"` once they ship.
+#
+# The headline fix (65986bc) is aimed squarely at this project: the false decode
+# it eliminates (7Y8CIH HN1GD OP30 @509 Hz, hard_errors=31, on
+# ft8-bench/testdata/qso3_busy.wav) was originally reproduced *through*
+# decode_phase2's exact pipeline shape — Deep + `.known()` + `.fft_cache()` +
+# `.sic_early()`. Root cause was `__staged_sic` pre-subtracting the caller's
+# `.known()` list from the whole buffer before checkpoint A, the nzhsym=41
+# zero-tailed early pass; real jt9 always runs that pass on raw unmodified
+# audio, so the pre-subtraction was an mfsk-core-original composition with no
+# WSJT-X counterpart, and it manufactured a CRC-14 false accept. The fix scopes
+# pre-subtraction to checkpoints B/C only (they rebuild buffers from the
+# original audio anyway), so "known signals don't mask weaker ones" survives.
+# Upstream's controlled A/B: 7 results incl. the false one before, 22 results
+# and none false after.
+#
+# 3a91c74 additionally retunes DecodeStrictness::Deep's ft8_nharderrors_max
+# 40 -> 37 (golden recall saturates by 37; false accepts keep climbing past it
+# for no gain). Note it does NOT by itself fix the above — hard_errors=31 clears
+# even Normal's 36 — so decode profiles other than Deep were exposed to the same
+# false accept too, and 65986bc is what actually closes it for all of them.
 [workspace.dependencies]
-mfsk-core = { version = "0.9.0", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "65986bc5c8a7c987181804c7d03a223b69e19f70", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
