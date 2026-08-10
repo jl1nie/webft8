@@ -108,9 +108,36 @@ resolver = "2"
 # So the sniper path really was still on the old heuristic in the af4766e build
 # this repo shipped, and both new formulas do reach this app's entry points —
 # checked because 21c1be7 taught us an upstream SNR fix can land in a code path
-# we never enter. Note the two FT4 paths now sit ~2.4 dB apart from each other
-# (wide-band -1.5, sniper +0.9) where before they shared one metric; both are
-# closer to truth than before, but they are no longer mutually consistent.
+# we never enter.
+#
+# Those sniper figures were first taken on unfiltered wide-band audio, which is
+# not how sniper mode is operated: the premise is a rig's 500 Hz roofing filter
+# ahead of the ADC. Re-measured with ft8-bench's own filter model (4-pole
+# Butterworth, 750-1250 Hz, applied to the f32 mix *before* i16 quantisation),
+# sniper reads +1.28 dB mean error vs. +0.92 dB unfiltered — so the roofing
+# filter costs only ~0.4 dB of extra bias, and the SNR estimate holds up under
+# the band-limiting this app is built around. Under those same realistic
+# conditions the two FT4 paths sit ~2.8 dB apart from each other (wide-band
+# -1.5, sniper +1.3) where before they shared one metric. Both are closer to
+# truth than before, so this is not a regression, but the same signal now reads
+# differently depending on which mode decoded it.
+#
+# Sniper aiming tolerance, measured in passing on the same harness (-4 dB,
+# 500 Hz BPF, 8 seeds): 8/8 decodes with the target frequency off by up to
+# 12 Hz, 0/8 at 16 Hz — i.e. the ±12 Hz fine-frequency capture range upstream
+# documents, confirmed from outside. The waterfall's 5.86 Hz bins mean a click
+# within ~2 bins of the signal is required for FT4 sniper.
+#
+# 11022d5 (AP/sniper path gets FT4/FST4's real 2-D refine + the RMS
+# normalisation compute_llr's LLR_SCALE assumes) is pinned but changes nothing
+# measurable here: bit-identical output across every case above — wide-band,
+# sniper with and without the 500 Hz filter, the aiming sweep, and FST4-60.
+# Expected, and consistent with upstream's own finding: they reverted the
+# coarse-search swap, so the `cand.score` feeding `SnrCtx` on the AP path is
+# still `coarse_sync`'s Costas-correlation score rather than
+# getcandidates4.f90's, which is what the residual sniper offset comes from.
+# The refine/normalisation improvements would plausibly show on real off-air
+# audio with drift and fading, which this synthetic harness cannot produce.
 #
 # Q65 (0458481/81ea2d0) is NOT verified locally — no Q65 sample here and no
 # synth harness for it — so this app's Q65 SNR rests on upstream's own tests.
@@ -129,7 +156,7 @@ resolver = "2"
 # absolute SNR threshold or filter exists anywhere, so nothing silently changes
 # what gets decoded or displayed.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "81ea2d0ba491ddc2d71b4192e93517005d5c1a6e", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "11022d5f8c38d2c6788f24265cfbf89ea35de49d", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
