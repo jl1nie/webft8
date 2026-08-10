@@ -15,9 +15,9 @@ resolver = "2"
 # revoke-less-retract dedup-gate fix, the FST4 pre-decode near-duplicate dedup
 # for issue #244, and the wasm_simd rustfft enablement for issue #246).
 #
-# Pinned to ee12d47 for four unreleased issue #253 fixes — two false-decode,
-# two SNR calibration. This is a field-verification deploy — revert to
-# `version = "0.9.x"` once they ship.
+# Pinned to af4766e for five unreleased fixes — two FT8 false-decode and two FT8
+# SNR calibration (issue #253), one FT4 SNR calibration (issue #255). This is a
+# field-verification deploy — revert to `version = "0.9.x"` once they ship.
 #
 # The headline fix (65986bc) is aimed squarely at this project: the false decode
 # it eliminates (7Y8CIH HN1GD OP30 @509 Hz, hard_errors=31, on
@@ -71,6 +71,28 @@ resolver = "2"
 # side of a mismatch, not this crate's formula. Measurements reported to issue
 # #253 for the record.
 #
+# af4766e is the FT4 counterpart (issue #255) and touches nothing FT8. FT4 was
+# reading the same adjacent-tone `compute_snr_db` heuristic every
+# GenericPipelineProtocol implementor shares, but real WSJT-X derives FT4's SNR
+# from the coarse-sync candidate score instead (ft4_decode.f90:226,452-457 —
+# `10*log10(cand_score - 1) - 14.8`, floored at -21), a quantity
+# `ft4_coarse_sync` already computes and was simply never reading for SNR.
+# Measured here through `decode_ft4_wav`'s own request shape (300-2700 Hz,
+# sync_min 1.2, max_cand 50) against ft8-bench's FT4 simulator at known
+# WSJT-X-convention SNRs, 8 seeds per level: mean error -6.76 dB → -1.60 dB,
+# with what's left a flat offset (-1.5 dB at every level from -2 to -14, not a
+# slope), so the residual is a calibration constant rather than a scale error.
+# Part of that -1.5 dB may be the simulator's own convention rather than the
+# decoder's — upstream's check against a real jt9 -5 build put the residual near
+# 1 dB, which is consistent. FST4 keeps the old heuristic for now (its real
+# formula is submode-dependent, tracked separately under issue #255), so this
+# app's FST4 SNR stays uncalibrated.
+#
+# FT8 verified unaffected by af4766e rather than assumed: qso3_busy.wav through
+# the phase1 + phase2(Deep) pipeline gives bit-identical output to ee12d47 on
+# all 21 decodes. The FT4 fix lives in engine/pipeline.rs's generic path, which
+# FT8 (own decode.rs/decode_block engines) never enters.
+#
 # Not display-only: qso.js's `setRxSnr` → `_autoReport` feeds the decoded SNR
 # straight into the signal report we transmit, so this shifts what this station
 # reports on the air by the same amounts. Also consumed by app.js:1710's "reply
@@ -79,7 +101,7 @@ resolver = "2"
 # absolute SNR threshold or filter exists anywhere, so nothing silently changes
 # what gets decoded or displayed.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "ee12d47a0e13e88dd0d133e6e5d2b7bb4a78b7bb", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "af4766eb405b56f1dd5a5f1d3ef0107600835f6e", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
