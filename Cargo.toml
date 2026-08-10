@@ -15,8 +15,8 @@ resolver = "2"
 # revoke-less-retract dedup-gate fix, the FST4 pre-decode near-duplicate dedup
 # for issue #244, and the wasm_simd rustfft enablement for issue #246).
 #
-# Pinned to 21c1be7 for three unreleased issue #253 fixes — two false-decode,
-# one SNR calibration. This is a field-verification deploy — revert to
+# Pinned to ee12d47 for four unreleased issue #253 fixes — two false-decode,
+# two SNR calibration. This is a field-verification deploy — revert to
 # `version = "0.9.x"` once they ship.
 #
 # The headline fix (65986bc) is aimed squarely at this project: the false decode
@@ -39,31 +39,47 @@ resolver = "2"
 # even Normal's 36 — so decode profiles other than Deep were exposed to the same
 # false accept too, and 65986bc is what actually closes it for all of them.
 #
-# 21c1be7 then fixes the reported SNR itself, which had been sitting a
-# systematic 3-7 dB below WSJT-X/JTDX (a gap the qso3 recall tests had been
-# absorbing with a 12 dB tolerance rather than root-causing). Two compounding
-# substitutions: xsig was read from the rectangular-window coarse-sync spectrum
-# instead of the cd0/per-symbol-32pt-FFT pipeline real WSJT-X takes it from
-# (already ported here for LLR, which is scale-invariant and so never noticed),
-# and xbase/sbase came from that same spectrum rather than
-# get_spectrum_baseline.f90's Nuttall-windowed 50%-overlap one. Both had to move
-# together — the old shared miscalibrated scale mostly cancelled in the ratio,
-# which is why the visible gap was smaller than either bug. Post-fix: xsig
-# within +0.5 dB of a real jt9 build's probed value, final xsnr2 within ~1 dB,
-# qso3 entries mostly within ±3.5 dB of golden.
+# 21c1be7 + ee12d47 are the SNR pair, and only the second one moves anything
+# here. 21c1be7 rewrote the reported SNR to WSJT-X's xsnr2 (xsig from the
+# cd0/per-symbol-32pt-FFT pipeline, sbase from get_spectrum_baseline.f90's
+# Nuttall-windowed 50%-overlap spectrum, replacing a rectangular-window
+# coarse-sync spectrum for both) — but wired it into `decode_block_multipass`
+# only. Measured here on qso3_busy.wav by instrumenting that function in a local
+# clone and driving it through a path-dependency build of this project's exact
+# pipeline: the rewrite never executes for us, zero call sites hit, output
+# bit-identical across 65986bc → 21c1be7. This project's engines
+# (`.decode()`/`.sic_early()` in decode.rs) kept using engine::llr's
+# adjacent-tone `compute_snr_db` — a different WSJT-X quantity (`xsnr`, which
+# real WSJT-X then overwrites with `xsnr2` at ft8b.f90:459 for non-AP-retry
+# decodes). ee12d47 extracts xsnr2 into shared helpers and wires all four
+# DecodeRequest/SniperRequest engines to it, which is what finally changes the
+# numbers this app displays.
 #
-# User-visible here: SNR shifts up by roughly 3-7 dB versus every WebFT8 build
-# before this one, and this is NOT display-only. qso.js's `setRxSnr` →
-# `_autoReport` feeds the decoded SNR straight into the signal report we
-# transmit, so every automatic report this station sends was systematically
-# pessimistic by that same 3-7 dB before this rev — reports now land where a
-# WSJT-X/JTDX operator's would. Also consumed by app.js:1710's "reply to
-# strongest caller" sort (relative among simultaneous callers, so a uniform
+# Measured effect of ee12d47 on qso3_busy.wav (phase1 + phase2 Deep, 21
+# decodes): SNR moves up on 20 of 21 entries. `decode_block()` and
+# `DecodeRequest` now agree within 0.6 dB across all 20 shared signals —
+# ee12d47's stated goal, upstream-verified on WM3PEN/W1FC only, confirmed here
+# on the rest. Divergence from the JTDX golden grew though, from ≤3.4 dB before
+# to +5.9…+11.6 dB on six entries (N1PJT HB9CQK -12 → -0.4, K1BZM DK8NE -19 →
+# -9.3, K1BZM EA3GP, K1BZM EA3CJ, KD2UGC F6GCP, WA2FZW DL5AXX); the other twelve
+# stay within ±3.2 dB. That divergence is not evidence against xsnr2 here: the
+# JTDX golden is a single reference decoder's reported numbers, already shown
+# unreliable on two entries (a real jt9 build's internal xsnr2 for WM3PEN reads
+# 12.4 against JTDX's claimed 0.0), and JTDX is understood to apply clipping of
+# its own to what it displays. mfsk-core's xsnr2 is validated the other way —
+# against a real jt9 build's own probed internals — so the golden is the suspect
+# side of a mismatch, not this crate's formula. Measurements reported to issue
+# #253 for the record.
+#
+# Not display-only: qso.js's `setRxSnr` → `_autoReport` feeds the decoded SNR
+# straight into the signal report we transmit, so this shifts what this station
+# reports on the air by the same amounts. Also consumed by app.js:1710's "reply
+# to strongest caller" sort (relative among simultaneous callers, so a uniform
 # offset doesn't change who wins) and logged into qso-log.js's CSV export. No
 # absolute SNR threshold or filter exists anywhere, so nothing silently changes
 # what gets decoded or displayed.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "21c1be7ad9273c62a8b0a799291580927a8867ef", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "ee12d47a0e13e88dd0d133e6e5d2b7bb4a78b7bb", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
