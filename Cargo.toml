@@ -15,8 +15,9 @@ resolver = "2"
 # revoke-less-retract dedup-gate fix, the FST4 pre-decode near-duplicate dedup
 # for issue #244, and the wasm_simd rustfft enablement for issue #246).
 #
-# Pinned to 65986bc for the two unreleased issue #253 false-decode fixes. This
-# is a field-verification deploy — revert to `version = "0.9.x"` once they ship.
+# Pinned to 21c1be7 for three unreleased issue #253 fixes — two false-decode,
+# one SNR calibration. This is a field-verification deploy — revert to
+# `version = "0.9.x"` once they ship.
 #
 # The headline fix (65986bc) is aimed squarely at this project: the false decode
 # it eliminates (7Y8CIH HN1GD OP30 @509 Hz, hard_errors=31, on
@@ -37,8 +38,32 @@ resolver = "2"
 # for no gain). Note it does NOT by itself fix the above — hard_errors=31 clears
 # even Normal's 36 — so decode profiles other than Deep were exposed to the same
 # false accept too, and 65986bc is what actually closes it for all of them.
+#
+# 21c1be7 then fixes the reported SNR itself, which had been sitting a
+# systematic 3-7 dB below WSJT-X/JTDX (a gap the qso3 recall tests had been
+# absorbing with a 12 dB tolerance rather than root-causing). Two compounding
+# substitutions: xsig was read from the rectangular-window coarse-sync spectrum
+# instead of the cd0/per-symbol-32pt-FFT pipeline real WSJT-X takes it from
+# (already ported here for LLR, which is scale-invariant and so never noticed),
+# and xbase/sbase came from that same spectrum rather than
+# get_spectrum_baseline.f90's Nuttall-windowed 50%-overlap one. Both had to move
+# together — the old shared miscalibrated scale mostly cancelled in the ratio,
+# which is why the visible gap was smaller than either bug. Post-fix: xsig
+# within +0.5 dB of a real jt9 build's probed value, final xsnr2 within ~1 dB,
+# qso3 entries mostly within ±3.5 dB of golden.
+#
+# User-visible here: SNR shifts up by roughly 3-7 dB versus every WebFT8 build
+# before this one, and this is NOT display-only. qso.js's `setRxSnr` →
+# `_autoReport` feeds the decoded SNR straight into the signal report we
+# transmit, so every automatic report this station sends was systematically
+# pessimistic by that same 3-7 dB before this rev — reports now land where a
+# WSJT-X/JTDX operator's would. Also consumed by app.js:1710's "reply to
+# strongest caller" sort (relative among simultaneous callers, so a uniform
+# offset doesn't change who wins) and logged into qso-log.js's CSV export. No
+# absolute SNR threshold or filter exists anywhere, so nothing silently changes
+# what gets decoded or displayed.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "65986bc5c8a7c987181804c7d03a223b69e19f70", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "21c1be7ad9273c62a8b0a799291580927a8867ef", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
