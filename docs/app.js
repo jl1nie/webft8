@@ -1365,6 +1365,30 @@ function encodeTx(call1, call2, report, freq) {
     // bypassing the button UI entirely. Falling through to encode_ft8()
     // here would silently transmit FT8 tones while the operator believes
     // they're on WSPR — see issue #9.
+    //
+    // Keep this throw even after WSPR TX exists. WSPR is not a QSO: it is
+    // a beacon with a fixed Type-1 message (call + grid + dBm) on its own
+    // 2-minute schedule, so it must not reach qso.js's state machine at
+    // all. The right shape is a separate beacon path with its own
+    // scheduler, with this reject still guarding the QSO route.
+    //
+    // Two things gate that work, both upstream (mfsk-core #259):
+    //   - `wspr::tx::synthesize_audio_into` has no end-of-transmission
+    //     fade-out. WSJT-X decays the last ~11.6 ms at 0.98/sample
+    //     (Modulator.cpp: `if (m_ic > i0) m_amp = 0.98 * m_amp`), this
+    //     does not, so the burst ends on an envelope step.
+    //   - The module doc claims real WSPR transmitters raised-cosine the
+    //     symbol transitions. They do not — WSPR passes a *positive*
+    //     m_toneSpacing in mainwindow.cpp, so it never reaches the
+    //     foxcom_.wave[] branch carrying the GFSK-shaped FT8/FT4/FST4/Q65
+    //     waveforms, and runs plain phase-accumulation CPFSK with abrupt
+    //     frequency steps. mfsk-core already matches that.
+    //
+    // Deliberate non-goal: shaping. It was measured here (a T/8 raised-
+    // cosine frequency pulse buys 32 dB at +25 Hz and still decodes) and
+    // rejected — being bit-faithful to WSJT-X beats being cleaner than
+    // it, and a real SSB transmitter's linearity dominates the emitted
+    // spectrum long before a -54 dBc baseband floor does. Ramp only.
     throw new Error(`${proto.toUpperCase()} TX is not supported`);
   }
   return call1 === '__FREE__'
