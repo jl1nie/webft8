@@ -165,7 +165,16 @@ export class QsoManager {
 
   _autoReport() {
     const snr = Math.max(-50, Math.min(49, this.rxSnr));
-    return (snr >= 0 ? '+' : '') + String(snr).padStart(2, '0');
+    // Pad the digits, not the signed string. `String(-8).padStart(2, '0')`
+    // is already 2 characters, so the old form emitted "-8" where WSJT-X
+    // writes "-08" (positives were fine: "+05"). mfsk-core's packer
+    // normalises either spelling to the same bits — verified, the encoded
+    // waveform for "-8" and "-08" is identical — so nothing wrong ever went
+    // on the air. What differed was our own display and the qso-log.js CSV
+    // export, against what the other station's software showed them.
+    // mfsk-core d640bee made its own unpack zero-pad to match WSJT-X, which
+    // left this the odd one out.
+    return (snr >= 0 ? '+' : '-') + String(Math.abs(snr)).padStart(2, '0');
   }
 
   _tx(call1, call2, report) {

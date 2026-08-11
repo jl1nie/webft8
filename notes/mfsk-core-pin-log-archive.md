@@ -1,0 +1,337 @@
+# mfsk-core git-rev pin log (2026-08-10 〜 2026-08-11) — アーカイブ
+
+> `Cargo.toml` が crates.io の `mfsk-core = "0.9.1"` に戻ったため、
+> それまでの rev 単位のピン留め記録をここに退避したもの。
+> 対象期間の pin: `65986bc` → `21c1be7` → `ee12d47` → `af4766e` → `81ea2d0`
+> → `11022d5` → `dfb1f2b` → `47f0e63` → **crates.io 0.9.1 (`b70ad5c`)**
+>
+> 内容はすべて当時の実測記録。以下は現在も有効だが、より適切な場所に
+> 転記済みなのでそちらを正とすること:
+>
+> | 項目 | 現在の所在 |
+> |---|---|
+> | WSPR の GFSK 整形を入れない判断 | `ft8-web/www/app.js` の `encodeTx()` |
+> | Q65 SNR がオンエアのレポートに乗る件 | `ft8-web/src/lib.rs` の `q65_to_decoded` |
+> | WSPR 偽デコードのベースライン | `notes/wspr-false-decode-baseline.md` |
+> | FT4 sniper SNR の分散 | mfsk-core issue #258 / 上流 `docs/notes/SNR_FORMULAS.md` |
+>
+> **ft8-bench の FT4 シミュレータには ~1.5 dB の SNR 規約オフセットの疑いがある**
+> （#258 で上流と不一致、未解決）。このログ中の FT4 の絶対値はその前提で読むこと。
+
+---
+
+# TEMPORARY git-rev pin ahead of the 0.9.0 crates.io release (which stays the
+# baseline: 0.9.0 brought `.on_result()` streaming delivery for issue #204 that
+# ft8-web's decode_phase1_streaming/decode_phase2_streaming consume, the
+# revoke-less-retract dedup-gate fix, the FST4 pre-decode near-duplicate dedup
+# for issue #244, and the wasm_simd rustfft enablement for issue #246).
+#
+# Pinned to 81ea2d0 for the unreleased issue #253/#255/#256 run: two FT8
+# false-decode fixes and two FT8 SNR calibrations (#253), then real WSJT-X SNR
+# formulas for FT4, FST4 and Q65 (#255/#256). This is a field-verification
+# deploy — revert to `version = "0.9.x"` once they ship.
+#
+# The headline fix (65986bc) is aimed squarely at this project: the false decode
+# it eliminates (7Y8CIH HN1GD OP30 @509 Hz, hard_errors=31, on
+# ft8-bench/testdata/qso3_busy.wav) was originally reproduced *through*
+# decode_phase2's exact pipeline shape — Deep + `.known()` + `.fft_cache()` +
+# `.sic_early()`. Root cause was `__staged_sic` pre-subtracting the caller's
+# `.known()` list from the whole buffer before checkpoint A, the nzhsym=41
+# zero-tailed early pass; real jt9 always runs that pass on raw unmodified
+# audio, so the pre-subtraction was an mfsk-core-original composition with no
+# WSJT-X counterpart, and it manufactured a CRC-14 false accept. The fix scopes
+# pre-subtraction to checkpoints B/C only (they rebuild buffers from the
+# original audio anyway), so "known signals don't mask weaker ones" survives.
+# Upstream's controlled A/B: 7 results incl. the false one before, 22 results
+# and none false after.
+#
+# 3a91c74 additionally retunes DecodeStrictness::Deep's ft8_nharderrors_max
+# 40 -> 37 (golden recall saturates by 37; false accepts keep climbing past it
+# for no gain). Note it does NOT by itself fix the above — hard_errors=31 clears
+# even Normal's 36 — so decode profiles other than Deep were exposed to the same
+# false accept too, and 65986bc is what actually closes it for all of them.
+#
+# 21c1be7 + ee12d47 are the SNR pair, and only the second one moves anything
+# here. 21c1be7 rewrote the reported SNR to WSJT-X's xsnr2 (xsig from the
+# cd0/per-symbol-32pt-FFT pipeline, sbase from get_spectrum_baseline.f90's
+# Nuttall-windowed 50%-overlap spectrum, replacing a rectangular-window
+# coarse-sync spectrum for both) — but wired it into `decode_block_multipass`
+# only. Measured here on qso3_busy.wav by instrumenting that function in a local
+# clone and driving it through a path-dependency build of this project's exact
+# pipeline: the rewrite never executes for us, zero call sites hit, output
+# bit-identical across 65986bc → 21c1be7. This project's engines
+# (`.decode()`/`.sic_early()` in decode.rs) kept using engine::llr's
+# adjacent-tone `compute_snr_db` — a different WSJT-X quantity (`xsnr`, which
+# real WSJT-X then overwrites with `xsnr2` at ft8b.f90:459 for non-AP-retry
+# decodes). ee12d47 extracts xsnr2 into shared helpers and wires all four
+# DecodeRequest/SniperRequest engines to it, which is what finally changes the
+# numbers this app displays.
+#
+# Measured effect of ee12d47 on qso3_busy.wav (phase1 + phase2 Deep, 21
+# decodes): SNR moves up on 20 of 21 entries. `decode_block()` and
+# `DecodeRequest` now agree within 0.6 dB across all 20 shared signals —
+# ee12d47's stated goal, upstream-verified on WM3PEN/W1FC only, confirmed here
+# on the rest. Divergence from the JTDX golden grew though, from ≤3.4 dB before
+# to +5.9…+11.6 dB on six entries (N1PJT HB9CQK -12 → -0.4, K1BZM DK8NE -19 →
+# -9.3, K1BZM EA3GP, K1BZM EA3CJ, KD2UGC F6GCP, WA2FZW DL5AXX); the other twelve
+# stay within ±3.2 dB. That divergence is not evidence against xsnr2 here: the
+# JTDX golden is a single reference decoder's reported numbers, already shown
+# unreliable on two entries (a real jt9 build's internal xsnr2 for WM3PEN reads
+# 12.4 against JTDX's claimed 0.0), and JTDX is understood to apply clipping of
+# its own to what it displays. mfsk-core's xsnr2 is validated the other way —
+# against a real jt9 build's own probed internals — so the golden is the suspect
+# side of a mismatch, not this crate's formula. Measurements reported to issue
+# #253 for the record.
+#
+# af4766e is the FT4 counterpart (issue #255) and touches nothing FT8. FT4 was
+# reading the same adjacent-tone `compute_snr_db` heuristic every
+# GenericPipelineProtocol implementor shares, but real WSJT-X derives FT4's SNR
+# from the coarse-sync candidate score instead (ft4_decode.f90:226,452-457 —
+# `10*log10(cand_score - 1) - 14.8`, floored at -21), a quantity
+# `ft4_coarse_sync` already computes and was simply never reading for SNR.
+# Measured here through `decode_ft4_wav`'s own request shape (300-2700 Hz,
+# sync_min 1.2, max_cand 50) against ft8-bench's FT4 simulator at known
+# WSJT-X-convention SNRs, 8 seeds per level: mean error -6.76 dB → -1.60 dB,
+# with what's left a flat offset (-1.5 dB at every level from -2 to -14, not a
+# slope), so the residual is a calibration constant rather than a scale error.
+# Part of that -1.5 dB may be the simulator's own convention rather than the
+# decoder's — upstream's check against a real jt9 -5 build put the residual near
+# 1 dB, which is consistent.
+#
+# dd934b8..81ea2d0 then finish the sweep. dd934b8 replaces af4766e's three ad-hoc
+# `if P::ID == Ft4` branches with a `GenericPipelineProtocol::snr_db` trait
+# method, which also picks up a 4th call site af4766e had missed —
+# `msg::pipeline_ap::finalise_result`, i.e. the AP/sniper path this app reaches
+# through `decode_ft4_sniper`. e1200b6 lands FST4's real formula (a jt9-verified
+# port with the NDOWN scale correction, wired via the same trait); 0458481 +
+# 81ea2d0 do the same for Q65's `q65_snr` on both the single-slot and
+# multi-period averaging paths.
+#
+# Measured here against synthetic signals at known WSJT-X-convention SNRs
+# (ft8-bench's FT4 simulator; an equivalent local FST4-60 synth using
+# fst4::encode + the same AWGN convention), through each entry point's own
+# request shape — mean error, af4766e → 81ea2d0:
+#
+#   FT4 wide-band (decode_ft4_wav)     -1.51 dB → -1.51 dB   (already fixed)
+#   FT4 sniper    (decode_ft4_sniper)  -6.95 dB → +0.92 dB   (dd934b8's 4th site)
+#   FST4-60       (decode_fst4_wav)    +1.93 dB → -0.39 dB   (e1200b6)
+#
+# So the sniper path really was still on the old heuristic in the af4766e build
+# this repo shipped, and both new formulas do reach this app's entry points —
+# checked because 21c1be7 taught us an upstream SNR fix can land in a code path
+# we never enter.
+#
+# Those sniper figures were first taken on unfiltered wide-band audio, which is
+# not how sniper mode is operated: the premise is a rig's 500 Hz roofing filter
+# ahead of the ADC. Re-measured with ft8-bench's own filter model (4-pole
+# Butterworth, 750-1250 Hz, applied to the f32 mix *before* i16 quantisation),
+# sniper reads +1.28 dB mean error vs. +0.92 dB unfiltered — so the roofing
+# filter costs only ~0.4 dB of extra bias, and the SNR estimate holds up under
+# the band-limiting this app is built around. Under those same realistic
+# conditions the two FT4 paths sit ~2.8 dB apart from each other (wide-band
+# -1.5, sniper +1.3) where before they shared one metric. Both are closer to
+# truth than before, so this is not a regression, but the same signal now reads
+# differently depending on which mode decoded it.
+#
+# Sniper aiming tolerance, measured in passing on the same harness (-4 dB,
+# 500 Hz BPF, 8 seeds): 8/8 decodes with the target frequency off by up to
+# 12 Hz, 0/8 at 16 Hz — i.e. the ±12 Hz fine-frequency capture range upstream
+# documents, confirmed from outside. The waterfall's 5.86 Hz bins mean a click
+# within ~2 bins of the signal is required for FT4 sniper.
+#
+# 11022d5 (AP/sniper path gets FT4/FST4's real 2-D refine + the RMS
+# normalisation compute_llr's LLR_SCALE assumes) is pinned but changes nothing
+# measurable here: bit-identical output across every case above — wide-band,
+# sniper with and without the 500 Hz filter, the aiming sweep, and FST4-60.
+# Expected, and consistent with upstream's own finding: they reverted the
+# coarse-search swap, so the `cand.score` feeding `SnrCtx` on the AP path is
+# still `coarse_sync`'s Costas-correlation score rather than
+# getcandidates4.f90's, which is what the residual sniper offset comes from.
+# The refine/normalisation improvements would plausibly show on real off-air
+# audio with drift and fading, which this synthetic harness cannot produce.
+#
+# Q65 (0458481/81ea2d0) is NOT verified locally — no Q65 sample here and no
+# synth harness for it — so this app's Q65 SNR rests on upstream's own tests.
+#
+# FT8 verified unaffected by all of it rather than assumed: qso3_busy.wav
+# through the phase1 + phase2(Deep) pipeline gives bit-identical output to
+# ee12d47 on all 21 decodes. FT4/FST4/Q65 work lives in engine/pipeline.rs's
+# generic path plus per-protocol modules, none of which FT8's own
+# decode.rs/decode_block engines enter.
+#
+# Not display-only: qso.js's `setRxSnr` → `_autoReport` feeds the decoded SNR
+# straight into the signal report we transmit, so this shifts what this station
+# reports on the air by the same amounts. Also consumed by app.js:1710's "reply
+# to strongest caller" sort (relative among simultaneous callers, so a uniform
+# offset doesn't change who wins) and logged into qso-log.js's CSV export. No
+# absolute SNR threshold or filter exists anywhere, so nothing silently changes
+# what gets decoded or displayed.
+#
+# ── dfb1f2b (issue #257): FT4 sniper's blind annulus ────────────────────────
+#
+# 11022d5 -> dfb1f2b is seven commits, but only one of them can reach this
+# build: e51160b. Two are protocol fixes for jt9 and jt65, neither of which is
+# in any feature list here (ft8-web takes ft8/ft4/fst4/wspr/q65, uvpacket-web
+# takes uvpacket); the other four are docs and an FST4 test.
+#
+# e51160b closes the FT4 sniper miss this project reported as #257. The 12 Hz
+# aiming tolerance measured for the 11022d5 pin above was not, as assumed at
+# the time, `refine_candidate_position`'s ±12 Hz fine-frequency pull-in doing
+# its job — it was the edge of a starvation bug. `coarse_sync`'s `freq_hint`
+# ranked "within 10 Hz of the aim point" ahead of score lexicographically, and
+# sniper's `sync_min = 0.8` with `max_cand` clamped to 15 let the aim point's
+# own noise-floor lags (up to 8 per bin × 3 FT4 bins inside ±10 Hz, all scoring
+# ~1.0) take every slot — truncating the real signal, scoring 12-17, off the
+# list before a decoder saw it. `engine::sync::rank_candidates` now reserves
+# the aim point at most half the budget and fills the rest by score.
+#
+# Verified from this side through `decode_ft4_sniper`'s own request shape
+# (`SniperRequest::<Ft4>::new(audio, aim, 15).eq_mode(Local)`, with and without
+# an AP hint), signal at 1000 Hz, 8 seeds — decodes per 8, 11022d5 -> dfb1f2b:
+#
+#   aim offset       0   12   16   20   40   60  100  150 Hz
+#   -4 dB  no BPF    8    8    0    0    0    0    5    3
+#   -4 dB  500 Hz    8    8    0    0    0    0    5    6
+#   -10 dB no BPF    8    6    0    0    0    0    3    2
+#   -10 dB 500 Hz    8    6    0    0    0    0    4    6
+#   all four rows, dfb1f2b:
+#                    8    8    8    8    8    8    8    8
+#
+# So the annulus reproduces exactly as upstream describes it — dead from 16 to
+# 60 Hz, partially alive again past 100 Hz once the aim-adjacent bins drop under
+# `sync_min` and stop crowding — and it was live in the build this repo shipped.
+# The fix is not merely "aim within 12 Hz now works to 60": at -10 dB the 12 Hz
+# point itself goes 6/8 -> 8/8 and the far offsets go 2-6/8 -> 8/8, so the
+# starvation was costing decodes at every offset, not only inside the annulus.
+# Practically this removes the "click within ~2 waterfall bins" requirement
+# recorded above for FT4 sniper; the 5.86 Hz bins now leave a wide margin.
+#
+# The AP and no-AP columns are identical at every point (written `n/n` in the
+# harness) — expected, since ranking happens before the AP path is reached.
+#
+# FT8 verified unaffected rather than assumed, same as the pins above:
+# qso3_busy.wav through phase1 + phase2(Deep) is bit-identical across the pin
+# change on all 21 decodes, and the whole ft8-bench suite — interference,
+# busy-band, busy-band-hard, the sniper story (no-BPF / BPF-edge / BPF-centre ×
+# SIC/AP), the three BPF scenarios and the WSJT-X stress WAV — differs only in
+# timing jitter. `rank_candidates` does touch the shared `coarse_sync` that FT8
+# reaches, which is why the FT8 sniper scenarios were included rather than just
+# the wide-band ones; with no competition it degrades to the old behaviour.
+#
+# jt65's SNR clamp and jt9's ~32 dB SNR error (641b5ff, 90df087) are real user-
+# facing bugs upstream, but no build here compiles either protocol. Worth
+# remembering if a mode is ever added.
+#
+# ── Correction: the FT4 wide-band/sniper gap is ~1.8 dB, and it is a curve ──
+#
+# The "~2.8 dB apart" figure above is superseded. It was arrived at by
+# subtracting two numbers taken from *different* harnesses (the wide-band -1.5
+# from one run, the sniper +1.3 from another with the BPF applied at a different
+# point in the chain), which is not a valid comparison. Re-measured with both
+# paths reading the *same* audio buffer, same seeds, same levels — the only way
+# the difference means anything — on dfb1f2b, reported minus true SNR:
+#
+#             unfiltered                      500 Hz BPF (post-quantisation)
+#   true    wide    sniper    gap           wide    sniper    gap
+#    -2    -1.60    -0.44   +1.16          -0.29    +0.20   +0.49
+#    -4    -1.61    +0.15   +1.75          -0.25    +0.59   +0.84
+#    -6    -1.62    +0.51   +2.12          -0.19    +0.78   +0.97
+#    -8    -1.63    +0.63   +2.26          -0.09    +0.80   +0.89
+#   -10    -1.64    +0.55   +2.20          +0.07    +0.63   +0.56
+#   -12    -1.66    +0.21   +1.87          +0.31    +0.23   -0.08
+#   -14    -1.69    -0.59   +1.10          +0.70    -0.60   -1.30
+#   mean   -1.64    +0.15   +1.78          +0.04    +0.38   +0.34
+#
+# The mean gap matters less than the shape, which the mean hides:
+#
+#   - Wide-band unfiltered is FLAT. -1.60 to -1.69 dB across a 12 dB span, no
+#     slope. That is a correct estimator with a wrong constant — one number
+#     fixes it.
+#   - Sniper is an ARCH. -0.44 → +0.63 → -0.59 over the same span, ~1.2 dB of
+#     curvature peaking mid-range. No constant fixes that. `coarse_sync`'s
+#     Costas-correlation score is non-linear in SNR relative to what
+#     `ft4_snr_db`'s `10·log10(score-1) - 14.8` was fitted against, so even a
+#     perfectly-chosen offset leaves ~±0.6 dB of level-dependent error.
+#
+# So the earlier framing — "sniper reads ~1 dB high, wide-band ~1.5 dB low" —
+# understated it by describing a curve as an offset.
+#
+# Second-order but real: the 500 Hz BPF changes the wide-band path's *character*,
+# not just its offset. Flat -1.64 becomes a slope, -0.29 → +0.70. The filter here
+# is applied after i16 quantisation, so this is the band-limiting moving the
+# noise reference the score sees, not an ADC-headroom effect. (Note this differs
+# from the BPF-before-quantisation harness used for the af4766e..81ea2d0 numbers
+# above; the two are not directly comparable, which is what caused the bad
+# subtraction in the first place.)
+#
+# Confirmed not moved by the dfb1f2b pin: e51160b changes which candidate wins at
+# the aim point and `cand.score` feeds `SnrCtx`, so this was checked rather than
+# assumed — reported SNR is identical to the last decimal at every level, both
+# filtered and unfiltered, across 11022d5 → dfb1f2b.
+#
+# Root cause is documented upstream in-source at `msg/pipeline_ap.rs:113-131`:
+# swapping the AP path's generic `coarse_sync` for `ft4_coarse_sync` was tried
+# and reverted (its ~78 Hz smoothing width loses a clean single-target signal
+# outside `refine_candidate_position`'s ±12 Hz pull-in), so `cand.score` reaching
+# `SnrCtx` is still the Costas-correlation score rather than the
+# `getcandidates4.f90` value the formula expects. Reported as mfsk-core issue
+# #258 (nothing open tracked it — #255 and #257 are both closed), together with a
+# suggestion that candidate *generation* and candidate *scoring* may be separable
+# here: by the time `SnrCtx` is built the signal's position is already locked, so
+# scoring at that known position need not reintroduce the lost-decode regression.
+#
+# Decision for this app: accept it. Sniper is a deliberately special mode and the
+# absolute SNR is not what it is for. Recorded so the next person does not
+# rediscover the curve and mistake it for a regression.
+#
+# ── 47f0e63: the WSPR TX ramp, and a correction to the paragraph above ──────
+#
+# Pinned for 47f0e63, which is what unblocks this app's WSPR beacon TX path:
+# every `synthesize_audio` in the crate now tapers its burst envelope through a
+# shared `engine::dsp::envelope`, 10 ms of the same raised-cosine shape
+# `gen_ft8wave.f90:69-73` uses. Upstream measured the switch-on transient at
+# -53.9 -> -101.7 dBc at +250 Hz. Note they ramp *both* ends where WSJT-X's
+# modulator only fades out, and justified it from WSJT-X's own longest-period
+# mode rather than from taste: `gen_fst4wave.f90` ramps up unconditionally
+# (`data lshape/.true./`) with a *longer* ramp than FT8's. They also declined
+# the GFSK symbol shaping #259 originally asked for, for the reason this repo
+# had already reached independently — WSJT-X does not shape WSPR.
+#
+# 3f3beb2 is the uncomfortable one: it refutes the "sniper's error is a
+# level-dependent arch" claim in the paragraph above, and it is right.
+# Re-measured here at n=20 (the earlier claim was n=8), reporting the per-level
+# spread the first pass never looked at:
+#
+#   true      wide-band mean/sd        sniper mean/sd
+#    -2      -1.60  sd 0.12           -0.15  sd 0.84
+#    -6      -1.61  sd 0.16           +0.91  sd 0.98
+#   -10      -1.63  sd 0.26           +1.19  sd 1.22
+#   -14      -1.67  sd 0.47           +0.57  sd 1.96
+#   -16      -1.72  sd 0.68           -0.57  sd 3.03
+#   POOLED   -1.64  sd 0.34 (n=160)   +0.62  sd 1.60 (n=155)
+#
+# Sniper's spread is 4.7x wide-band's (upstream got 4x on a different corpus),
+# and the standard error of an 8-seed mean at that spread is 0.56 dB — which is
+# exactly the amplitude of the "1.2 dB of curvature" reported above. Seven
+# points each carrying ±0.56 dB of noise will trace a convincing arch. So the
+# shape was an artefact of the sample size, and the real defect is variance:
+# ~±1.6 dB of per-decode scatter, growing to sd 3.0 at -16 dB. For this app
+# that is arguably worse than a bias, because it is the per-decode number that
+# `qso.js`'s `_autoReport` puts on the air, and no amount of averaging happens
+# before it gets there.
+#
+# What did NOT reproduce is upstream's pooled gap. They measure the two paths
+# 0.2 dB apart on the WSJT-X `ft4sim` corpus; this harness still says +2.25 dB
+# at n=20. The disagreement sits on the wide-band side — their wide-band reads
+# -0.30 dB where ours reads -1.64 dB with sd 0.12, and an offset that stable is
+# a systematic convention difference, not scatter. That points at ft8-bench's
+# own FT4 simulator amplitude convention rather than at the decoder, which is
+# what upstream suggested and what #255 already flagged as a risk. Resolving it
+# needs real `jt9 -5` run over ft8-bench's own output; not done, so every
+# absolute FT4 number produced by this harness should be read as carrying an
+# unquantified ~1.5 dB offset of its own.
+#
+# Lesson recorded because it was cheap to avoid: quote per-level spread next to
+# per-level means, or structure gets read into noise. The measurement that
+# produced the wrong claim was otherwise careful — same buffer, same seeds, both
+# paths — and still landed on an artefact purely for want of an `sd` column.
