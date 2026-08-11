@@ -178,6 +178,14 @@ const q65FadingModelField = document.getElementById('q65-fading-model-field');
 const q65FadingModelSelect = document.getElementById('q65-fading-model');
 const fst4SubmodeSelect = document.getElementById('fst4-submode');
 const fst4SubmodeField = document.getElementById('fst4-submode-field');
+// TX state, declared here rather than beside the Halt handler below because
+// module-init code reads it: syncQ65Visibility() runs at load and calls
+// updateWsprTxHint(), which reports whether the beacon is halted. A `let` at
+// the bottom of the file would put that read in the temporal dead zone and
+// throw before the UI ever painted.
+let halted = false;
+let txActive = false;  // true while transmit() / transmitWspr() is playing audio
+
 const wsprTxBlock = document.getElementById('wspr-tx-block');
 const wsprTxEnable = document.getElementById('wspr-tx-enable');
 const wsprTxPct = document.getElementById('wspr-tx-pct');
@@ -1631,6 +1639,8 @@ const periodMgr = new FT8PeriodManager({
           snipeDxInfo.textContent = `${freq.toFixed(0)} Hz  ${snr >= 0 ? '+' : ''}${Math.round(snr)} dB`;
         }
 
+        const isWsprBeacon = currentProtocol() === 'wspr';
+
         // Track callers
         const myCall = myCallInput.value.toUpperCase();
         const w = msg.split(/\s+/);
@@ -1638,9 +1648,15 @@ const periodMgr = new FT8PeriodManager({
           callers.push({ call: w[1], snr, msg, freq });
         }
 
-        // QSO state machine (skip CQ responses — handled below after SNR sort)
+        // QSO state machine (skip CQ responses — handled below after SNR sort).
+        // Never in WSPR: its decodes are beacons ("JL1NIE PM95 37"), not QSO
+        // traffic, and feeding them here would set qso.dxCall from a station
+        // that is not talking to anyone. The txMsg that could result is
+        // already blocked downstream by encodeTx's throw, but blocking it at
+        // the source keeps the QSO state itself clean and stops a spurious
+        // "TX error: WSPR TX is not supported" appearing in the status line.
         const isCqWait = qso.state === QSO_STATE.CALLING && !qso.dxCall;
-        if (!isCqWait) {
+        if (!isCqWait && !isWsprBeacon) {
           qso.setRxSnr(snr);
           const result = qso.processMessage(msg);
           if (result && !txMsg) txMsg = result;
@@ -1748,7 +1764,8 @@ const periodMgr = new FT8PeriodManager({
     if (qso.dxCall) apCall = qso.dxCall;
 
     // CQ response handling: sort by SNR, feed strongest to SM
-    if (qso.state === QSO_STATE.CALLING && !qso.dxCall && callers.length > 0) {
+    if (qso.state === QSO_STATE.CALLING && !qso.dxCall && callers.length > 0
+        && currentProtocol() !== 'wspr') {
       const useSNR = cqBestSnrCheck.checked;
       if (useSNR) callers.sort((a, b) => b.snr - a.snr);
       // Feed strongest (or first) caller to SM
@@ -1908,6 +1925,7 @@ function updateWsprTxHint() {
   const blocker = wsprTxBlocker();
   if (blocker) { wsprTxHint.textContent = `TX inactive — ${blocker}.`; return; }
   if (!wsprTxEnabled()) { wsprTxHint.textContent = 'Beacon TX off — RX only.'; return; }
+  if (halted) { wsprTxHint.textContent = 'Halted — re-tick the box to resume.'; return; }
   const pct = wsprTxPctValue();
   const f = wsprTxRandFreqValue() ? '1400–1600 Hz (random)' : `${wsprTxFreqValue()} Hz`;
   wsprTxHint.textContent = pct === 0
@@ -1987,7 +2005,16 @@ if (wsprTxEnable) {
   wsprTxEnable.checked = wsprTxEnabled();
   wsprTxEnable.addEventListener('change', () => {
     localStorage.setItem('webft8-wspr-tx', wsprTxEnable.checked ? '1' : '0');
-    if (!wsprTxEnable.checked) wsprCancelPending();
+    if (wsprTxEnable.checked) {
+      // Ticking the box is an explicit "transmit again", so it clears a
+      // previous Halt the same way queueTxMsg does for FT8. Without this the
+      // operator hits Halt, re-ticks the box, and nothing ever transmits —
+      // silently, because `halted` is only reset by the ↺ branch, which is
+      // labelled "QSO reset" in a mode that has no QSO.
+      clearHalted();
+    } else {
+      wsprCancelPending();
+    }
     updateWsprTxHint();
   });
 }
@@ -2032,8 +2059,8 @@ periodMgr.callbacks.onTxFire = async (tx) => {
 // ── Halt / Reset ────────────────────────────────────────────────────────────
 // ■ (TX active/queued) — cancels TX, keeps QSO state
 // ↺ (TX idle)          — logs partial QSO if any, resets to IDLE
-let halted = false;
-let txActive = false;  // true while transmit() is running (audio playing)
+// (`halted` / `txActive` are declared at the top of the file — see the note
+// there; `updateWsprTxHint` reads `halted` and runs during module init.)
 
 function updateHaltBtn() {
   // ■ when TX is queued OR actively transmitting. wsprTxTimer covers the
@@ -2052,7 +2079,9 @@ btnHalt.addEventListener('click', async () => {
     timerEl.classList.remove('tx-on');
     halted = true;
     updateHaltBtn();
-    setStatus('TX halted — tap ↺ to reset QSO');
+    setStatus(currentProtocol() === 'wspr'
+      ? 'Beacon halted — re-tick WSPR beacon TX to resume'
+      : 'TX halted — tap ↺ to reset QSO');
   } else {
     // Reset QSO, log partial QSO if applicable
     if (qso.state !== QSO_STATE.IDLE && qso.dxCall) {
