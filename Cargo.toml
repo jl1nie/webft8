@@ -155,8 +155,63 @@ resolver = "2"
 # offset doesn't change who wins) and logged into qso-log.js's CSV export. No
 # absolute SNR threshold or filter exists anywhere, so nothing silently changes
 # what gets decoded or displayed.
+#
+# ── dfb1f2b (issue #257): FT4 sniper's blind annulus ────────────────────────
+#
+# 11022d5 -> dfb1f2b is seven commits, but only one of them can reach this
+# build: e51160b. Two are protocol fixes for jt9 and jt65, neither of which is
+# in any feature list here (ft8-web takes ft8/ft4/fst4/wspr/q65, uvpacket-web
+# takes uvpacket); the other four are docs and an FST4 test.
+#
+# e51160b closes the FT4 sniper miss this project reported as #257. The 12 Hz
+# aiming tolerance measured for the 11022d5 pin above was not, as assumed at
+# the time, `refine_candidate_position`'s ±12 Hz fine-frequency pull-in doing
+# its job — it was the edge of a starvation bug. `coarse_sync`'s `freq_hint`
+# ranked "within 10 Hz of the aim point" ahead of score lexicographically, and
+# sniper's `sync_min = 0.8` with `max_cand` clamped to 15 let the aim point's
+# own noise-floor lags (up to 8 per bin × 3 FT4 bins inside ±10 Hz, all scoring
+# ~1.0) take every slot — truncating the real signal, scoring 12-17, off the
+# list before a decoder saw it. `engine::sync::rank_candidates` now reserves
+# the aim point at most half the budget and fills the rest by score.
+#
+# Verified from this side through `decode_ft4_sniper`'s own request shape
+# (`SniperRequest::<Ft4>::new(audio, aim, 15).eq_mode(Local)`, with and without
+# an AP hint), signal at 1000 Hz, 8 seeds — decodes per 8, 11022d5 -> dfb1f2b:
+#
+#   aim offset       0   12   16   20   40   60  100  150 Hz
+#   -4 dB  no BPF    8    8    0    0    0    0    5    3
+#   -4 dB  500 Hz    8    8    0    0    0    0    5    6
+#   -10 dB no BPF    8    6    0    0    0    0    3    2
+#   -10 dB 500 Hz    8    6    0    0    0    0    4    6
+#   all four rows, dfb1f2b:
+#                    8    8    8    8    8    8    8    8
+#
+# So the annulus reproduces exactly as upstream describes it — dead from 16 to
+# 60 Hz, partially alive again past 100 Hz once the aim-adjacent bins drop under
+# `sync_min` and stop crowding — and it was live in the build this repo shipped.
+# The fix is not merely "aim within 12 Hz now works to 60": at -10 dB the 12 Hz
+# point itself goes 6/8 -> 8/8 and the far offsets go 2-6/8 -> 8/8, so the
+# starvation was costing decodes at every offset, not only inside the annulus.
+# Practically this removes the "click within ~2 waterfall bins" requirement
+# recorded above for FT4 sniper; the 5.86 Hz bins now leave a wide margin.
+#
+# The AP and no-AP columns are identical at every point (written `n/n` in the
+# harness) — expected, since ranking happens before the AP path is reached.
+#
+# FT8 verified unaffected rather than assumed, same as the pins above:
+# qso3_busy.wav through phase1 + phase2(Deep) is bit-identical across the pin
+# change on all 21 decodes, and the whole ft8-bench suite — interference,
+# busy-band, busy-band-hard, the sniper story (no-BPF / BPF-edge / BPF-centre ×
+# SIC/AP), the three BPF scenarios and the WSJT-X stress WAV — differs only in
+# timing jitter. `rank_candidates` does touch the shared `coarse_sync` that FT8
+# reaches, which is why the FT8 sniper scenarios were included rather than just
+# the wide-band ones; with no competition it degrades to the old behaviour.
+#
+# jt65's SNR clamp and jt9's ~32 dB SNR error (641b5ff, 90df087) are real user-
+# facing bugs upstream, but no build here compiles either protocol. Worth
+# remembering if a mode is ever added.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "11022d5f8c38d2c6788f24265cfbf89ea35de49d", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "dfb1f2b3f265bfd0f1ec382f4ca589292f53e350", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #
