@@ -210,6 +210,68 @@ resolver = "2"
 # jt65's SNR clamp and jt9's ~32 dB SNR error (641b5ff, 90df087) are real user-
 # facing bugs upstream, but no build here compiles either protocol. Worth
 # remembering if a mode is ever added.
+#
+# ── Correction: the FT4 wide-band/sniper gap is ~1.8 dB, and it is a curve ──
+#
+# The "~2.8 dB apart" figure above is superseded. It was arrived at by
+# subtracting two numbers taken from *different* harnesses (the wide-band -1.5
+# from one run, the sniper +1.3 from another with the BPF applied at a different
+# point in the chain), which is not a valid comparison. Re-measured with both
+# paths reading the *same* audio buffer, same seeds, same levels — the only way
+# the difference means anything — on dfb1f2b, reported minus true SNR:
+#
+#             unfiltered                      500 Hz BPF (post-quantisation)
+#   true    wide    sniper    gap           wide    sniper    gap
+#    -2    -1.60    -0.44   +1.16          -0.29    +0.20   +0.49
+#    -4    -1.61    +0.15   +1.75          -0.25    +0.59   +0.84
+#    -6    -1.62    +0.51   +2.12          -0.19    +0.78   +0.97
+#    -8    -1.63    +0.63   +2.26          -0.09    +0.80   +0.89
+#   -10    -1.64    +0.55   +2.20          +0.07    +0.63   +0.56
+#   -12    -1.66    +0.21   +1.87          +0.31    +0.23   -0.08
+#   -14    -1.69    -0.59   +1.10          +0.70    -0.60   -1.30
+#   mean   -1.64    +0.15   +1.78          +0.04    +0.38   +0.34
+#
+# The mean gap matters less than the shape, which the mean hides:
+#
+#   - Wide-band unfiltered is FLAT. -1.60 to -1.69 dB across a 12 dB span, no
+#     slope. That is a correct estimator with a wrong constant — one number
+#     fixes it.
+#   - Sniper is an ARCH. -0.44 → +0.63 → -0.59 over the same span, ~1.2 dB of
+#     curvature peaking mid-range. No constant fixes that. `coarse_sync`'s
+#     Costas-correlation score is non-linear in SNR relative to what
+#     `ft4_snr_db`'s `10·log10(score-1) - 14.8` was fitted against, so even a
+#     perfectly-chosen offset leaves ~±0.6 dB of level-dependent error.
+#
+# So the earlier framing — "sniper reads ~1 dB high, wide-band ~1.5 dB low" —
+# understated it by describing a curve as an offset.
+#
+# Second-order but real: the 500 Hz BPF changes the wide-band path's *character*,
+# not just its offset. Flat -1.64 becomes a slope, -0.29 → +0.70. The filter here
+# is applied after i16 quantisation, so this is the band-limiting moving the
+# noise reference the score sees, not an ADC-headroom effect. (Note this differs
+# from the BPF-before-quantisation harness used for the af4766e..81ea2d0 numbers
+# above; the two are not directly comparable, which is what caused the bad
+# subtraction in the first place.)
+#
+# Confirmed not moved by the dfb1f2b pin: e51160b changes which candidate wins at
+# the aim point and `cand.score` feeds `SnrCtx`, so this was checked rather than
+# assumed — reported SNR is identical to the last decimal at every level, both
+# filtered and unfiltered, across 11022d5 → dfb1f2b.
+#
+# Root cause is documented upstream in-source at `msg/pipeline_ap.rs:113-131`:
+# swapping the AP path's generic `coarse_sync` for `ft4_coarse_sync` was tried
+# and reverted (its ~78 Hz smoothing width loses a clean single-target signal
+# outside `refine_candidate_position`'s ±12 Hz pull-in), so `cand.score` reaching
+# `SnrCtx` is still the Costas-correlation score rather than the
+# `getcandidates4.f90` value the formula expects. Reported as mfsk-core issue
+# #258 (nothing open tracked it — #255 and #257 are both closed), together with a
+# suggestion that candidate *generation* and candidate *scoring* may be separable
+# here: by the time `SnrCtx` is built the signal's position is already locked, so
+# scoring at that known position need not reintroduce the lost-decode regression.
+#
+# Decision for this app: accept it. Sniper is a deliberately special mode and the
+# absolute SNR is not what it is for. Recorded so the next person does not
+# rediscover the curve and mistake it for a regression.
 [workspace.dependencies]
 mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "dfb1f2b3f265bfd0f1ec382f4ca589292f53e350", default-features = false }
 

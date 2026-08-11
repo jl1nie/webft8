@@ -1051,8 +1051,30 @@ pub fn encode_wspr(
 //   5 = Q65-60E  (60 s slot, ×16 spacing, 24 GHz+ / extreme spread)
 //
 // `decode_q65_*` returns `DecodedMessage` with `dt_sec = start_sample /
-// 12_000` and `hard_errors = QRA BP iterations consumed`. SNR is left
-// at 0.0 (Q65 doesn't report a comparable SNR through this surface).
+// 12_000` and `hard_errors = QRA BP iterations consumed`.
+//
+// SNR is real, not a placeholder. This comment used to say it was left
+// at 0.0 because Q65 had no comparable quantity on this surface; that
+// stopped being true when mfsk-core issue #226 added `Q65Result.snr_db`
+// (per-symbol signal-tone vs. other-tones power ratio, WSJT-X 2500 Hz
+// reference convention, -24 dB floor — `q65::rx::snr_db_narrow`/
+// `snr_db_wide`), and `q65_to_decoded` was wired to it without the
+// comment following. Two consequences worth stating explicitly, since
+// the stale comment hid both:
+//
+//   - It is displayed, and it is *transmitted*. `setRxSnr` in app.js is
+//     not protocol-gated, so a Q65 decode's SNR feeds qso.js's
+//     `_autoReport` and becomes the signal report this station sends.
+//     Q65 has a real TX path here (`encode_q65`) — unlike WSPR, which
+//     `encodeTx` rejects outright — so the auto-reply state machine can
+//     and does put this number on the air.
+//   - It is the one protocol whose SNR this project has never verified
+//     locally. FT4 and FST4 were measured through their own entry points
+//     against synthetic signals at known SNRs (see the pin log in
+//     Cargo.toml); Q65 has no sample and no synth harness here, so it
+//     rests entirely on upstream's tests. That gap is about whether the
+//     formula reaches *this* call site at the right scale — the exact
+//     failure mode mfsk-core 21c1be7 taught us to check for.
 // ───────────────────────────────────────────────────────────────────────
 
 fn q65_to_decoded(d: mfsk_core::q65::Q65Result) -> DecodedMessage {
