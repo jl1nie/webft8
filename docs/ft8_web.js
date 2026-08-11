@@ -998,8 +998,45 @@ export function encode_q65(call1, call2, grid_or_report, freq_hz, submode) {
 }
 
 /**
- * Encode a Type-1 WSPR message ("CALLSIGN GRID4 POWER_DBM") as 12 kHz
- * PCM audio suitable for transmission.
+ * Encode a Type-1 WSPR beacon transmission — callsign + 4-character
+ * grid + power in dBm — as 12 kHz f32 PCM at amplitude 1.0.
+ * 162 symbols x 8192 samples = 1 327 104 samples, 110.6 s.
+ *
+ * Two things here were wrong while this function had no caller, and
+ * both would have been silent on the air rather than obvious:
+ *
+ * **`freq_hz` is the centre of the 4-tone group**, matching what the
+ * operator dials and what WSJT-X's Tx-frequency spin box means.
+ * mfsk-core's synthesiser takes tone 0, so the 1.5 x spacing offset is
+ * applied here exactly as `mainwindow.cpp` does it:
+ *
+ * ```text
+ * Q_EMIT sendMessage (m_mode, NUM_WSPR_SYMBOLS, 8192.0,
+ *                     ui->TxFreqSpinBox->value() - 1.5 * 12000 / 8192, ...
+ * ```
+ *
+ * This previously passed `freq_hz` straight through as tone 0, putting
+ * the signal 2.2 Hz above where it was dialled. Invisible on a
+ * waterfall; not invisible in a mode whose entire occupied bandwidth
+ * is 6 Hz inside a 200 Hz sub-band.
+ *
+ * **Amplitude is 1.0**, like `encode_ft8`/`encode_ft4`/`encode_q65`/
+ * `encode_fst4`. It was 0.3, which would have put WSPR 10.5 dB below
+ * every other mode at the same TX-gain slider position, and made
+ * `AudioOutput.peakLevel`'s pre-gain meter read 30 % at full drive.
+ * Level belongs to the slider, not to the encoder.
+ *
+ * No GFSK symbol shaping, deliberately — WSJT-X passes a positive
+ * `toneSpacing` for WSPR, selecting `Modulator::modulate`'s plain
+ * CPFSK branch rather than the pre-computed filtered-waveform branch
+ * FT8/FT4/FST4 use. See `app.js`'s `encodeTx` for the full note. The
+ * burst envelope *is* ramped, by mfsk-core 47f0e63
+ * (`engine::dsp::envelope`, issue #259); without it the 110.6 s burst
+ * would begin and end on a step discontinuity.
+ *
+ * Errors if the arguments cannot fit the Type-1 layout. Note WSPR
+ * takes a **4-character** grid — callers must truncate 6-character
+ * locators.
  * @param {string} callsign
  * @param {string} grid
  * @param {number} power_dbm

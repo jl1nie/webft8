@@ -272,8 +272,60 @@ resolver = "2"
 # Decision for this app: accept it. Sniper is a deliberately special mode and the
 # absolute SNR is not what it is for. Recorded so the next person does not
 # rediscover the curve and mistake it for a regression.
+#
+# ── 47f0e63: the WSPR TX ramp, and a correction to the paragraph above ──────
+#
+# Pinned for 47f0e63, which is what unblocks this app's WSPR beacon TX path:
+# every `synthesize_audio` in the crate now tapers its burst envelope through a
+# shared `engine::dsp::envelope`, 10 ms of the same raised-cosine shape
+# `gen_ft8wave.f90:69-73` uses. Upstream measured the switch-on transient at
+# -53.9 -> -101.7 dBc at +250 Hz. Note they ramp *both* ends where WSJT-X's
+# modulator only fades out, and justified it from WSJT-X's own longest-period
+# mode rather than from taste: `gen_fst4wave.f90` ramps up unconditionally
+# (`data lshape/.true./`) with a *longer* ramp than FT8's. They also declined
+# the GFSK symbol shaping #259 originally asked for, for the reason this repo
+# had already reached independently — WSJT-X does not shape WSPR.
+#
+# 3f3beb2 is the uncomfortable one: it refutes the "sniper's error is a
+# level-dependent arch" claim in the paragraph above, and it is right.
+# Re-measured here at n=20 (the earlier claim was n=8), reporting the per-level
+# spread the first pass never looked at:
+#
+#   true      wide-band mean/sd        sniper mean/sd
+#    -2      -1.60  sd 0.12           -0.15  sd 0.84
+#    -6      -1.61  sd 0.16           +0.91  sd 0.98
+#   -10      -1.63  sd 0.26           +1.19  sd 1.22
+#   -14      -1.67  sd 0.47           +0.57  sd 1.96
+#   -16      -1.72  sd 0.68           -0.57  sd 3.03
+#   POOLED   -1.64  sd 0.34 (n=160)   +0.62  sd 1.60 (n=155)
+#
+# Sniper's spread is 4.7x wide-band's (upstream got 4x on a different corpus),
+# and the standard error of an 8-seed mean at that spread is 0.56 dB — which is
+# exactly the amplitude of the "1.2 dB of curvature" reported above. Seven
+# points each carrying ±0.56 dB of noise will trace a convincing arch. So the
+# shape was an artefact of the sample size, and the real defect is variance:
+# ~±1.6 dB of per-decode scatter, growing to sd 3.0 at -16 dB. For this app
+# that is arguably worse than a bias, because it is the per-decode number that
+# `qso.js`'s `_autoReport` puts on the air, and no amount of averaging happens
+# before it gets there.
+#
+# What did NOT reproduce is upstream's pooled gap. They measure the two paths
+# 0.2 dB apart on the WSJT-X `ft4sim` corpus; this harness still says +2.25 dB
+# at n=20. The disagreement sits on the wide-band side — their wide-band reads
+# -0.30 dB where ours reads -1.64 dB with sd 0.12, and an offset that stable is
+# a systematic convention difference, not scatter. That points at ft8-bench's
+# own FT4 simulator amplitude convention rather than at the decoder, which is
+# what upstream suggested and what #255 already flagged as a risk. Resolving it
+# needs real `jt9 -5` run over ft8-bench's own output; not done, so every
+# absolute FT4 number produced by this harness should be read as carrying an
+# unquantified ~1.5 dB offset of its own.
+#
+# Lesson recorded because it was cheap to avoid: quote per-level spread next to
+# per-level means, or structure gets read into noise. The measurement that
+# produced the wrong claim was otherwise careful — same buffer, same seeds, both
+# paths — and still landed on an artefact purely for want of an `sd` column.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "dfb1f2b3f265bfd0f1ec382f4ca589292f53e350", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "47f0e635ba5c8daf1945547c1dd97c291021b18d", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #

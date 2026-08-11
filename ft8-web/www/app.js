@@ -1,7 +1,8 @@
-// Main thread keeps WASM init for encode_ft8/encode_ft4/encode_q65/encode_fst4
-// (TX waveform synthesis). Decode runs in a Web Worker (decode-worker.js) so
-// a 200-400 ms decode call doesn't freeze the waterfall or the UI.
-import init, { encode_ft8, encode_free_text, encode_ft4, encode_ft4_free_text, encode_q65, encode_fst4 } from '../pkg/ft8_web.js';
+// Main thread keeps WASM init for encode_ft8/encode_ft4/encode_q65/encode_fst4/
+// encode_wspr (TX waveform synthesis). Decode runs in a Web Worker
+// (decode-worker.js) so a 200-400 ms decode call doesn't freeze the waterfall
+// or the UI.
+import init, { encode_ft8, encode_free_text, encode_ft4, encode_ft4_free_text, encode_q65, encode_fst4, encode_wspr } from '../pkg/ft8_web.js';
 
 // ── Decode worker (off-main-thread WASM) ───────────────────────────────────
 const decodeWorker = new Worker(
@@ -177,6 +178,14 @@ const q65FadingModelField = document.getElementById('q65-fading-model-field');
 const q65FadingModelSelect = document.getElementById('q65-fading-model');
 const fst4SubmodeSelect = document.getElementById('fst4-submode');
 const fst4SubmodeField = document.getElementById('fst4-submode-field');
+const wsprTxBlock = document.getElementById('wspr-tx-block');
+const wsprTxEnable = document.getElementById('wspr-tx-enable');
+const wsprTxPct = document.getElementById('wspr-tx-pct');
+const wsprTxPctLabel = document.getElementById('wspr-tx-pct-label');
+const wsprTxFreq = document.getElementById('wspr-tx-freq');
+const wsprTxRandFreq = document.getElementById('wspr-tx-rand-freq');
+const wsprTxPower = document.getElementById('wspr-tx-power');
+const wsprTxHint = document.getElementById('wspr-tx-hint');
 
 function syncQ65Visibility() {
   const proto = currentProtocol();
@@ -188,6 +197,8 @@ function syncQ65Visibility() {
   if (q65B90Field)          q65B90Field.style.display          = fading ? '' : 'none';
   if (q65FadingModelField)  q65FadingModelField.style.display  = fading ? '' : 'none';
   if (fst4SubmodeField)     fst4SubmodeField.style.display     = isFst4 ? '' : 'none';
+  if (wsprTxBlock)          wsprTxBlock.style.display          = proto === 'wspr' ? '' : 'none';
+  updateWsprTxHint();
 }
 
 if (protocolSelect) {
@@ -1498,6 +1509,14 @@ const periodMgr = new FT8PeriodManager({
       dtStatusEl.style.display = 'none';
     }
   },
+  onPeriodStart: (periodIndex, isEven) => {
+    // WSPR beacon TX decides here, at the boundary, whether this slot is a
+    // transmit slot; the burst itself starts 1 s later. Nothing else uses
+    // onPeriodStart — FT8/FT4 TX goes through periodMgr's own txQueue and
+    // fires before this callback (see ft8-period.js), which is why the
+    // beacon does not need to compete for that queue.
+    wsprMaybeSchedule();
+  },
   onPeriodEnd: async (periodIndex, isEven) => {
     if (!capture.running || !wasmReady) return;
 
@@ -1838,6 +1857,173 @@ const periodMgr = new FT8PeriodManager({
 // Apply DT auto-correct initial UI state (periodMgr now initialized)
 applyDtAutoCorrectUi();
 
+// ── WSPR beacon TX ──────────────────────────────────────────────────────────
+//
+// Deliberately its own path, not a branch inside the QSO machinery. WSPR is a
+// beacon: one fixed Type-1 message (call + 4-char grid + dBm), transmitted in
+// a random subset of 2-minute slots, starting 1 s into the slot. It has no
+// state, no reply, no partner. Routing it through qso.js would mean teaching
+// that state machine about a mode with no QSO in it — see encodeTx()'s note,
+// where the `WSPR TX is not supported` throw stays precisely so the QSO route
+// can never reach a WSPR transmission.
+//
+// Timing: periodMgr's slotMs is already 120 000 for WSPR (getSlotMs), and
+// getCurrentPeriod floors UTC-ms by slotMs, so boundaries land on even
+// minutes UTC — the Unix epoch is itself an even minute. WSJT-X delays the
+// start by 1 s (Modulator's `delay_ms`); the burst is 110.6 s, so it finishes
+// at 111.6 s with 8.4 s of slot to spare.
+
+const WSPR_TX_START_DELAY_MS = 1000;   // WSJT-X's own 1 s slot-start offset
+let wsprTxTimer = null;                // pending start, cancellable by Halt
+
+function wsprTxEnabled()  { return localStorage.getItem('webft8-wspr-tx') === '1'; }
+function wsprTxPctValue() {
+  const v = parseInt(localStorage.getItem('webft8-wspr-tx-pct') || '20', 10);
+  return Number.isFinite(v) ? Math.min(Math.max(v, 0), 100) : 20;
+}
+function wsprTxFreqValue() {
+  const v = parseFloat(localStorage.getItem('webft8-wspr-tx-freq') || '1500');
+  return Number.isFinite(v) ? Math.min(Math.max(v, 1400), 1600) : 1500;
+}
+function wsprTxRandFreqValue() { return localStorage.getItem('webft8-wspr-tx-randf') === '1'; }
+function wsprTxPowerValue() {
+  const v = parseInt(localStorage.getItem('webft8-wspr-tx-power') || '37', 10);
+  return Number.isFinite(v) ? Math.min(Math.max(v, 0), 60) : 37;
+}
+
+/** WSPR Type-1 takes a 4-character grid; 6-character locators must be cut. */
+function wsprGrid4() { return (myGridInput.value || '').toUpperCase().trim().slice(0, 4); }
+
+/** Why TX can't run right now, or null if it can. */
+function wsprTxBlocker() {
+  if (currentProtocol() !== 'wspr') return 'not in WSPR mode';
+  if (!myCallInput.value.trim())    return 'set your callsign';
+  if (wsprGrid4().length !== 4)     return 'set a 4-character grid';
+  return null;
+}
+
+function updateWsprTxHint() {
+  if (!wsprTxHint) return;
+  if (currentProtocol() !== 'wspr') { wsprTxHint.textContent = ''; return; }
+  const blocker = wsprTxBlocker();
+  if (blocker) { wsprTxHint.textContent = `TX inactive — ${blocker}.`; return; }
+  if (!wsprTxEnabled()) { wsprTxHint.textContent = 'Beacon TX off — RX only.'; return; }
+  const pct = wsprTxPctValue();
+  const f = wsprTxRandFreqValue() ? '1400–1600 Hz (random)' : `${wsprTxFreqValue()} Hz`;
+  wsprTxHint.textContent = pct === 0
+    ? 'TX fraction 0 % — never transmits.'
+    : `${myCallInput.value.toUpperCase()} ${wsprGrid4()} ${wsprTxPowerValue()} dBm, ${pct}% of slots at ${f}.`;
+}
+
+/**
+ * Transmit one WSPR beacon burst. Mirrors transmit()'s PTT/meter/status
+ * handling but shares none of its QSO bookkeeping.
+ */
+async function transmitWspr() {
+  if (!wasmReady) return;
+  const call = myCallInput.value.toUpperCase().trim();
+  const grid = wsprGrid4();
+  const power = wsprTxPowerValue();
+  const freq = wsprTxRandFreqValue()
+    ? 1400 + Math.random() * 200
+    : wsprTxFreqValue();
+
+  txActive = true;
+  updateHaltBtn();
+  try {
+    setStatus(`WSPR TX: ${call} ${grid} ${power} dBm @ ${freq.toFixed(1)} Hz`);
+    const utc = new Date().toISOString().substr(11, 8);
+    addChatMsg('tx sending', utc, `${call} ${grid} ${power}`, undefined);
+
+    // freq is the centre of the 4-tone group (wsprd / WSJT-X convention);
+    // encode_wspr applies the 1.5 x spacing offset to reach tone 0.
+    const samples = encode_wspr(call, grid, power, freq);
+
+    const txPeak = AudioOutput.peakLevel(samples) * (txGainSlider.value / 100);
+    txMeter.style.width = Math.min(txPeak * 100, 100) + '%';
+    txMeter.classList.toggle('clip', txPeak > 0.95);
+    txClip.classList.toggle('active', txPeak > 0.95);
+
+    timerEl.classList.add('tx-on');
+    if (cat.connected) await cat.ptt(true);
+    await audioOut.play(samples, outputDeviceSelect.value || undefined);
+    if (cat.connected) await cat.ptt(false);
+
+    timerEl.classList.remove('tx-on');
+    txActive = false;
+    updateHaltBtn();
+    setStatus('WSPR TX complete');
+  } catch (e) {
+    timerEl.classList.remove('tx-on');
+    txActive = false;
+    updateHaltBtn();
+    setStatus(`WSPR TX error: ${e.message || e}`);
+    await cat.safePttOff();
+  }
+}
+
+/** Called at every period boundary; decides whether this slot is a TX slot. */
+function wsprMaybeSchedule() {
+  if (wsprTxTimer) { clearTimeout(wsprTxTimer); wsprTxTimer = null; }
+  if (!wsprTxEnabled() || wsprTxBlocker() || halted || txActive) return;
+  const pct = wsprTxPctValue();
+  if (pct <= 0 || Math.random() * 100 >= pct) return;
+  wsprTxTimer = setTimeout(() => {
+    wsprTxTimer = null;
+    // Re-check: the operator may have hit Halt or changed mode during the
+    // 1 s delay, and audio may have been started by something else.
+    if (!wsprTxEnabled() || wsprTxBlocker() || halted || txActive) return;
+    transmitWspr();
+  }, WSPR_TX_START_DELAY_MS);
+}
+
+/** Cancel a pending (not yet started) WSPR burst. Used by Halt. */
+function wsprCancelPending() {
+  if (wsprTxTimer) { clearTimeout(wsprTxTimer); wsprTxTimer = null; }
+}
+
+// Settings persistence + live hint refresh.
+if (wsprTxEnable) {
+  wsprTxEnable.checked = wsprTxEnabled();
+  wsprTxEnable.addEventListener('change', () => {
+    localStorage.setItem('webft8-wspr-tx', wsprTxEnable.checked ? '1' : '0');
+    if (!wsprTxEnable.checked) wsprCancelPending();
+    updateWsprTxHint();
+  });
+}
+if (wsprTxPct) {
+  wsprTxPct.value = String(wsprTxPctValue());
+  if (wsprTxPctLabel) wsprTxPctLabel.textContent = wsprTxPct.value;
+  wsprTxPct.addEventListener('input', () => {
+    if (wsprTxPctLabel) wsprTxPctLabel.textContent = wsprTxPct.value;
+    localStorage.setItem('webft8-wspr-tx-pct', wsprTxPct.value);
+    updateWsprTxHint();
+  });
+}
+if (wsprTxFreq) {
+  wsprTxFreq.value = String(wsprTxFreqValue());
+  wsprTxFreq.addEventListener('change', () => {
+    localStorage.setItem('webft8-wspr-tx-freq', wsprTxFreq.value);
+    updateWsprTxHint();
+  });
+}
+if (wsprTxRandFreq) {
+  wsprTxRandFreq.checked = wsprTxRandFreqValue();
+  wsprTxRandFreq.addEventListener('change', () => {
+    localStorage.setItem('webft8-wspr-tx-randf', wsprTxRandFreq.checked ? '1' : '0');
+    updateWsprTxHint();
+  });
+}
+if (wsprTxPower) {
+  wsprTxPower.value = String(wsprTxPowerValue());
+  wsprTxPower.addEventListener('change', () => {
+    localStorage.setItem('webft8-wspr-tx-power', wsprTxPower.value);
+    updateWsprTxHint();
+  });
+}
+myCallInput.addEventListener('change', updateWsprTxHint);
+myGridInput.addEventListener('change', updateWsprTxHint);
+
 // TX fire from period manager
 periodMgr.callbacks.onTxFire = async (tx) => {
   await transmit(tx.call1, tx.call2, tx.report, tx.freq);
@@ -1850,14 +2036,16 @@ let halted = false;
 let txActive = false;  // true while transmit() is running (audio playing)
 
 function updateHaltBtn() {
-  // ■ when TX is queued OR actively transmitting
-  btnHalt.textContent = (periodMgr.hasTxQueued() || txActive) ? '■' : '↺';
+  // ■ when TX is queued OR actively transmitting. wsprTxTimer covers the
+  // 1 s window between "this slot is a TX slot" and the burst starting.
+  btnHalt.textContent = (periodMgr.hasTxQueued() || txActive || wsprTxTimer) ? '■' : '↺';
 }
 
 btnHalt.addEventListener('click', async () => {
-  if (periodMgr.hasTxQueued() || txActive) {
+  if (periodMgr.hasTxQueued() || txActive || wsprTxTimer) {
     // Cancel TX, stop audio, keep QSO state
     periodMgr.cancelTx();
+    wsprCancelPending();
     audioOut.stop();
     await cat.safePttOff();
     txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));

@@ -952,9 +952,27 @@ pub fn encode_fst4(call1: &str, call2: &str, report: &str, freq_hz: f32, submode
 // WSPR
 // ───────────────────────────────────────────────────────────────────────
 
+/// `WsprResult.freq_hz` is documented — and measured — as **tone 0**,
+/// the base frequency the demodulator locked. wsprd reports the
+/// **centre** of the 4-tone group instead: `sync_and_demodulate`
+/// correlates the tones at `fp-1.5df, fp-0.5df, fp+0.5df, fp+1.5df`, so
+/// its `f1` is the centre, and `freq_print = dialfreq + (1500+f1)/1e6`
+/// carries that convention all the way to what the operator reads and
+/// to wsprnet. Add the 1.5 x spacing back so this app agrees with every
+/// other WSPR report, and with its own `encode_wspr`, which takes the
+/// dialled centre.
+///
+/// Verified by roundtrip rather than from the doc comment: synthesising
+/// at tone0 = 1497.803 (centre 1500) decodes to `freq_hz` 1497.803, so
+/// the value really does track tone 0 and really is 2.2 Hz low.
+/// 2.2 Hz is a third of a waterfall bin — invisible there, but this is
+/// a mode with a 6 Hz occupied bandwidth in a 200 Hz sub-band, and the
+/// number gets logged and compared against other receivers.
 fn wspr_to_decoded(d: &mfsk_core::wspr::WsprResult) -> DecodedMessage {
+    use mfsk_core::engine::ModulationParams;
+    let spacing = <mfsk_core::wspr::Wspr as ModulationParams>::TONE_SPACING_HZ;
     DecodedMessage {
-        freq_hz: d.freq_hz,
+        freq_hz: d.freq_hz + 1.5 * spacing,
         // dt_sec reported relative to the 12 kHz pipeline (post-resample).
         dt_sec: d.start_sample as f32 / 12_000.0,
         snr_db: 0.0,
@@ -1026,8 +1044,45 @@ pub fn decode_wspr_wav_streaming_f32(samples: &[f32], sample_rate: u32, on_resul
     wspr_decode_to_messages(decodes)
 }
 
-/// Encode a Type-1 WSPR message ("CALLSIGN GRID4 POWER_DBM") as 12 kHz
-/// PCM audio suitable for transmission.
+/// Encode a Type-1 WSPR beacon transmission — callsign + 4-character
+/// grid + power in dBm — as 12 kHz f32 PCM at amplitude 1.0.
+/// 162 symbols x 8192 samples = 1 327 104 samples, 110.6 s.
+///
+/// Two things here were wrong while this function had no caller, and
+/// both would have been silent on the air rather than obvious:
+///
+/// **`freq_hz` is the centre of the 4-tone group**, matching what the
+/// operator dials and what WSJT-X's Tx-frequency spin box means.
+/// mfsk-core's synthesiser takes tone 0, so the 1.5 x spacing offset is
+/// applied here exactly as `mainwindow.cpp` does it:
+///
+/// ```text
+/// Q_EMIT sendMessage (m_mode, NUM_WSPR_SYMBOLS, 8192.0,
+///                     ui->TxFreqSpinBox->value() - 1.5 * 12000 / 8192, ...
+/// ```
+///
+/// This previously passed `freq_hz` straight through as tone 0, putting
+/// the signal 2.2 Hz above where it was dialled. Invisible on a
+/// waterfall; not invisible in a mode whose entire occupied bandwidth
+/// is 6 Hz inside a 200 Hz sub-band.
+///
+/// **Amplitude is 1.0**, like `encode_ft8`/`encode_ft4`/`encode_q65`/
+/// `encode_fst4`. It was 0.3, which would have put WSPR 10.5 dB below
+/// every other mode at the same TX-gain slider position, and made
+/// `AudioOutput.peakLevel`'s pre-gain meter read 30 % at full drive.
+/// Level belongs to the slider, not to the encoder.
+///
+/// No GFSK symbol shaping, deliberately — WSJT-X passes a positive
+/// `toneSpacing` for WSPR, selecting `Modulator::modulate`'s plain
+/// CPFSK branch rather than the pre-computed filtered-waveform branch
+/// FT8/FT4/FST4 use. See `app.js`'s `encodeTx` for the full note. The
+/// burst envelope *is* ramped, by mfsk-core 47f0e63
+/// (`engine::dsp::envelope`, issue #259); without it the 110.6 s burst
+/// would begin and end on a step discontinuity.
+///
+/// Errors if the arguments cannot fit the Type-1 layout. Note WSPR
+/// takes a **4-character** grid — callers must truncate 6-character
+/// locators.
 #[wasm_bindgen]
 pub fn encode_wspr(
     callsign: &str,
@@ -1035,7 +1090,10 @@ pub fn encode_wspr(
     power_dbm: i32,
     freq_hz: f32,
 ) -> Result<Vec<f32>, JsValue> {
-    mfsk_core::wspr::synthesize_type1(callsign, grid, power_dbm, 12_000, freq_hz, 0.3)
+    use mfsk_core::engine::ModulationParams;
+    let spacing = <mfsk_core::wspr::Wspr as ModulationParams>::TONE_SPACING_HZ;
+    let tone0 = freq_hz - 1.5 * spacing;
+    mfsk_core::wspr::synthesize_type1(callsign, grid, power_dbm, 12_000, tone0, 1.0)
         .ok_or_else(|| JsValue::from_str("Invalid WSPR message (bad callsign/grid/power)"))
 }
 

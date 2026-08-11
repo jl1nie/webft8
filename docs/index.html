@@ -552,6 +552,25 @@
         <option value="4">FST4-300 (300 s)</option>
       </select>
     </div>
+    <!-- WSPR beacon TX. Deliberately not routed through the QSO state
+         machine: WSPR is a beacon, not a QSO. See encodeTx() in app.js. -->
+    <div class="wspr-only" id="wspr-tx-block" style="display:none">
+      <label class="toggle"><input type="checkbox" id="wspr-tx-enable"><span class="toggle-track"></span><span>WSPR beacon TX</span></label>
+      <div class="field">
+        <label>TX fraction <span id="wspr-tx-pct-label">20</span>%</label>
+        <input type="range" id="wspr-tx-pct" min="0" max="100" step="10" value="20">
+      </div>
+      <div class="field">
+        <label>TX audio freq (Hz)</label>
+        <input type="number" id="wspr-tx-freq" min="1400" max="1600" step="1" value="1500">
+      </div>
+      <label><input type="checkbox" id="wspr-tx-rand-freq"> Randomise within 1400–1600 Hz</label>
+      <div class="field">
+        <label>TX power (dBm)</label>
+        <input type="number" id="wspr-tx-power" min="0" max="60" step="1" value="37">
+      </div>
+      <div style="font-size:var(--fs-xs);color:var(--c-text2)" id="wspr-tx-hint"></div>
+    </div>
     <div class="field q65-only" id="q65-submode-field" style="display:none">
       <label>Q65 sub-mode</label>
       <select id="q65-submode">
