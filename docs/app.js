@@ -648,6 +648,9 @@ const capture = new AudioCapture({
 });
 capture.onSampleRate = (rate) => waterfall.setSampleRate(rate);
 capture._onDisconnect = () => {
+  // The device is gone mid-burst as far as we know — drop PTT and kill the
+  // output too, not just the period timer.
+  abortTx().catch(() => {});
   periodMgr.stop();
   liveMode = false;
   updateLiveUI();
@@ -1456,7 +1459,10 @@ async function transmit(call1, call2, report, freq) {
     }
 
     if (cat.connected) await cat.ptt(true);
-    await audioOut.play(samples, outputDeviceSelect.value || undefined);
+    const completed = await audioOut.play(samples, outputDeviceSelect.value || undefined);
+    // Cut short by Halt / Stop Audio — abortTx() already dropped PTT and
+    // cleared the indicators, and the status line is its message to own.
+    if (!completed) return;
     if (cat.connected) await cat.ptt(false);
 
     if (activeBtn) activeBtn.classList.remove('tx-active');
@@ -1964,7 +1970,8 @@ async function transmitWspr() {
 
     timerEl.classList.add('tx-on');
     if (cat.connected) await cat.ptt(true);
-    await audioOut.play(samples, outputDeviceSelect.value || undefined);
+    const completed = await audioOut.play(samples, outputDeviceSelect.value || undefined);
+    if (!completed) return;   // aborted — abortTx() owns the cleanup
     if (cat.connected) await cat.ptt(false);
 
     timerEl.classList.remove('tx-on');
@@ -2068,15 +2075,36 @@ function updateHaltBtn() {
   btnHalt.textContent = (periodMgr.hasTxQueued() || txActive || wsprTxTimer) ? '■' : '↺';
 }
 
+// Tear down everything on the TX side: the queued slot, a pending WSPR
+// burst, the audio already going out, PTT, and the TX indicators.
+//
+// Stopping the audio device has to do this too. `capture.stop()` only kills
+// the RX path, so without this a burst already handed to audioOut plays to
+// its end with PTT still keyed — the radio keeps transmitting after the user
+// has stopped audio.
+async function abortTx() {
+  periodMgr.cancelTx();
+  wsprCancelPending();
+  audioOut.stop();
+  await cat.safePttOff();
+  txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
+  timerEl.classList.remove('tx-on');
+  txMeter.style.width = '0%';
+  txMeter.classList.remove('clip');
+  txClip.classList.remove('active');
+  // The test tone rides the same audioOut, so its button has to follow.
+  // Looked up here rather than via the `btnTestTone` const, which is
+  // declared further down and would be in its TDZ if this ever ran earlier.
+  const toneBtn = document.getElementById('btn-test-tone');
+  if (toneBtn) toneBtn.textContent = 'Test Tone';
+  txActive = false;
+  updateHaltBtn();
+}
+
 btnHalt.addEventListener('click', async () => {
   if (periodMgr.hasTxQueued() || txActive || wsprTxTimer) {
     // Cancel TX, stop audio, keep QSO state
-    periodMgr.cancelTx();
-    wsprCancelPending();
-    audioOut.stop();
-    await cat.safePttOff();
-    txActionsEl.querySelectorAll('.tx-active').forEach(b => b.classList.remove('tx-active'));
-    timerEl.classList.remove('tx-on');
+    await abortTx();
     halted = true;
     updateHaltBtn();
     setStatus(currentProtocol() === 'wspr'
@@ -2178,6 +2206,7 @@ async function toggleAudio() {
       setStatus(`Audio error: ${e.message || e}`);
     }
   } else {
+    await abortTx();
     periodMgr.stop();
     capture.stop();
     liveMode = false;
@@ -2407,6 +2436,7 @@ async function handleFile(file) {
   if (!wasmReady) return;
   // Auto-stop live audio if active
   if (liveMode) {
+    await abortTx();
     periodMgr.stop();
     capture.stop();
     liveMode = false;
@@ -2474,7 +2504,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '0.9.1';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);
