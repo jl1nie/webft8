@@ -36,10 +36,22 @@ resolver = "2"
 #     but it did leave qso.js's own _autoReport as the odd one out — fixed
 #     there.
 #
-# FT8 is unaffected, checked rather than assumed at every step of the pin
-# sequence and again here: qso3_busy.wav through phase1 + phase2(Deep) and
-# the whole ft8-bench suite are byte-identical to the 11022d5 baseline taken
-# before any of this started.
+# FT8 decoding is unaffected, checked rather than assumed at every step of
+# the pin sequence and again here: qso3_busy.wav through phase1 +
+# phase2(Deep) yields the same 21 decodes it did at the 11022d5 baseline
+# taken before any of this started, and the ft8-bench suite output is
+# identical.
+#
+# The decoded *text* is not identical, and an earlier version of this note
+# wrongly said it was — that check had compared decode counts, not message
+# bodies. d640bee changes report rendering: "W1FC F5BZB -8" now reads
+# "-08", "-9" reads "-09". Same decodes, WSJT-X spelling.
+#
+# That turned out to matter. qso.js parses reports with `[+-]\d{2}`, so
+# against the old spelling a station reporting us -1..-9 stalled the QSO
+# state machine outright — no reply to their R-report, rxReport never
+# captured, retry until reset. This release fixes that for free; see the
+# note above the regex in qso.js.
 [workspace.dependencies]
 mfsk-core = { version = "0.9.1", default-features = false }
 

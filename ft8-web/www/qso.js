@@ -222,6 +222,17 @@ export class QsoManager {
       this.dxCall = responder;
       this.dxGrid = field;
 
+      // `\d{2}` — exactly two digits — is WSJT-X's rendering, and it is load
+      // bearing. mfsk-core rendered single-digit negatives as "-8" until
+      // 0.9.1 (d640bee), and against that spelling this whole family of
+      // matches failed: a station reporting us -1..-9 fell through here to
+      // _autoReport (so we answered with our own report instead of R-theirs,
+      // and never captured rxReport), and then _onReport matched neither of
+      // its two patterns and returned null — no reply at all, QSO stalled in
+      // REPORT until maxRetries reset it. Verified by driving this class
+      // directly with both spellings. Do not "relax" these to \d{1,2}
+      // without deciding what the log should record; the fix belongs in the
+      // renderer, and upstream has already made it match WSJT-X.
       if (field.match(/^R?[+-]\d{2}$/)) {
         this.rxReport = field;
         const rpt = field.startsWith('R') ? field : `R${field}`;
