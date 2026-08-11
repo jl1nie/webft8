@@ -1,0 +1,61 @@
+# First CI for this repo. Deliberately narrow: it runs what can already be run
+# standalone, without the app.js refactor or the virtual devices that the
+# acceptance tests will need (see notes/tx-test-strategy.md).
+#
+# What this does NOT cover, so nobody reads a green tick as more than it is:
+#   - the four stop paths in app.js (invariants 3-6 of
+#     notes/tx-safety-invariants.md) — app.js has no exports, so nothing there
+#     is importable yet
+#   - anything requiring real audio or a real serial port (invariants 1-2)
+#   - ft8-desktop/src-tauri — excluded from the workspace and needs webkit on
+#     Linux; it is built during ./release.sh instead
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  js:
+    name: browser JS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # A directory argument is not accepted by the v22 test runner — it tries
+      # to load the directory as a module. The quoted glob is handled by node
+      # itself, so it behaves the same across shells.
+      - name: unit tests
+        run: node --test "tests/unit/*.test.mjs"
+
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test -p ft8-bench -p uvpacket-web
+
+  wasm:
+    name: wasm build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      # docs/ is served straight from this repo with no build step, so a
+      # wasm crate that stops compiling would otherwise only surface at
+      # release time, inside deploy.sh.
+      - name: build ft8-web
+        run: cargo build -p ft8-web --target wasm32-unknown-unknown --release
+      - name: build uvpacket-web
+        run: cargo build -p uvpacket-web --target wasm32-unknown-unknown --release

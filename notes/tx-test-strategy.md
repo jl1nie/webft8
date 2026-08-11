@@ -55,23 +55,34 @@ export class TxSession {
 
 停止経路 A〜D × 不変条件 3〜6 のテーブル駆動。`periodMgr` / `audioOut` / `cat` はスタブ。
 
-**移設** `notes/audio-output-stop-check.mjs` → `tests/unit/audio-output.test.mjs`
-（`notes/wspr-decode-baseline.mjs` は測定記録なので `notes/` に残す）
+（`tests/unit/audio-output.test.mjs` への移設は Phase 2 で実施済み）
 
 **新規** `tests/unit/stop-paths.test.mjs` — 「5 つ目の停止経路」対策。`app.js` を文字列として
 読み、`capture.stop()` を呼ぶ箇所がすべて `TxSession.stopLive()` を経由していることを表明する。
 lint 相当の粗い検査だが、v0.9.1 の抜けを機械的に捕まえられる唯一の安価な手段。
 
-## Phase 2 — CI
+## Phase 2 — CI（実施済み: 2026-08-12）
 
-**新規** `.github/workflows/ci.yml`
+Phase 1 に先行して、**単体で成立する範囲だけ**で導入した。`.github/workflows/ci.yml`。
 
 | job | 内容 |
 |---|---|
-| `js` | `node --test tests/unit/`、`ft8-web/www/*.js` 全ファイルに `node --check` |
+| `js` | `node --test "tests/unit/*.test.mjs"`（31 テスト） |
 | `rust` | `cargo test -p ft8-bench -p uvpacket-web` |
+| `wasm` | `ft8-web` / `uvpacket-web` を `wasm32-unknown-unknown` でビルド |
 
-`ft8-desktop/src-tauri` はワークスペース除外かつ Linux で webkit 依存が要るので対象外。
+- テストは `tests/unit/` に集約。`audio-output` と `qso-report-format` は `notes/` から移設し
+  `node:test` 形式へ変換した。`notes/wspr-decode-baseline.mjs` は測定記録なので `notes/` に残す
+- `syntax.test.mjs` は `ft8-web/www` と `uvpacket-web/www` の全 JS を `node --check` に通す。
+  `docs/` はビルド無しでそのまま配信されるため、構文エラーは誰かのブラウザで白画面になるまで
+  表面化しない
+- wasm ジョブも同じ理由。壊れてもリリース時の `deploy.sh` まで気づけない
+- **ディレクトリ引数は Node 22 の test runner では動かない**（ディレクトリをモジュールとして
+  読もうとする）。クォートしたグロブを node 自身に解釈させる
+- `ft8-desktop/src-tauri` はワークスペース除外かつ Linux で webkit 依存が要るので対象外
+
+**この CI が守っていないもの**（緑を過大に読まないため）: 不変条件 1〜6 のすべて。
+`app.js` に `export` が無い限り停止経路は import できず、音と PTT は実機の観測が要る。
 
 ## Phase 3 — 受け入れテスト（音と PTT の実測）
 
@@ -116,12 +127,13 @@ COM3 (app が開く)  ──com0com──  COM4 (Node が読む)   → PTT バ�
 ## 検証手順
 
 ```bash
-node --test tests/unit/          # Phase 1
-cd tests/e2e && npm test         # Phase 3（仮想デバイス導入後）
+node --test "tests/unit/*.test.mjs"   # クォート必須（上記の理由）
+cargo test -p ft8-bench -p uvpacket-web
+cd tests/e2e && npm test               # Phase 3（仮想デバイス導入後）
 ```
 
 **新しいテストは、修正前のコードに対して実際に落ちることを確認してから採用する。**
-v0.9.1 では `audio-output-stop-check.mjs` を修正前ファイルに対して走らせ、
+v0.9.1 では `audio-output` のテストを修正前ファイルに対して走らせ、
 `FAIL stop() settles play()` と `TypeError: Cannot read properties of null (reading 'close')`
 が出ることを確認した。落ちないテストは、通っていても何も守っていない。
 
