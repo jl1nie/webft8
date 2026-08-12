@@ -11,20 +11,23 @@
 | 2 CI | **完了**（3 ジョブ green） | — |
 | 1 `app.js` からの抽出 | 未着手 | v0.9.1 の実機確認（`app.js` に触るため） |
 | 3 音と PTT の実測 | 未着手 | VB-CABLE と com0com の導入 |
-| **RX 側 3 領域**（下記） | 未着手・**優先度はこちらが上** | 判断待ち 1 件（`notes/waterfall-freq-mapping.md`） |
+| **アプリ固有の 4 領域**（下記） | 未着手・**優先度はこちらが上** | 判断待ち 1 件（`notes/waterfall-freq-mapping.md`） |
 
-## RX 側 — 実際に一番気にされている領域
+## アプリ固有 — 実際に一番気にされている領域
 
 TX 安全性（`tx-safety-invariants.md`）とは別軸で、**壊れても画面上は「それらしく」見え続ける**
-ものが3つある。優先度はこちらが上。
+ものが4つある。優先度はこちらが上。
 
 | 領域 | テスト内容 | 捕まえるもの |
 |---|---|---|
 | **waterfall** | 全対応サンプルレートで「オーバーレイが主張する Hz == スペクトラムがそこに描いている Hz」。合成トーンが期待ビンに立つこと。12k/2048 ≡ 6k/1024 の bin 幅 5.86 Hz も表明として固定 | **既に 1 件検出済み** → `notes/waterfall-freq-mapping.md` |
 | **オーディオバッファ** | `AudioWorkletProcessor` をスタブして 128 サンプルブロックを流し、サンプルの欠落・重複ゼロ、リングバッファの巻き戻り、スナップショット長 == スロット長、デシメーション比が整数で本数が保存されること | 静かに起きるサンプル落ち、`applySlotBuffer()` でのスロット長変更時のバッファ不整合 |
 | **dt/df** | `encode_ft8` で既知の df・既知のスロット内オフセットに信号を作り、アプリが実際に使う WASM でデコードして `freq_hz` / `dt_sec` の一致を表明。`FT8PeriodManager` の中央値クロック補正（±5 s 棄却・クランプ）は純粋な算術なので単体で固定 | dt/df の設定経路そのものの誤り |
+| **QSO FSM**（UI 連携含む） | 状態 × 受信メッセージのテーブル駆動。期待値は **WSJT-X の実装**（`mainwindow.cpp` の Tx1〜Tx6 選択）で裏取りする。`onStateChange` / `onTxReady` に記録用コールバックを渡し遷移と UI 通知の対応も表明 | 1 手ずれた応答（相手が黙るまで気づけない）、**未成立 QSO のログ記録** → `notes/qso-fsm-vs-wsjtx.md` |
 
-いずれもブラウザ不要でスタブだけで node から回せる。dt/df のラウンドトリップは
+いずれもブラウザ不要で node から回せる。**QSO FSM は最も着手コストが低い** — `QsoManager` と
+`QSO_STATE` は既に export 済みで、`tests/unit/qso-report-format.test.mjs` が
+スタブ無しで駆動できることを実証している。dt/df のラウンドトリップは
 `notes/wspr-decode-baseline.mjs` が既に node → WASM の手順を実証しているので土台がある。
 
 ## 現状（実測）
