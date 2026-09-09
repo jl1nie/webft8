@@ -111,6 +111,45 @@ test('applyBootstrap() during the awaited decode does not double the boundary', 
   assert.equal(r.leaked, false, 'stop() left a boundary timer running');
 });
 
+test('the first boundary of a run is not an early fire of the period it began in', async () => {
+  // `start()` lands somewhere inside a period, so the first boundary is the
+  // next one. A `setTimeout` that fires a hair early still reports the period
+  // that is ending, and the handler's high-water guard is what rejects that —
+  // but the mark began at -Infinity, so on the first boundary of every run it
+  // could not reject anything. The early fire was accepted as a boundary and
+  // the real one arrived a millisecond later: two `onPeriodStart` for one
+  // slot (hence a doubled WSPR beacon schedule) and a decode of a buffer that
+  // had only just started filling.
+  //
+  // The direct assertion is white-box because the race is real-timer-dependent
+  // and shows up in roughly one run in six — too rare to pin behaviourally.
+  // Read the mark and shut the manager down *before* asserting: a throw here
+  // would otherwise leave its tick interval armed and the test runner would
+  // never exit — which is exactly what the unfixed file does.
+  const mgr = new FT8PeriodManager({}, SLOT);
+  mgr.start();
+  const seeded = mgr._lastFiredPeriod;
+  const atStart = mgr.getCurrentPeriod().periodIndex;
+  mgr.stop();
+  assert.equal(
+    seeded,
+    atStart,
+    'start() did not seed the high-water mark with the period it started in',
+  );
+
+  // And behaviourally, over a run: no two boundaries closer together than half
+  // a slot, whatever the phase `start()` happened to land on.
+  const fires = [];
+  const m2 = new FT8PeriodManager({ onPeriodStart: () => { fires.push(Date.now()); } }, SLOT);
+  m2.start();
+  await sleep(SLOT * 5 + 50);
+  m2.stop();
+  for (let i = 1; i < fires.length; i++) {
+    const gap = fires[i] - fires[i - 1];
+    assert.ok(gap > SLOT / 2, `boundaries ${gap} ms apart, less than half a ${SLOT} ms slot`);
+  }
+});
+
 test('the boundary keeps firing across a setSlotMs() protocol switch', async () => {
   // setSlotMs() restarts the loop, and period indices are slot-relative — an
   // FT8 index is about half the FT4 index for the same instant. A high-water

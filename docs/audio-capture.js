@@ -5,7 +5,6 @@ export class AudioCapture {
   /**
    * @param {Object} callbacks
    * @param {function(Float32Array)} callbacks.onWaterfall - small audio chunks for waterfall
-   * @param {function()} callbacks.onBufferFull - 15-second buffer is full
    */
   constructor(callbacks) {
     this.callbacks = callbacks;
@@ -18,6 +17,36 @@ export class AudioCapture {
     this._onDisconnect = null; // callback when device disconnects
     this.onPeak = null; // callback(level: 0-1) for input level meter
     this.onSampleRate = null; // callback(rate) when actual sample rate is determined
+
+    // ── Audio-clock anchor ────────────────────────────────────────────────
+    // `frameEpochMs` is the local-clock time (Date.now() ms) at audio frame 0
+    // of this AudioContext. With it, any UTC instant maps to a frame index,
+    // which is how `snapshotSlot` asks the worklet for a slot by its place on
+    // the clock rather than by "whatever has arrived since last time".
+    //
+    // Each estimate comes from a worklet message carrying the frame counter:
+    //   candidate = arrivalTime - frame / rate
+    // The message can only ever arrive *late*, never early, so every candidate
+    // over-estimates the epoch by its own delivery delay and the true value is
+    // the minimum — the same argument NTP's clock filter runs on. A sliding
+    // window keeps it tracking the slow drift between the audio device clock
+    // and the system clock (a few ppm) instead of latching onto one lucky
+    // early sample for the whole session.
+    //
+    // A backwards system-clock step is followed at once (the candidates drop
+    // and so does the minimum); a forwards step takes until the window flushes
+    // (~30 s). Neither is a case DT correction handles better.
+    this.frameEpochMs = null;
+    this._epochSamples = [];
+    this._EPOCH_WINDOW = 300;   // ~30 s of ~100 ms peak reports
+
+    // In-flight snapshot requests, keyed by request id. A single pending
+    // slot would be enough while the period loop awaited each decode before
+    // opening the next boundary, but it no longer does (ft8-period.js), so
+    // two handlers can be alive at once and the second must not orphan the
+    // first's promise.
+    this._snapSeq = 0;
+    this._snapPending = new Map();
   }
 
   /** Enumerate available audio input devices. */
@@ -114,13 +143,12 @@ export class AudioCapture {
         if (this.onSampleRate) this.onSampleRate(this.waterfallRate);
       } else if (msg.type === 'waterfall' && this.callbacks.onWaterfall) {
         this.callbacks.onWaterfall(msg.samples);
-      } else if (msg.type === 'buffer-full' && this.callbacks.onBufferFull) {
-        this.callbacks.onBufferFull();
-      } else if (msg.type === 'peak' && this.onPeak) {
-        this.onPeak(msg.level);
-      } else if (msg.type === 'snapshot' && this._snapshotResolve) {
-        this._snapshotResolve(msg.samples);
-        this._snapshotResolve = null;
+      } else if (msg.type === 'peak') {
+        if (msg.frame != null) this._noteFrame(msg.frame);
+        if (this.onPeak) this.onPeak(msg.level);
+      } else if (msg.type === 'snapshot') {
+        const done = this._snapPending.get(msg.id);
+        if (done) { this._snapPending.delete(msg.id); done(msg); }
       }
     };
 
@@ -130,6 +158,11 @@ export class AudioCapture {
     source.connect(this.gainNode);
     this.gainNode.connect(this.workletNode);
     // Don't connect to destination (we don't want to play back)
+
+    // Frame numbering belongs to this AudioContext; a previous context's
+    // anchor would place every slot in the wrong place.
+    this.frameEpochMs = null;
+    this._epochSamples = [];
 
     this.workletNode.port.postMessage({ type: 'start' });
     this.running = true;
@@ -145,42 +178,105 @@ export class AudioCapture {
     this.stream = null;
     this.audioCtx = null;
     this.running = false;
+    this.frameEpochMs = null;
+    this._epochSamples = [];
+    // Nothing will answer these now; settle them so no caller is left hanging
+    // for the 5 s timeout after an explicit stop.
+    for (const [, done] of this._snapPending) {
+      done({ samples: new Float32Array(0), sampleRate: this.actualSampleRate,
+             missingHead: 0, missingTail: 0, stopped: true });
+    }
+    this._snapPending.clear();
   }
 
   /**
-   * Request a snapshot of the current buffer for decoding.
-   * Returns a Promise<Float32Array> with the accumulated samples.
+   * Fold one (frame, now) pair into the epoch estimate. `frame` is the frame
+   * counter at the end of the worklet block that posted the message, so the
+   * candidate is biased late by the delivery delay and never early — hence
+   * the minimum over the window rather than the mean.
+   */
+  _noteFrame(frame) {
+    const candidate = Date.now() - (frame / this.actualSampleRate) * 1000;
+    this._epochSamples.push(candidate);
+    if (this._epochSamples.length > this._EPOCH_WINDOW) this._epochSamples.shift();
+    let min = this._epochSamples[0];
+    for (let i = 1; i < this._epochSamples.length; i++) {
+      if (this._epochSamples[i] < min) min = this._epochSamples[i];
+    }
+    this.frameEpochMs = min;
+  }
+
+  /** Spread of the anchor window, in ms — a rough read on delivery jitter. */
+  get epochSpreadMs() {
+    if (this._epochSamples.length < 2) return null;
+    let min = this._epochSamples[0], max = this._epochSamples[0];
+    for (const c of this._epochSamples) { if (c < min) min = c; if (c > max) max = c; }
+    return max - min;
+  }
+
+  /**
+   * Ask the worklet for the slot that begins at `startMs` (local-clock ms,
+   * i.e. the same scale as `Date.now()`) and runs for `durationMs`.
+   *
+   * This is the UTC anchor: the window is chosen on the clock and converted to
+   * audio frames, so the latency of this very request cannot move it. Ask late
+   * and you get the same samples, just nearer the ring's trailing edge. Before
+   * the epoch estimate exists — the first ~100 ms of a session, until the
+   * first frame-stamped message lands — `startMs` is ignored and the newest
+   * `durationMs` of audio is returned, which is what the old fill-and-rewind
+   * buffer did on every slot.
+   *
+   * Resolves to `{ samples, sampleRate, missingHead, missingTail, ... }`.
+   * `missingHead`/`missingTail` are counts of zero-padded frames: a head means
+   * the request came so late the slot had fallen off the ring, a tail means it
+   * came before the audio existed. Both should be 0 in normal running.
    *
    * Automatically resumes the AudioContext if Chrome auto-suspended it
-   * (happens after a period of no user interaction).  Without this,
-   * the worklet stops processing and the snapshot promise never resolves,
-   * stalling _scheduleBoundary() and halting decode entirely.
-   * A 5-second timeout ensures the period loop always continues even if
-   * the worklet fails to respond (returns empty array as fallback).
+   * (happens after a period of no user interaction). Without this the worklet
+   * stops processing and the promise would never resolve; a 5-second timeout
+   * covers the case where it fails to respond anyway, so the period loop is
+   * never held up (it no longer waits on this at all — see ft8-period.js).
+   *
+   * @param {number|null} startMs — local-clock ms at the first sample wanted
+   * @param {number} durationMs — window length in ms
    */
-  snapshot() {
+  snapshotSlot(startMs, durationMs) {
     // Resume if browser auto-suspended the AudioContext.
     if (this.audioCtx?.state === 'suspended') {
       this.audioCtx.resume().catch(() => {});
     }
+    const rate = this.actualSampleRate;
+    const nFrames = Math.max(1, Math.round((durationMs / 1000) * rate));
+    const fromFrame = (startMs != null && this.frameEpochMs != null)
+      ? Math.round(((startMs - this.frameEpochMs) / 1000) * rate)
+      : null;
+
+    const id = ++this._snapSeq;
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this._snapshotResolve = null;
-        resolve(new Float32Array(0));
-      }, 5000);
-      this._snapshotResolve = (samples) => {
-        clearTimeout(timer);
-        resolve(samples);
+      const empty = {
+        samples: new Float32Array(0), sampleRate: rate,
+        missingHead: 0, missingTail: 0, timedOut: true,
       };
-      this.workletNode?.port.postMessage({ type: 'snapshot' });
+      if (!this.workletNode) { resolve(empty); return; }
+      const timer = setTimeout(() => {
+        this._snapPending.delete(id);
+        resolve(empty);
+      }, 5000);
+      this._snapPending.set(id, (msg) => {
+        clearTimeout(timer);
+        resolve(msg);
+      });
+      this.workletNode.port.postMessage({ type: 'snapshot', id, fromFrame, nFrames });
     });
   }
 
   /**
-   * Resize the worklet snapshot buffer to hold `sec` seconds of audio.
+   * Resize the worklet capture ring to hold `sec` seconds of audio. Callers
+   * pass slot + margin: the ring must still hold the whole slot when the
+   * request for it arrives, and that request comes after the slot has ended.
    * Long slots (WSPR 120 s, Q65-60, FST4-30..300) need more than the 15 s
-   * default or the live snapshot is truncated. Remembered so it re-applies
-   * across stop()/start().
+   * default or the window falls off the trailing edge. Remembered so it
+   * re-applies across stop()/start().
    */
   setBufferSeconds(sec) {
     this._bufferSeconds = sec;
