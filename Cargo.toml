@@ -9,6 +9,27 @@ exclude = [
 ]
 resolver = "2"
 
+# 0.9.1 -> 0.10.1. One breaking change reaches this app, and it is in Q65
+# only: `q65::SearchParams` replaced the single `time_tolerance_symbols` with
+# the pair `time_tolerance_early_sec`/`_late_sec`. That is not a rename to
+# paper over — the old unit was genuinely ambiguous here. This repo passed
+# `50` symbols for every sub-mode, which is ±15 s at Q65-30A's 0.3 s/symbol
+# but ±30 s at Q65-60's 0.6 s/symbol: one literal, two different windows. Both
+# happened to cover their slot, so nothing was broken, but the intent ("half a
+# slot either side of the slot midpoint") was not what the code said. It now
+# says it, in seconds, derived from one `q65_slot_secs` helper shared with the
+# midpoint calculation so the two cannot drift apart.
+#
+# Nothing else in the app moved: FT8/FT4/WSPR/FST4 and the whole
+# `DecodeRequest`/`SniperRequest` surface compile unchanged, and ft8-desktop
+# touches only FT8 APIs. Workspace `cargo test`, the JS unit suite, and both
+# wasm32 release builds are green on 0.10.1.
+#
+# NOT independently re-measured here: FT8 decode counts on qso3_busy.wav, and
+# the WSPR recall/false-decode sweep that justified the 0.9.1 pin below. The
+# 0.9.1 notes that follow are the last on-air-relevant measurements taken, so
+# treat them as inherited, not reconfirmed, until someone reruns them.
+#
 # Back on a crates.io release. The git-rev pin that ran from 65986bc to
 # 47f0e63 (issues #253/#255/#256/#257/#259/#275) ended here — 0.9.1 contains
 # all of it. The rev-by-rev measurement log is archived in
@@ -53,7 +74,7 @@ resolver = "2"
 # captured, retry until reset. This release fixes that for free; see the
 # note above the regex in qso.js.
 [workspace.dependencies]
-mfsk-core = { version = "0.9.1", default-features = false }
+mfsk-core = { version = "0.10.1", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #

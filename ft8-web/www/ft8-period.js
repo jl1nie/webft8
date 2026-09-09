@@ -10,7 +10,12 @@ export class FT8PeriodManager {
   /**
    * @param {Object} callbacks
    * @param {function(number, boolean)} callbacks.onPeriodStart — (periodIndex, isEven) fires at period START
-   * @param {function(number, boolean)} callbacks.onPeriodEnd — (periodIndex, isEven) fires at period END
+   * @param {function(number, boolean, Object)} callbacks.onPeriodEnd — (periodIndex, isEven, {overrun}) fires at period END.
+   *        Awaited, but the boundary timer does NOT wait for it (see
+   *        `_scheduleBoundary`). `overrun` is true when the previous period's
+   *        call has not settled yet, so a handler that owns non-reentrant
+   *        state can shed this slot's work while still doing the part that
+   *        must happen every slot.
    * @param {function(number)} callbacks.onTick — seconds remaining in current period
    * @param {number} [slotMs=15000] — period length in milliseconds (15 000 for FT8, 7 500 for FT4)
    */
@@ -21,6 +26,13 @@ export class FT8PeriodManager {
     this.tickInterval = null;
     this.boundaryTimeout = null;
     this.running = false;
+    // How many `onPeriodEnd` calls have been made and not yet settled. The
+    // boundary no longer waits for them, so more than one can be alive at
+    // once; a handler that cannot be re-entered is told via `overrun`.
+    this._endsInFlight = 0;
+    // Highest period index a boundary has actually been fired for, so an
+    // early-firing setTimeout cannot re-run one.
+    this._lastFiredPeriod = -Infinity;
 
     // TX queue: { call1, call2, report, freq, txEven }
     this.txQueue = null;
@@ -58,6 +70,22 @@ export class FT8PeriodManager {
   start() {
     if (this.running) return;
     this.running = true;
+    // Seed the high-water mark with the period we are starting *inside*: the
+    // first boundary is by definition the next one, so a timer that fires a
+    // hair early and still reports this period is an early fire, and the guard
+    // in the handler should reject it exactly as it does mid-run. Left at
+    // -Infinity it could not — the first boundary was accepted whatever index
+    // it carried, and the real one arrived a millisecond later, giving the
+    // first slot of every session two boundaries: two `onPeriodStart` (so a
+    // doubled WSPR beacon schedule) and a decode of a partial buffer.
+    //
+    // Seeding rather than carrying the old value across is what keeps a
+    // `setSlotMs()` restart working: indices are slot-length-relative (an FT8
+    // index is about half the FT4 index for the same instant), so a mark from
+    // the previous slot length would leave every new index below it and wedge
+    // the loop.
+    this._lastFiredPeriod = this.getCurrentPeriod().periodIndex;
+    this._endsInFlight = 0;
     this.tickInterval = setInterval(() => this._tick(), 100);
     this._scheduleBoundary();
   }
@@ -130,9 +158,23 @@ export class FT8PeriodManager {
     this._dtHistory = Array(this._HIST_LEN).fill(clamped);
     // Reschedule the pending boundary immediately so the new offset takes
     // effect from the very next period — not 1–2 periods later.
-    if (this.running && this.boundaryTimeout) {
-      clearTimeout(this.boundaryTimeout);
-      this.boundaryTimeout = null;
+    //
+    // This is reached from inside the awaited `onPeriodEnd` (app.js:
+    // `applyBootstrap()` on a cold start, and the NTP/GPS handlers can land
+    // there too), which used to make it dangerous: `boundaryTimeout` still
+    // held the already-fired handle, so the `clearTimeout` was a no-op and
+    // the timer armed here was orphaned rather than replaced by the handler's
+    // own trailing `_scheduleBoundary()`. Two independent boundary loops per
+    // slot — double decode, double `onPeriodStart` (so a double WSPR beacon
+    // schedule), and a timer `stop()` could no longer cancel. Measured on a
+    // 200 ms test slot: 25 boundaries where 10 were due.
+    //
+    // Safe now because exactly one timer is outstanding at any instant: the
+    // handler nulls the fired handle before running, `_scheduleBoundary()`
+    // clears whatever is pending before arming, and the handler arms the next
+    // boundary up front rather than after the decode. Every call here just
+    // replaces that one timer with one computed from the new offset.
+    if (this.running) {
       this._scheduleBoundary();
     }
     if (this.callbacks.onClockOffset) {
@@ -221,6 +263,14 @@ export class FT8PeriodManager {
 
   _scheduleBoundary() {
     if (!this.running) return;
+    // Idempotent: never leave a previously-armed boundary running loose.
+    // Every caller either has no timer pending or wants the pending one
+    // replaced, and an orphaned timer is a second boundary loop (see
+    // `setClockOffset`).
+    if (this.boundaryTimeout) {
+      clearTimeout(this.boundaryTimeout);
+      this.boundaryTimeout = null;
+    }
     const now = Date.now();
     // Always compute the current period in UTC time.
     // If the local clock is fast by N ms, Date.now() reads N ms ahead of UTC.
@@ -235,9 +285,32 @@ export class FT8PeriodManager {
     this._nextFireMs = now + delay;  // track actual fire time for accurate countdown
 
     this.boundaryTimeout = setTimeout(async () => {
+      // This handle has fired; it is no longer cancellable, so stop
+      // presenting it as a pending timer to `stop()`/`_scheduleBoundary()`.
+      this.boundaryTimeout = null;
       if (!this.running) return;
 
       const { periodIndex, isEven } = this.getCurrentPeriod();
+
+      // setTimeout may fire a hair *early* (timer-vs-Date.now() skew, and
+      // browsers are allowed to). `getCurrentPeriod()` then still reports the
+      // period that is ending, so without this guard we would decode the
+      // period before it, fire `onPeriodStart` on a stale index, and — since
+      // the next boundary would compute a ~0 ms delay — immediately re-enter
+      // in a tight loop. Just re-arm; the real boundary is a moment away.
+      //
+      // The other way in is a backwards clock-offset jump large enough to
+      // cross a boundary (only reachable on the short slots: the ±10 s clamp
+      // in `setClockOffset` cannot cross a 15 s FT8 period, but can cross a
+      // 7.5 s FT4 one). That costs a skipped slot rather than a spin — the
+      // re-arm below computes a full slot of delay, not zero — and recovers
+      // by itself once the index passes the mark again.
+      if (periodIndex <= this._lastFiredPeriod) {
+        this._scheduleBoundary();
+        return;
+      }
+      this._lastFiredPeriod = periodIndex;
+
       const endedPeriod = periodIndex - 1;
       const endedIsEven = endedPeriod % 2 === 0;
 
@@ -263,18 +336,52 @@ export class FT8PeriodManager {
         this.callbacks.onPeriodStart(periodIndex, isEven);
       }
 
+      // ── Arm the next boundary BEFORE the decode ───────────────────────────
+      // The slot grid is a property of UTC, not of how long this device takes
+      // to decode. Re-arming only after the awaited `onPeriodEnd` tied the two
+      // together: a decode longer than one slot meant the next boundary was
+      // armed after it had already passed, so `_scheduleBoundary()` targeted
+      // the one after — and the skipped slot took its `onPeriodStart` (the
+      // WSPR beacon schedule) and its TX fire down with it, not just its
+      // decode. Measured on a 200 ms slot with decode at 1.3x slot: 5 of 12
+      // slots gone, and the worklet's fill-and-rewind capture buffer, never
+      // asked for a snapshot on those slots, then served the stale side.
+      //
+      // Awaiting below is now only for the clock-offset update and for the
+      // overrun signal; nothing about the timer depends on it.
+      this._scheduleBoundary();
+
       // ── Decode previous period (concurrently with TX) ─────────────────────
+      // `overrun` tells the handler the previous period's call has not settled.
+      // The decoder's WASM instance is not re-entrant — `decode_phase2` reads
+      // the audio/FFT/candidate cache `decode_phase1` left behind
+      // (`CACHED_AUDIO`/`CACHED_FFT`/`CACHED_PHASE1` in ft8-web/src/lib.rs) —
+      // so two overlapping slots would have the newer phase 1 clobber the
+      // older's cache and file this slot's audio under the previous slot's
+      // index. The handler still runs; it sheds only the decode.
       if (this.callbacks.onPeriodEnd) {
+        const overrun = this._endsInFlight > 0;
+        this._endsInFlight++;
         try {
-          await this.callbacks.onPeriodEnd(endedPeriod, endedIsEven);
+          await this.callbacks.onPeriodEnd(endedPeriod, endedIsEven, { overrun });
         } catch (e) {
           console.error('Decode error:', e);
+        } finally {
+          this._endsInFlight--;
         }
       }
 
       // ── Update clock offset from DT samples collected during decode ────────
+      // Writes `clockOffsetMs` directly rather than going through
+      // `setClockOffset`, so it does not try to reschedule from under us.
       this._updateClockOffset();
 
+      // Re-arm so an offset this slot's decode just moved applies to the very
+      // next boundary rather than the one after. Idempotent: it replaces the
+      // timer armed before the decode with one aimed at the same boundary,
+      // recomputed from the current offset. If the decode overran and that
+      // boundary has already fired, this replaces the timer *its* handler
+      // armed, which targets the same instant either way.
       this._scheduleBoundary();
     }, delay);
   }

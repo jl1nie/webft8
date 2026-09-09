@@ -644,7 +644,6 @@ if (wfEnableEl) {
 
 const capture = new AudioCapture({
   onWaterfall: (samples) => { if (waterfallEnabled) waterfall.pushSamples(samples); },
-  onBufferFull: () => {},
 });
 capture.onSampleRate = (rate) => waterfall.setSampleRate(rate);
 capture._onDisconnect = () => {
@@ -1531,12 +1530,53 @@ const periodMgr = new FT8PeriodManager({
     // beacon does not need to compete for that queue.
     wsprMaybeSchedule();
   },
-  onPeriodEnd: async (periodIndex, isEven) => {
+  onPeriodEnd: async (periodIndex, isEven, { overrun = false } = {}) => {
     if (!capture.running || !wasmReady) return;
 
     waterfall.drawPeriodLine();
-    const float32 = await capture.snapshot();
+
+    // Start of the slot that just ended. `periodIndex` is that period, and
+    // period indices already come from clock-offset-corrected time, so this
+    // is the one timestamp every record of this slot should carry — the WAV
+    // filename, the chat separator and the RX log alike. Anything that
+    // re-derives a slot from `Date.now()` down here is reading the clock
+    // after the decode, not at the reception (mfsk-core #313).
+    const slotStartMs = periodIndex * getSlotMs();
+    const slotIso = new Date(slotStartMs).toISOString();
+    const utc = slotIso.substr(11, 8);
+
+    // Ask for that slot by its position on the clock rather than for
+    // "whatever the worklet has accumulated". `slotStartMs` is corrected
+    // time; the local clock reads `clockOffsetMs` higher, and the capture
+    // ring is indexed off the local clock, so the offset goes back on here.
+    // Adding it is also what makes the DT correction move the capture window
+    // *itself* by exactly the estimate, instead of moving it indirectly by
+    // changing when this handler happens to run.
+    const snap = await capture.snapshotSlot(
+      slotStartMs + periodMgr.clockOffsetMs, getSlotMs(),
+    );
+    const float32 = snap.samples;
     if (float32.length < 12000) return;
+    // Zero padding means the window was not fully captured. A missing *head*
+    // is a request that arrived after the slot had rolled off the ring — the
+    // margin in applySlotBuffer() is too small for this device — and it eats
+    // the start of the signal, so any of it is worth reporting.
+    //
+    // A missing *tail* of a few tens of ms is normal and harmless: the slot
+    // is requested the instant it ends, and the newest frames are still one
+    // or two render quanta from reaching the worklet. FT8's burst is 12.64 s
+    // of a 15 s slot, so the tail being padded is dead air. Only report a
+    // tail long enough to reach real signal.
+    {
+      const rate = capture.getSampleRate();
+      const tailTol = Math.round(rate * 0.1);
+      if (snap.missingHead > 0 || snap.missingTail > tailTol) {
+        console.warn(
+          `capture window ${utc} incomplete: head ${(snap.missingHead / rate).toFixed(3)}s, `
+          + `tail ${(snap.missingTail / rate).toFixed(3)}s`
+        );
+      }
+    }
 
     // Record the raw (pre-normalize) slot to WAV. Capture the copy now
     // (before the in-place normalize below); save immediately in "all"
@@ -1546,9 +1586,13 @@ const periodMgr = new FT8PeriodManager({
     if (wavSaveMode !== 'off' && wavSaver.dirHandle) {
       const raw = float32.slice();
       const sr = capture.getSampleRate();
-      const slot = getSlotMs();
-      const startMs = Math.round(Date.now() / slot) * slot - slot;
-      saveSlotWav = () => wavSaver.save(raw, sr, new Date(startMs)).catch((e) => {
+      // Re-deriving the slot from a raw `Date.now()` (as this did) ignored
+      // the DT correction, so on exactly the skewed-clock devices that
+      // correction exists for, the saved file was labelled with a different
+      // slot than the decodes taken from it — and a rounding, rather than a
+      // floor, put it in the wrong slot outright once the skew passed half a
+      // period.
+      saveSlotWav = () => wavSaver.save(raw, sr, new Date(slotStartMs)).catch((e) => {
         if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
           wavSaveMode = 'off';
           if (wavSaveModeSelect) wavSaveModeSelect.value = 'off';
@@ -1559,6 +1603,30 @@ const periodMgr = new FT8PeriodManager({
         }
       });
       if (wavSaveMode === 'all') saveSlotWav();
+    }
+
+    // Previous slot's decode is still running: shed this one and stop here.
+    //
+    // Everything above this line still happens on every slot — the period
+    // line, the capture read and the WAV record. The read is non-destructive
+    // now that the worklet keeps a frame-addressed ring, so shedding costs
+    // this slot's decode and nothing else; under the old fill-and-rewind
+    // buffer, skipping the snapshot left it full at slot+2 s, dropping every
+    // newer sample and handing the *previous* slot's audio to the next decode
+    // under this slot's period index (mfsk-core #313's shape, one layer down).
+    //
+    // The decode itself cannot overlap: the worker's WASM instance carries
+    // slot state between calls — `decode_phase2` consumes the audio, FFT and
+    // candidate cache `decode_phase1` stored (ft8-web/src/lib.rs) — so a
+    // second phase 1 starting mid-flight would clobber it and the older
+    // slot's phase 2 would decode this slot's audio. Queuing instead of
+    // dropping does not help either: by the time it ran, its TX decisions
+    // would be two slots late, which is no decode at all. Scout mode already
+    // sheds profile then AP at BUDGET_MS; reaching a whole slot means that
+    // ladder has run out, so say so rather than silently losing the slot.
+    if (overrun) {
+      setStatus(`slot ${utc} skipped — decoder still busy`);
+      return;
     }
 
     // JS-side peak-normalize before decode. This is cache-safe: works even
@@ -1575,7 +1643,6 @@ const periodMgr = new FT8PeriodManager({
     // Pushes decoded messages to chat/snipe views, logs them, and feeds the
     // QSO state machine.  Designed to be called once (non-subtract) or twice
     // (Phase 1 partial + Phase 2 remainder) per period.
-    const utc = new Date(periodIndex * getSlotMs()).toISOString().substr(11, 8);
     let sepInserted = false;
     const callers = []; // track stations calling me (for pileup notification)
     let txMsg = null;
@@ -1604,7 +1671,7 @@ const periodMgr = new FT8PeriodManager({
         const dt = r.dt_sec;
         msgs.push({ freq_hz: freq, dt_sec: dt, snr_db: snr, message: msg });
 
-        qsoLog.addRx({ message: msg, freq_hz: freq, snr_db: snr });
+        qsoLog.addRx({ message: msg, freq_hz: freq, snr_db: snr, utc: slotIso });
 
         // Scout chat
         const words = msg.split(/\s+/);
