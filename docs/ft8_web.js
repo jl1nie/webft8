@@ -1056,13 +1056,14 @@ export function encode_wspr(callsign, grid, power_dbm, freq_hz) {
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v3;
 }
+
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_throw_6b64449b9b9ed33c: function(arg0, arg1) {
+        __wbg___wbindgen_throw_81fc77679af83bc6: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_call_a24592a6f349a97e: function() { return handleError(function (arg0, arg1, arg2) {
+        __wbg_call_d578befcc3145dee: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = arg0.call(arg1, arg2);
             return ret;
         }, arguments); },

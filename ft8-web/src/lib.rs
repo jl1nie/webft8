@@ -1171,21 +1171,41 @@ macro_rules! dispatch_q65_submode {
     };
 }
 
+/// Slot length in seconds per sub-mode index: 0 = Q65-30A (30 s),
+/// 1..=5 = Q65-60A‥E (60 s). Single source of truth for both the
+/// nominal-start midpoint and the search half-window below, so the two
+/// cannot drift apart.
+fn q65_slot_secs(submode: u8) -> f32 {
+    match submode {
+        0 => 30.0,
+        _ => 60.0,
+    }
+}
+
 /// Wide-tolerance search params for offline WAV decode. The
 /// `SearchParams::default()` lives at the live-audio operating point
-/// (±1.5 s around a known UTC-aligned slot start, 8 candidates) — it
-/// returns nothing on a WAV-drop where the signal can begin anywhere
-/// in the slot. Mirror the `q65_wsjtx_samples` test config: scan the
-/// full slot, lower the score threshold so weak ionoscatter / EME
-/// signals reach the BP / fast-fading metric.
-fn q65_wav_search_params() -> mfsk_core::q65::search::SearchParams {
+/// (an asymmetric ~−1 s..+1 s / +5.5 s window around a known
+/// UTC-aligned slot start, 8 candidates) — it returns nothing on a
+/// WAV-drop where the signal can begin anywhere in the slot. Mirror
+/// the `q65_wsjtx_samples` test config: scan the full slot, lower the
+/// score threshold so weak ionoscatter / EME signals reach the BP /
+/// fast-fading metric.
+///
+/// mfsk-core 0.10 replaced the single `time_tolerance_symbols` with a
+/// pair of seconds-denominated bounds. That is not cosmetic here: the
+/// old `50` symbols meant ±15 s at Q65-30A's 0.3 s/symbol but ±30 s at
+/// Q65-60's 0.6 s/symbol, so the same literal produced a different
+/// window per sub-mode — exactly the ambiguity the upstream change
+/// removed. Expressed in seconds, the intent is one thing: half the
+/// slot either side of the slot midpoint, which covers the whole slot
+/// for every sub-mode.
+fn q65_wav_search_params(submode: u8) -> mfsk_core::q65::search::SearchParams {
+    let half = q65_slot_secs(submode) / 2.0;
     mfsk_core::q65::search::SearchParams {
         freq_min_hz: 200.0,
         freq_max_hz: 3_000.0,
-        // ±50 symbols × 0.3 s/sym ≈ ±15 s — covers the full 30 s slot
-        // for Q65-30A; for Q65-60* we centre on the slot midpoint
-        // below so this still captures the whole 60 s slot.
-        time_tolerance_symbols: 50,
+        time_tolerance_early_sec: half,
+        time_tolerance_late_sec: half,
         score_threshold: 0.05,
         max_candidates: 32,
     }
@@ -1193,13 +1213,10 @@ fn q65_wav_search_params() -> mfsk_core::q65::search::SearchParams {
 
 /// Slot-midpoint nominal-start sample for the WSJT-X reference WAVs:
 /// Q65-30A is 30 s (midpoint = 15 s × 12 kHz), Q65-60A‥E are 60 s
-/// (midpoint = 30 s × 12 kHz). With `time_tolerance_symbols = 50`
-/// (±15 s) the search window then covers the full slot in both cases.
+/// (midpoint = 30 s × 12 kHz). Paired with the ±half-slot window from
+/// [`q65_wav_search_params`], the search covers the full slot.
 fn q65_slot_midpoint_samples(submode: u8) -> usize {
-    match submode {
-        0 => 12_000 * 15,
-        _ => 12_000 * 30,
-    }
+    (q65_slot_secs(submode) / 2.0) as usize * 12_000
 }
 
 /// Plain Q65 BP decode (basic AWGN strategy). f32 audio.
@@ -1207,7 +1224,7 @@ fn q65_slot_midpoint_samples(submode: u8) -> usize {
 pub fn decode_q65_wav_f32(samples: &[f32], submode: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
-    let params = q65_wav_search_params();
+    let params = q65_wav_search_params(submode);
     let nominal_mid = q65_slot_midpoint_samples(submode);
     macro_rules! scan_body {
         ($p:ty) => {
@@ -1223,7 +1240,7 @@ pub fn decode_q65_wav_f32(samples: &[f32], submode: u8, sample_rate: u32) -> Vec
 pub fn decode_q65_wav(samples: &[i16], submode: u8, sample_rate: u32) -> Vec<DecodedMessage> {
     use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
-    let params = q65_wav_search_params();
+    let params = q65_wav_search_params(submode);
     let nominal_mid = q65_slot_midpoint_samples(submode);
     macro_rules! scan_body {
         ($p:ty) => {
@@ -1250,7 +1267,7 @@ pub fn decode_q65_wav_fading_f32(
     use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
     use mfsk_core::fec::qra::FadingModel;
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
-    let params = q65_wav_search_params();
+    let params = q65_wav_search_params(submode);
     let nominal_mid = q65_slot_midpoint_samples(submode);
     let fading = match model {
         1 => FadingModel::Lorentzian,
@@ -1280,7 +1297,7 @@ pub fn decode_q65_wav_fading(
     use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
     use mfsk_core::fec::qra::FadingModel;
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
-    let params = q65_wav_search_params();
+    let params = q65_wav_search_params(submode);
     let nominal_mid = q65_slot_midpoint_samples(submode);
     let fading = match model {
         1 => FadingModel::Lorentzian,
@@ -1304,7 +1321,7 @@ pub fn decode_q65_wav_streaming(samples: &[i16], submode: u8, sample_rate: u32, 
     use mfsk_core::engine::dsp::resample::resample_i16_to_12k_f32;
     let cb = JsCallbackSync(on_result);
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
-    let params = q65_wav_search_params();
+    let params = q65_wav_search_params(submode);
     let nominal_mid = q65_slot_midpoint_samples(submode);
     macro_rules! scan_body {
         ($p:ty) => {{
@@ -1324,7 +1341,7 @@ pub fn decode_q65_wav_streaming_f32(samples: &[f32], submode: u8, sample_rate: u
     use mfsk_core::engine::dsp::resample::resample_f32_to_12k_f32;
     let cb = JsCallbackSync(on_result);
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
-    let params = q65_wav_search_params();
+    let params = q65_wav_search_params(submode);
     let nominal_mid = q65_slot_midpoint_samples(submode);
     macro_rules! scan_body {
         ($p:ty) => {{
@@ -1353,7 +1370,7 @@ pub fn decode_q65_wav_fading_streaming(
     use mfsk_core::fec::qra::FadingModel;
     let cb = JsCallbackSync(on_result);
     let audio = resample_i16_to_12k_f32(samples, sample_rate);
-    let params = q65_wav_search_params();
+    let params = q65_wav_search_params(submode);
     let nominal_mid = q65_slot_midpoint_samples(submode);
     let fading = match model {
         1 => FadingModel::Lorentzian,
@@ -1386,7 +1403,7 @@ pub fn decode_q65_wav_fading_streaming_f32(
     use mfsk_core::fec::qra::FadingModel;
     let cb = JsCallbackSync(on_result);
     let audio = resample_f32_to_12k_f32(samples, sample_rate);
-    let params = q65_wav_search_params();
+    let params = q65_wav_search_params(submode);
     let nominal_mid = q65_slot_midpoint_samples(submode);
     let fading = match model {
         1 => FadingModel::Lorentzian,

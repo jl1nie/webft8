@@ -1538,6 +1538,16 @@ const periodMgr = new FT8PeriodManager({
     const float32 = await capture.snapshot();
     if (float32.length < 12000) return;
 
+    // Start of the slot that just ended. `periodIndex` is that period, and
+    // period indices already come from clock-offset-corrected time, so this
+    // is the one timestamp every record of this slot should carry — the WAV
+    // filename, the chat separator and the RX log alike. Anything that
+    // re-derives a slot from `Date.now()` down here is reading the clock
+    // after the decode, not at the reception (mfsk-core #313).
+    const slotStartMs = periodIndex * getSlotMs();
+    const slotIso = new Date(slotStartMs).toISOString();
+    const utc = slotIso.substr(11, 8);
+
     // Record the raw (pre-normalize) slot to WAV. Capture the copy now
     // (before the in-place normalize below); save immediately in "all"
     // mode, or after decode in "decoded" mode (see below). Fire-and-forget
@@ -1546,9 +1556,13 @@ const periodMgr = new FT8PeriodManager({
     if (wavSaveMode !== 'off' && wavSaver.dirHandle) {
       const raw = float32.slice();
       const sr = capture.getSampleRate();
-      const slot = getSlotMs();
-      const startMs = Math.round(Date.now() / slot) * slot - slot;
-      saveSlotWav = () => wavSaver.save(raw, sr, new Date(startMs)).catch((e) => {
+      // Re-deriving the slot from a raw `Date.now()` (as this did) ignored
+      // the DT correction, so on exactly the skewed-clock devices that
+      // correction exists for, the saved file was labelled with a different
+      // slot than the decodes taken from it — and a rounding, rather than a
+      // floor, put it in the wrong slot outright once the skew passed half a
+      // period.
+      saveSlotWav = () => wavSaver.save(raw, sr, new Date(slotStartMs)).catch((e) => {
         if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
           wavSaveMode = 'off';
           if (wavSaveModeSelect) wavSaveModeSelect.value = 'off';
@@ -1575,7 +1589,6 @@ const periodMgr = new FT8PeriodManager({
     // Pushes decoded messages to chat/snipe views, logs them, and feeds the
     // QSO state machine.  Designed to be called once (non-subtract) or twice
     // (Phase 1 partial + Phase 2 remainder) per period.
-    const utc = new Date(periodIndex * getSlotMs()).toISOString().substr(11, 8);
     let sepInserted = false;
     const callers = []; // track stations calling me (for pileup notification)
     let txMsg = null;
@@ -1604,7 +1617,7 @@ const periodMgr = new FT8PeriodManager({
         const dt = r.dt_sec;
         msgs.push({ freq_hz: freq, dt_sec: dt, snr_db: snr, message: msg });
 
-        qsoLog.addRx({ message: msg, freq_hz: freq, snr_db: snr });
+        qsoLog.addRx({ message: msg, freq_hz: freq, snr_db: snr, utc: slotIso });
 
         // Scout chat
         const words = msg.split(/\s+/);

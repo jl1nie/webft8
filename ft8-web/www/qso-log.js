@@ -37,14 +37,25 @@ export class QsoLog {
 
   /**
    * Add a decoded RX message to the log.
+   *
+   * `utc` is the start of the slot the signal was *received* in, which the
+   * caller knows and this method cannot: decode finishes 1-17 s after the
+   * slot closed (phase 2, and how much of it gets shed varies per slot), so
+   * stamping at write time filed receptions under the following slot — the
+   * same defect mfsk-core #313 found in the embedded WSPR reporting path.
+   * The chat view was already labelling these correctly from the period
+   * index while the CSV/ADIF export disagreed with it. Falls back to now()
+   * for callers with no slot of their own (a dropped WAV file).
+   *
    * @param {Object} rx
    * @param {string} rx.message
    * @param {number} rx.freq_hz
    * @param {number} rx.snr_db
+   * @param {string} [rx.utc] — ISO 8601 slot start
    */
   addRx(rx) {
     this.rxLog.push({
-      utc: new Date().toISOString(),
+      utc: rx.utc || new Date().toISOString(),
       message: rx.message,
       freq: Math.round(rx.freq_hz),
       snr: Math.round(rx.snr_db),
