@@ -65,6 +65,7 @@ import init, {
   decode_q65_wav_fading_streaming, decode_q65_wav_fading_streaming_f32,
   // Cold-start DT bootstrap (mfsk-core 0.6.6 bootstrap_dt_median)
   bootstrap_dt, bootstrap_dt_f32,
+  set_decode_budget_ms,
 } from '../pkg/ft8_web.js';
 
 const FN_MAP = {
@@ -101,6 +102,14 @@ const STREAMING_FNS = new Set([
   'decode_q65_wav_streaming', 'decode_q65_wav_streaming_f32',
   'decode_q65_wav_fading_streaming', 'decode_q65_wav_fading_streaming_f32',
 ]);
+
+// FT8 Phase 2 takes an optional trailing `budgetMs` in `args`: the wall-clock
+// time it may spend, measured from the call. mfsk-core stops starting new
+// candidates once it is spent and keeps what it found; a candidate already
+// running finishes, and work done before the first candidate (re-triage of the
+// slot, which Phase 2 can no longer inherit from Phase 1) is not interruptible,
+// so a budget below roughly a second still costs about that much.
+const PHASE2_FNS = new Set(['decode_phase2_streaming', 'decode_phase2_streaming_f32']);
 
 const initPromise = init().then(() => {
   self.postMessage({ type: 'ready' });
@@ -142,14 +151,19 @@ self.onmessage = async (e) => {
     // STREAMING_FNS comment up top for why a "default" wide-band strategy
     // can legitimately fire on_result more than once for the same message.
     const seen = new Set();
+    let fnArgs = args;
+    if (PHASE2_FNS.has(fn) && args.length > 1) {
+      set_decode_budget_ms(args[1]);
+      fnArgs = [args[0]];
+    }
     const callArgs = STREAMING_FNS.has(fn)
-      ? [...args, (msg) => {
+      ? [...fnArgs, (msg) => {
           const plain = toPlainOne(msg);
           if (seen.has(plain.message)) return;
           seen.add(plain.message);
           self.postMessage({ id, type: 'partial', result: plain });
         }]
-      : args;
+      : fnArgs;
     const results = f(...callArgs);
     // Non-decode helpers (e.g. bootstrap_dt) return scalars, not Vec<DecodedMessage>.
     const payload = (results && typeof results.length === 'number') ? toPlain(results) : results;

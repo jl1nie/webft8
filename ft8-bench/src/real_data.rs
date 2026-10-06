@@ -29,7 +29,7 @@ pub struct RealDataReport {
 }
 
 fn format_result(i: usize, r: &DecodeResult) -> String {
-    let text = unpack77(&r.message77())
+    let text = unpack77(r.message77())
         .unwrap_or_else(|| "<undecodable>".to_string());
     format!(
         "  [{i:2}] freq={:7.1} Hz  dt={:+.2} s  snr={:+5.1} dB  errors={:2}  pass={}  \"{}\"",
@@ -174,7 +174,7 @@ mod tests {
         let all_msgs: Vec<String> = report
             .messages_subtract
             .iter()
-            .filter_map(|r| unpack77(&r.message77()))
+            .filter_map(|r| unpack77(r.message77()))
             .collect();
 
         println!("Decoded {} messages:", all_msgs.len());
@@ -214,7 +214,7 @@ mod tests {
         let all_msgs: Vec<String> = report
             .messages_subtract
             .iter()
-            .filter_map(|r| unpack77(&r.message77()))
+            .filter_map(|r| unpack77(r.message77()))
             .collect();
 
         println!("Decoded {} messages:", all_msgs.len());

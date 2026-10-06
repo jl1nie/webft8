@@ -2,6 +2,7 @@
 
 export class DecodedMessage {
     static __wrap(ptr) {
+        ptr = ptr >>> 0;
         const obj = Object.create(DecodedMessage.prototype);
         obj.__wbg_ptr = ptr;
         DecodedMessageFinalization.register(obj, obj.__wbg_ptr, obj);
@@ -110,17 +111,13 @@ export function bootstrap_dt(samples, sample_rate) {
     const ptr0 = passArray16ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.bootstrap_dt(ptr0, len0, sample_rate);
-    return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+    return ret === 0x100000001 ? undefined : ret;
 }
 
 /**
- * Cold-start DT estimate from `coarse_sync` candidates.
- *
- * Returns the DT median of the top-5 highest-score coarse-sync candidates
- * (mfsk-core 0.6.6 `bootstrap_dt_median`), which lands within ±100 ms of
- * the confirmed-decode DT median on reference recordings — useful for
- * seeding the JS-side period manager when the device clock is skewed >2 s
- * from UTC and no confirmed decode can be obtained yet.
+ * Cold-start DT estimate from `coarse_sync` candidates: the DT median of the
+ * top-5 candidates by score. Useful for seeding the JS-side period manager
+ * when the device clock is skewed >2 s from UTC.
  *
  * Returns `None` (→ `undefined` in JS) when no candidates are found.
  * @param {Float32Array} samples
@@ -131,13 +128,12 @@ export function bootstrap_dt_f32(samples, sample_rate) {
     const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.bootstrap_dt_f32(ptr0, len0, sample_rate);
-    return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+    return ret === 0x100000001 ? undefined : ret;
 }
 
 /**
  * Decode an FST4 slot (wide-band scan). `submode` 0..=4 picks the T/R
- * period (15/30/60/120/300 s); `profile` (0=Fast/1=Normal/2=Deep) maps
- * to `DecodeStrictness`. Non-12 kHz input is auto-resampled.
+ * period; `profile` (0=Fast/1=Normal/2=Deep) maps to `DecodeStrictness`.
  * @param {Int16Array} samples
  * @param {number} submode
  * @param {number} profile
@@ -171,11 +167,8 @@ export function decode_fst4_wav_f32(samples, submode, profile, sample_rate) {
 }
 
 /**
- * Streaming sibling of [`decode_fst4_wav`]: same wide-band scan, plus
- * `on_result(msg)` once per accepted candidate as it's found — most
- * valuable here of all four protocols, since FST4 slots run 15-300 s
- * (vs FT8's 15 s), so the old "nothing until the whole slot is decoded"
- * wait was the longest.
+ * Streaming sibling of [`decode_fst4_wav`] — most valuable here, since FST4
+ * slots run 15-300 s.
  * @param {Int16Array} samples
  * @param {number} submode
  * @param {number} profile
@@ -257,8 +250,7 @@ export function decode_ft4_sniper_f32(samples, target_freq, callsign, mycall, eq
 }
 
 /**
- * Decode a 7.5-second FT4 slot (wide-band scan). Non-12 kHz input is
- * resampled automatically.
+ * Decode a 7.5-second FT4 slot (wide-band scan, single pass).
  * @param {Int16Array} samples
  * @param {number} strictness
  * @param {number} sample_rate
@@ -291,8 +283,7 @@ export function decode_ft4_wav_f32(samples, strictness, sample_rate) {
 
 /**
  * FT4 multi-pass subtract decode (SIC) for crowded slots. `profile`
- * (0=Fast/1=Normal/2=Deep) picks both strictness and SIC round count —
- * 2 rounds for Fast, 3 (full) for Normal/Deep (see `wants_light_sic`).
+ * (0=Fast/1=Normal/2=Deep) picks both strictness and SIC round count.
  * @param {Int16Array} samples
  * @param {number} profile
  * @param {number} sample_rate
@@ -324,9 +315,8 @@ export function decode_ft4_wav_subtract_f32(samples, profile, sample_rate) {
 }
 
 /**
- * Streaming sibling of [`decode_ft4_wav_subtract`]: same SIC decode, plus
- * `on_result(msg)` once per accepted candidate as it's found (mfsk-core
- * 0.9 `.on_result()`). `decode_ft4_wav_subtract` itself is untouched.
+ * Streaming sibling of [`decode_ft4_wav_subtract`]: `on_result(msg)` once per
+ * accepted candidate as it is found.
  * @param {Int16Array} samples
  * @param {number} profile
  * @param {number} sample_rate
@@ -360,9 +350,8 @@ export function decode_ft4_wav_subtract_streaming_f32(samples, profile, sample_r
 }
 
 /**
- * Phase 1 decode (i16): fast single-pass decode.
- *
- * Caches the resampled audio and FFT for a subsequent `decode_phase2` call.
+ * Phase 1 decode (i16): fast single-pass decode. Caches the audio for
+ * [`decode_phase2`]. Panics in Phase 2 if this was not called first.
  * @param {Int16Array} samples
  * @param {number} sample_rate
  * @returns {DecodedMessage[]}
@@ -377,9 +366,7 @@ export function decode_phase1(samples, sample_rate) {
 }
 
 /**
- * Phase 1 decode (f32): fast single-pass decode for live AudioWorklet path.
- *
- * Caches the resampled audio and FFT for a subsequent `decode_phase2_f32` call.
+ * f32 variant of [`decode_phase1`] for the live AudioWorklet path.
  * @param {Float32Array} samples
  * @param {number} sample_rate
  * @returns {DecodedMessage[]}
@@ -394,9 +381,8 @@ export function decode_phase1_f32(samples, sample_rate) {
 }
 
 /**
- * Phase 1 decode (i16), streaming: identical to `decode_phase1`, but calls
- * `on_result(msg)` once per accepted candidate as Phase 1 finds it, in
- * addition to returning the full batch at the end.
+ * Streaming Phase 1 (i16): `on_result(msg)` once per accepted candidate as
+ * found, in addition to returning the full batch.
  * @param {Int16Array} samples
  * @param {number} sample_rate
  * @param {Function} on_result
@@ -412,8 +398,7 @@ export function decode_phase1_streaming(samples, sample_rate, on_result) {
 }
 
 /**
- * Phase 1 decode (f32), streaming: `decode_phase1_f32` + per-candidate
- * `on_result(msg)` delivery, for the live AudioWorklet path.
+ * Streaming Phase 1 (f32), for the live AudioWorklet path.
  * @param {Float32Array} samples
  * @param {number} sample_rate
  * @param {Function} on_result
@@ -429,20 +414,8 @@ export function decode_phase1_streaming_f32(samples, sample_rate, on_result) {
 }
 
 /**
- * Phase 2 decode (i16): SIC using cached Phase 1 state, strength picked by
- * the GUI decode-profile level (see `wants_normal_sic`). `profile == 0`
- * (Fast) is not specially handled here — callers wanting Fast's "Phase 1
- * alone, no SIC at all" semantics skip calling this at all (see
- * `wants_normal_sic`'s doc comment); calling it with `profile == 0`
- * anyway just runs the full `.sic_early()` strategy, same as Deep.
- *
- * Panics if `decode_phase1` was not called first. Prior to mfsk-core
- * commit fe286cc / issue #191, this call went through a separate,
- * unfixed flat-3-pass engine (`decode_frame_subtract_with_known`) that
- * never received the staged-checkpoint SIC recall improvements
- * `decode_wav_subtract` got — `known`/`fft_cache` are now honoured
- * directly by `.sic_early()` (renamed from `.staged()` in mfsk-core
- * #218), so this is the same engine as every other subtract path.
+ * Phase 2 decode: SIC, strength picked by the GUI decode-profile level
+ * (see `ft8_sic`). Returns only messages Phase 1 did not find.
  * @param {number} profile
  * @returns {DecodedMessage[]}
  */
@@ -454,16 +427,7 @@ export function decode_phase2(profile) {
 }
 
 /**
- * Phase 2 decode (f32): SIC using cached Phase 1 state, strength picked by
- * the GUI decode-profile level (see `wants_normal_sic`). `profile == 0`
- * (Fast) is not specially handled here — callers wanting Fast's "Phase 1
- * alone, no SIC at all" semantics skip calling this at all (see
- * `wants_normal_sic`'s doc comment); calling it with `profile == 0`
- * anyway just runs the full `.sic_early()` strategy, same as Deep.
- *
- * Panics if `decode_phase1_f32` was not called first. See `decode_phase2`
- * for why this now shares the same staged-checkpoint SIC engine as
- * `decode_wav_subtract_f32`.
+ * f32 variant of [`decode_phase2`].
  * @param {number} profile
  * @returns {DecodedMessage[]}
  */
@@ -475,10 +439,7 @@ export function decode_phase2_f32(profile) {
 }
 
 /**
- * Phase 2 decode (i16), streaming: identical to `decode_phase2`, but calls
- * `on_result(msg)` once per accepted SIC candidate as it's found.
- *
- * Panics if `decode_phase1`/`decode_phase1_streaming` was not called first.
+ * Streaming Phase 2: `on_result(msg)` once per newly found SIC candidate.
  * @param {number} profile
  * @param {Function} on_result
  * @returns {DecodedMessage[]}
@@ -491,11 +452,7 @@ export function decode_phase2_streaming(profile, on_result) {
 }
 
 /**
- * Phase 2 decode (f32), streaming: `decode_phase2_f32` + per-candidate
- * `on_result(msg)` delivery.
- *
- * Panics if `decode_phase1_f32`/`decode_phase1_streaming_f32` was not
- * called first.
+ * Streaming Phase 2 (f32 twin of [`decode_phase2_streaming`]).
  * @param {number} profile
  * @param {Function} on_result
  * @returns {DecodedMessage[]}
@@ -540,8 +497,7 @@ export function decode_q65_wav_f32(samples, submode, sample_rate) {
 }
 
 /**
- * f32 → i16 wrapper for the fast-fading variant. `b90_ts` and
- * `model` semantics identical to [`decode_q65_wav_fading_f32`].
+ * i16 variant of [`decode_q65_wav_fading_f32`].
  * @param {Int16Array} samples
  * @param {number} submode
  * @param {number} b90_ts
@@ -561,9 +517,9 @@ export function decode_q65_wav_fading(samples, submode, b90_ts, model, sample_ra
 /**
  * Q65 fast-fading metric decode (high-Doppler EME).
  *
- * `b90_ts` is the spread-bandwidth × symbol-period dimensionless
- * product. Calibrated test values: 3 (light spread), 8 (moderate),
- * 15 (heavy / 10+ GHz EME). `model`: 0 = Gaussian, 1 = Lorentzian.
+ * `b90_ts` is the spread-bandwidth × symbol-period dimensionless product.
+ * Calibrated test values: 3 (light), 8 (moderate), 15 (heavy / 10+ GHz EME).
+ * `model`: 0 = Gaussian, 1 = Lorentzian.
  * @param {Float32Array} samples
  * @param {number} submode
  * @param {number} b90_ts
@@ -581,8 +537,7 @@ export function decode_q65_wav_fading_f32(samples, submode, b90_ts, model, sampl
 }
 
 /**
- * Streaming sibling of [`decode_q65_wav_fading`]: same fast-fading metric
- * decode, plus `on_result(msg)` once per accepted candidate.
+ * Streaming sibling of [`decode_q65_wav_fading`].
  * @param {Int16Array} samples
  * @param {number} submode
  * @param {number} b90_ts
@@ -620,8 +575,7 @@ export function decode_q65_wav_fading_streaming_f32(samples, submode, b90_ts, mo
 }
 
 /**
- * Streaming sibling of [`decode_q65_wav`]: same basic BP scan, plus
- * `on_result(msg)` once per accepted candidate as it's found.
+ * Streaming sibling of [`decode_q65_wav`]: `on_result(msg)` per accepted candidate.
  * @param {Int16Array} samples
  * @param {number} submode
  * @param {number} sample_rate
@@ -655,14 +609,6 @@ export function decode_q65_wav_streaming_f32(samples, submode, sample_rate, on_r
 }
 
 /**
- *   mycall + dxcall + RRR/RR73/73 → 77-bit lock (passes 9-11)
- *   CQ + dxcall + grid → up to 76-bit lock (passes 7/8)
- *   mycall + dxcall → 61-bit lock (pass 8)
- *   dxcall only → 33-bit lock (pass 6)
- *   grid only → 15-bit lock (pass 6 fallback)
- *
- * Pass `mycall = ""` for Watch phase (CQ-style hint + grid).
- * Pass `mycall = <own_call>` for Call phase (QSO hint, grid ignored).
  * @param {Int16Array} samples
  * @param {number} target_freq
  * @param {string} callsign
@@ -688,7 +634,7 @@ export function decode_sniper(samples, target_freq, callsign, grid, mycall, eq_o
 }
 
 /**
- * f32 variant of `decode_sniper`. See `decode_sniper` for parameters.
+ * f32 variant of [`decode_sniper`].
  * @param {Float32Array} samples
  * @param {number} target_freq
  * @param {string} callsign
@@ -714,10 +660,9 @@ export function decode_sniper_f32(samples, target_freq, callsign, grid, mycall, 
 }
 
 /**
- * Decode a 15-second FT8 audio frame (wide-band scan).
+ * Decode a 15-second FT8 audio frame (wide-band scan, single pass).
  *
- * `sample_rate` — input PCM sample rate in Hz (e.g. 12000, 44100, 48000).
- * Non-12 000 Hz input is automatically resampled before decoding.
+ * `sample_rate` — input PCM sample rate in Hz; non-12 000 Hz is resampled.
  * @param {Int16Array} samples
  * @param {number} strictness
  * @param {number} sample_rate
@@ -733,7 +678,7 @@ export function decode_wav(samples, strictness, sample_rate) {
 }
 
 /**
- * f32 variant of `decode_wav`. See `decode_wav` for parameters.
+ * f32 variant of [`decode_wav`].
  * @param {Float32Array} samples
  * @param {number} strictness
  * @param {number} sample_rate
@@ -750,9 +695,6 @@ export function decode_wav_f32(samples, strictness, sample_rate) {
 
 /**
  * Decode with iterative signal subtraction.
- *
- * `sample_rate` — input PCM sample rate in Hz. Non-12 000 Hz input is
- * automatically resampled before decoding.
  * @param {Int16Array} samples
  * @param {number} strictness
  * @param {number} sample_rate
@@ -768,7 +710,7 @@ export function decode_wav_subtract(samples, strictness, sample_rate) {
 }
 
 /**
- * f32 variant of `decode_wav_subtract`. See `decode_wav_subtract` for parameters.
+ * f32 variant of [`decode_wav_subtract`].
  * @param {Float32Array} samples
  * @param {number} strictness
  * @param {number} sample_rate
@@ -784,10 +726,7 @@ export function decode_wav_subtract_f32(samples, strictness, sample_rate) {
 }
 
 /**
- * Decode a 120-s WSPR slot. Non-12 kHz input is auto-resampled. Runs
- * coarse (freq, time) search with the default time tolerance and
- * 1400-1600 Hz freq sweep, then Fano-decodes every candidate above
- * the sync-score threshold.
+ * Decode a 120-s WSPR slot. Non-12 kHz input is auto-resampled.
  * @param {Int16Array} samples
  * @param {number} sample_rate
  * @returns {DecodedMessage[]}
@@ -817,13 +756,7 @@ export function decode_wspr_wav_f32(samples, sample_rate) {
 }
 
 /**
- * Streaming sibling of [`decode_wspr_wav`]: same 120-s scan (mfsk-core's
- * `decode_scan_streaming`, matching `decode_scan_default`'s params — see
- * that function), plus `on_result(msg)` once per accepted candidate.
- * WSPR's own delivery contract is the "parallel" one (both coarse passes
- * run under rayon) — dedup against `known` doesn't apply here (WSPR has
- * no cross-phase pipeline in this build), so unlike FT8/FT4/FST4's
- * `.known()` gap this path was never at risk of a post-hoc retract.
+ * Streaming sibling of [`decode_wspr_wav`]: `on_result(msg)` per accepted candidate.
  * @param {Int16Array} samples
  * @param {number} sample_rate
  * @param {Function} on_result
@@ -875,12 +808,10 @@ export function encode_free_text(text, freq_hz) {
 }
 
 /**
- * Encode a standard FST4 message (CALL1 CALL2 GRID/REPORT) at the
- * requested sub-mode + audio centre frequency. `submode` 0..=4 picks
- * the T/R period (15/30/60/120/300 s), which only changes the GFSK
- * pulse-shaping constant — the 77-bit message packing and tone
- * sequence are sub-mode independent (shared with FT4/FT8). Returns
- * 12 kHz f32 PCM at amplitude 1.0.
+ * Encode a standard FST4 message at the requested sub-mode + audio centre
+ * frequency. `submode` 0..=4 picks the T/R period, which selects that
+ * sub-mode's own GFSK pulse shaping; the 77-bit message packing is shared
+ * with FT4/FT8. Returns 12 kHz f32 PCM at amplitude 1.0.
  * @param {string} call1
  * @param {string} call2
  * @param {string} report
@@ -1055,18 +986,39 @@ export function encode_wspr(callsign, grid, power_dbm, freq_hz) {
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v3;
 }
+
+/**
+ * Give the next decode a wall-clock budget of `ms` milliseconds from now.
+ *
+ * mfsk-core stops starting new candidates once its budget predicate returns
+ * `false` (a candidate already running finishes), and keeps what it found.
+ * The crate has no clock of its own on wasm32-unknown-unknown — `Instant`
+ * is unimplemented there — so the clock is `Date.now()` here. Consumed by
+ * the next decode and then cleared; call it again for each decode that
+ * should be budgeted. `ms <= 0` means the budget is already spent: the
+ * decode starts no candidate beyond what the engine does unconditionally.
+ * @param {number} ms
+ */
+export function set_decode_budget_ms(ms) {
+    wasm.set_decode_budget_ms(ms);
+}
+
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_throw_344f42d3211c4765: function(arg0, arg1) {
+        __wbg___wbindgen_throw_81fc77679af83bc6: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_call_a6e5c5dce5018821: function() { return handleError(function (arg0, arg1, arg2) {
+        __wbg_call_d578befcc3145dee: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = arg0.call(arg1, arg2);
             return ret;
         }, arguments); },
         __wbg_decodedmessage_new: function(arg0) {
             const ret = DecodedMessage.__wrap(arg0);
+            return ret;
+        },
+        __wbg_now_88621c9c9a4f3ffc: function() {
+            const ret = Date.now();
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
@@ -1092,7 +1044,7 @@ function __wbg_get_imports() {
 
 const DecodedMessageFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_decodedmessage_free(ptr, 1));
+    : new FinalizationRegistry(ptr => wasm.__wbg_decodedmessage_free(ptr >>> 0, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();
@@ -1133,7 +1085,8 @@ function getFloat32ArrayMemory0() {
 }
 
 function getStringFromWasm0(ptr, len) {
-    return decodeText(ptr >>> 0, len);
+    ptr = ptr >>> 0;
+    return decodeText(ptr, len);
 }
 
 let cachedUint16ArrayMemory0 = null;
@@ -1247,9 +1200,8 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-let wasmModule, wasmInstance, wasm;
+let wasmModule, wasm;
 function __wbg_finalize_init(instance, module) {
-    wasmInstance = instance;
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;

@@ -16,7 +16,8 @@ use std::path::Path;
 
 use mfsk_core::ft8::message::pack77_type1;
 use mfsk_core::ft8::params::MSG_BITS;
-use mfsk_core::ft8::wave_gen::{message_to_tones, tones_to_f32};
+use mfsk_core::Ft8;
+use mfsk_core::engine::tx::{message_to_tones, synthesize};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Public types
@@ -116,8 +117,8 @@ pub fn generate_frame(config: &SimConfig) -> Vec<i16> {
         let snr_linear = 10.0_f32.powf(sig.snr_db / 10.0);
         let amplitude = (4.0 * snr_linear * REF_BW / FS).sqrt();
 
-        let itone = message_to_tones(&sig.message77);
-        let pcm = tones_to_f32(&itone, sig.freq_hz, amplitude);
+        let itone = message_to_tones::<Ft8>(&sig.message77);
+        let pcm = synthesize::<Ft8>(&itone, 12_000, sig.freq_hz, amplitude);
 
         let start = ((0.5 + sig.dt_sec) * FS).round() as usize;
         let copy_len = pcm.len().min(NMAX.saturating_sub(start));
@@ -154,8 +155,8 @@ pub fn generate_frame_f32(config: &SimConfig) -> Vec<f32> {
     for sig in &config.signals {
         let snr_linear = 10.0_f32.powf(sig.snr_db / 10.0);
         let amplitude = (4.0 * snr_linear * REF_BW / FS).sqrt();
-        let itone = message_to_tones(&sig.message77);
-        let pcm = tones_to_f32(&itone, sig.freq_hz, amplitude);
+        let itone = message_to_tones::<Ft8>(&sig.message77);
+        let pcm = synthesize::<Ft8>(&itone, 12_000, sig.freq_hz, amplitude);
         let start = ((0.5 + sig.dt_sec) * FS).round() as usize;
         let copy_len = pcm.len().min(NMAX.saturating_sub(start));
         for i in 0..copy_len { mix[start + i] += pcm[i]; }
@@ -380,7 +381,7 @@ mod tests {
                     .osd(SHIPPED_OSD)
                     .decode()
                     .results;
-                if r.iter().any(|x| x.message77() == msg) { ok += 1; }
+                if r.iter().any(|x| *x.message77() == msg) { ok += 1; }
             }
             println!("SNR {:+3} dB: {ok}/{n_seeds} ({:.0}%)", snr_db, 100.0 * ok as f32 / n_seeds as f32);
         }
@@ -411,6 +412,6 @@ mod tests {
             !results.is_empty(),
             "should decode SNR +10 dB signal; got 0 results"
         );
-        assert_eq!(results[0].message77(), msg, "decoded message mismatch");
+        assert_eq!(*results[0].message77(), msg, "decoded message mismatch");
     }
 }
