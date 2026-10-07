@@ -9,6 +9,16 @@ exclude = [
 ]
 resolver = "2"
 
+# git rev 8ebfc2e6 -> 9f7c30ff: mfsk-core #589. FT8 `SicEarly` did not poll the
+# budget in its subtraction loops between checkpoints A, B and C, so Phase 2
+# overran `set_decode_budget_ms` by the cost of subtracting the rows found so far.
+# Measured on wasm32 (this ft8-web, Node 23, median of 3), Phase 2 wall time:
+#   qso3_busy.wav: 1000 ms budget 1247 -> 1030 ms; 300 ms 850 -> 310 ms;
+#                  100 ms 370 -> 104 ms.
+#   191111_110130.wav: 300 ms budget 532 -> 308 ms; 100 ms 245 -> 103 ms.
+# Unchanged: without a budget, the Phase 2 messages are identical, and Phase 1
+# still gives 15 / 5 rows. Record: jl1nie/mfsk-core#587.
+#
 # 0.10.1 -> 0.13.1 (git rev 8ebfc2e6, see below). Breaking: 0.13 made `mfsk_core::decoder` the only public
 # decode API. One persistent `Decoder<P>` per mode, driven per period with
 # `SlotInput`; `DecodeRequest`/`SniperRequest`, `ft8::decode::*`, the per-mode
@@ -109,7 +119,7 @@ resolver = "2"
 # captured, retry until reset. This release fixes that for free; see the
 # note above the regex in qso.js.
 [workspace.dependencies]
-mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "8ebfc2e6df4cf09c9bdee3286a19ef2478211b73", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "9f7c30ffd4c6aedbf066e32b6fc081e0f68d37a4", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #

@@ -106,9 +106,10 @@ const STREAMING_FNS = new Set([
 // FT8 Phase 2 takes an optional trailing `budgetMs` in `args`: the wall-clock
 // time it may spend, measured from the call. mfsk-core stops starting new
 // candidates once it is spent and keeps what it found; a candidate already
-// running finishes, and work done before the first candidate (re-triage of the
-// slot, which Phase 2 can no longer inherit from Phase 1) is not interruptible,
-// so a budget below roughly a second still costs about that much.
+// running finishes. Since mfsk-core 9f7c30ff (#589) the SIC subtractions
+// between checkpoints are polled too, so Phase 2 returns close to its deadline:
+// measured on wasm32 (Node, qso3_busy.wav), a 300 ms budget returned in 310 ms
+// and a 100 ms budget in 104 ms. Before #589 these returned in 850 ms and 370 ms.
 const PHASE2_FNS = new Set(['decode_phase2_streaming', 'decode_phase2_streaming_f32']);
 
 const initPromise = init().then(() => {
