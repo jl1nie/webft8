@@ -9,6 +9,51 @@ exclude = [
 ]
 resolver = "2"
 
+# git rev 8ebfc2e6 -> 9f7c30ff: mfsk-core #589. FT8 `SicEarly` did not poll the
+# budget in its subtraction loops between checkpoints A, B and C, so Phase 2
+# overran `set_decode_budget_ms` by the cost of subtracting the rows found so far.
+# Measured on wasm32 (this ft8-web, Node 23, median of 3), Phase 2 wall time:
+#   qso3_busy.wav: 1000 ms budget 1247 -> 1030 ms; 300 ms 850 -> 310 ms;
+#                  100 ms 370 -> 104 ms.
+#   191111_110130.wav: 300 ms budget 532 -> 308 ms; 100 ms 245 -> 103 ms.
+# Unchanged: without a budget, the Phase 2 messages are identical, and Phase 1
+# still gives 15 / 5 rows. Record: jl1nie/mfsk-core#587.
+#
+# 0.10.1 -> 0.13.1 (git rev 8ebfc2e6, see below). Breaking: 0.13 made `mfsk_core::decoder` the only public
+# decode API. One persistent `Decoder<P>` per mode, driven per period with
+# `SlotInput`; `DecodeRequest`/`SniperRequest`, `ft8::decode::*`, the per-mode
+# `tones_to_f32` synthesisers and `is_plausible_message` are gone from the
+# public surface (`engine::tx::{message_to_tones, synthesize}` replace the
+# synthesisers; the decoder owns the hash table and the plausibility filter).
+# ft8-web and ft8-desktop were ported to it; ft8-bench instead enables
+# `internal-testing`, which keeps the raw engine reachable for its sweeps.
+#
+# There is no staged/early-decode entry point and no `known`/`fft_cache`
+# hand-off, so FT8 Phase 2 can no longer resume from Phase 1. It is rebuilt on
+# `decode_with`'s per-row callback: Phase 1 streams a single pass, Phase 2 runs
+# the SIC decode and streams only rows Phase 1 did not. The wasm export names
+# and JS contract are unchanged. `fft-rustfft` must now be listed explicitly
+# for ft8-web: without it `mfsk_core::decoder` is feature-gated away.
+#
+# Checked: new `Decoder` and the old engine give identical message sets on
+# ft8-bench's sim_busy_band / _hard / bpf_edge WAVs; wasm encode lengths and an
+# FT8 encode->decode round trip match the 0.10.1 build. qso3_busy.wav (the copy
+# in ../mfsk-core/embedded-poc/assets): 21 decodes through decode_wav_subtract
+# and through phase1 (15) + phase2 (+6) streaming, the count upstream records
+# for `jt9 -8 -d 3`. The 0.10.1 build gave 22: the extra row was
+# `<?> 5T5ZGS/R FE02` at -15 dB, an unresolved hash, now gone; five other rows
+# moved by <=1 dB SNR or 0.5 Hz. NOT re-measured: Q65 recall.
+#
+# WSPR: decode_wspr_wav* panicked (`unreachable`) on wasm32 in 0.10.1 and in
+# 0.13.1 — mfsk-core's WSPR stage timers called `std::time::Instant::now()`,
+# which has no clock on wasm32-unknown-unknown (jl1nie/mfsk-core#583). Fixed
+# upstream in 7b67b13a, with a wasm32 CI job in 8ebfc2e6, so the workspace pins
+# 8ebfc2e6 by git rev until the next release (0.13.2 is not tagged yet; move
+# back to a crates.io version then). With the fix, notes/wspr-decode-baseline.mjs
+# on this build: 0 false accepts on 20 noise slots, recall 8/8 down to -28 dB,
+# 7/8 at -30 dB (0.9.1 record: 8/8, 7/8, 4 false). ft8-desktop stays on
+# crates.io 0.13.1: it uses no WSPR.
+#
 # 0.9.1 -> 0.10.1. One breaking change reaches this app, and it is in Q65
 # only: `q65::SearchParams` replaced the single `time_tolerance_symbols` with
 # the pair `time_tolerance_early_sec`/`_late_sec`. That is not a rename to
@@ -74,7 +119,7 @@ resolver = "2"
 # captured, retry until reset. This release fixes that for free; see the
 # note above the regex in qso.js.
 [workspace.dependencies]
-mfsk-core = { version = "0.10.1", default-features = false }
+mfsk-core = { git = "https://github.com/jl1nie/mfsk-core", rev = "9f7c30ffd4c6aedbf066e32b6fc081e0f68d37a4", default-features = false }
 
 # Workspace-wide release profile for the WASM cdylibs.
 #

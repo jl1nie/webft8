@@ -7,7 +7,8 @@
 
 use std::f32::consts::PI;
 
-use mfsk_core::ft4::encode::{message_to_tones, tones_to_f32};
+use mfsk_core::Ft4;
+use mfsk_core::engine::tx::{message_to_tones, synthesize};
 
 const FS: f32 = 12_000.0;
 const REF_BW: f32 = 2_500.0;
@@ -73,8 +74,8 @@ pub fn generate_slot(config: &SimConfig) -> Vec<i16> {
         // For SNR = signal_power / noise_power_in_REF_BW to match the
         // requested value, A²/2 = SNR · 2σ²·B/FS → A = sqrt(4·SNR·B/FS).
         let amplitude = (4.0 * snr_linear * REF_BW / FS).sqrt();
-        let itone = message_to_tones(&sig.message77);
-        let pcm = tones_to_f32(&itone, sig.freq_hz, amplitude);
+        let itone = message_to_tones::<Ft4>(&sig.message77);
+        let pcm = synthesize::<Ft4>(&itone, 12_000, sig.freq_hz, amplitude);
         let start = ((0.5 + sig.dt_sec) * FS).round() as usize;
         let copy_len = pcm.len().min(SLOT_SAMPLES.saturating_sub(start));
         for i in 0..copy_len {

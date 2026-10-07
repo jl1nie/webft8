@@ -1219,7 +1219,9 @@ async function runDecode(samples, sampleRate, onPartial) {
 
     let p2 = [];
     if (profile !== 0 && BUDGET_MS - p1Ms > 200) {
-      p2 = await workerDecode(fnPhase2Name, [profile], onCandidate);
+      // Pass what is left of the budget so Phase 2 stops starting candidates
+      // when it runs out, instead of running to completion past BUDGET_MS.
+      p2 = await workerDecode(fnPhase2Name, [profile, Math.max(0, BUDGET_MS - (performance.now() - t0))], onCandidate);
     }
     results = [...p1, ...p2];
   }
@@ -2571,7 +2573,7 @@ function splashDismiss() {
 // Build version — bumped on every commit-worthy change so the splash makes
 // it obvious which build the user is actually running (catches stale PWA
 // caches and helps when triaging "I refreshed but it didn't update").
-const APP_VERSION = '0.9.1';
+const APP_VERSION = '0.10.0';
 
 // ── WASM init ───────────────────────────────────────────────────────────────
 splashStep('Loading WASM...', 10);

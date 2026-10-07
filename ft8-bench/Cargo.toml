@@ -6,6 +6,6 @@ license = "GPL-3.0-or-later"
 description = "WebFT8 benchmark and FT8 simulation suite"
 
 [dependencies]
-mfsk-core = { workspace = true, features = ["full"] }
+mfsk-core = { workspace = true, features = ["full", "internal-testing"] }
 hound = "3"
 rayon = "1"
